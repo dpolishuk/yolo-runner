@@ -14,7 +14,11 @@ def build_opencode_agent_path(repo_root: str) -> str:
 
 def select_first_open_leaf_task(tree: list[dict]) -> str | None:
     def sorted_items(items: list[dict]) -> list[dict]:
-        return sorted(items, key=lambda item: item.get("priority", 999))
+        def priority_value(item: dict) -> int:
+            value = item.get("priority")
+            return value if isinstance(value, int) else 999999
+
+        return sorted(items, key=priority_value)
 
     def find_leaf(items):
         for item in sorted_items(items):
@@ -136,7 +140,11 @@ def select_first_open_leaf_task_id(root_id: str, command_runner) -> str | None:
         return json.loads(output)
 
     def sorted_items(items: list[dict]) -> list[dict]:
-        return sorted(items, key=lambda item: item.get("priority", 999))
+        def priority_value(item: dict) -> int:
+            value = item.get("priority")
+            return value if isinstance(value, int) else 999999
+
+        return sorted(items, key=priority_value)
 
     def walk(parent_id: str) -> str | None:
         for item in sorted_items(load_children(parent_id)):
