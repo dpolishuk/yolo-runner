@@ -2,6 +2,14 @@
 
 This project uses **bd** (beads) for issue tracking. Run `bd onboard` to get started.
 
+## Implementation Language
+
+All implementation work for this project must be done in Go.
+
+- Do not add new Python modules for runner functionality.
+- Existing Python is limited to the bootstrap runner (`beads_yolo_runner.py`) that orchestrates Beads/OpenCode.
+- If a Beads task is missing explicit Go file paths, update the task to specify them before implementing.
+
 ## Quick Reference
 
 ```bash
