@@ -65,10 +65,22 @@ type RunOnceOptions struct {
 	Out        io.Writer
 }
 
+var now = time.Now
+
 func RunOnce(opts RunOnceOptions, deps RunOnceDeps) (string, error) {
 	out := opts.Out
 	if out == nil {
 		out = io.Discard
+	}
+
+	startTime := now()
+	currentState := ""
+	setState := func(state string) {
+		if state == "" || state == currentState {
+			return
+		}
+		currentState = state
+		fmt.Fprintf(out, "State: %s\n", state)
 	}
 
 	root, err := deps.Beads.Ready(opts.RootID)
@@ -78,6 +90,7 @@ func RunOnce(opts RunOnceOptions, deps RunOnceDeps) (string, error) {
 
 	leafID := SelectFirstOpenLeafTaskID(root)
 	if leafID == "" {
+		fmt.Fprintln(out, "No tasks available")
 		return "no_tasks", nil
 	}
 
@@ -86,23 +99,31 @@ func RunOnce(opts RunOnceOptions, deps RunOnceDeps) (string, error) {
 		return "", err
 	}
 
+	fmt.Fprintf(out, "Starting %s: %s\n", leafID, bead.Title)
+	setState("selecting task")
+
 	emitPhase(deps.Events, EventSelectTask, leafID, bead.Title)
 
 	prompt := deps.Prompt.Build(leafID, bead.Title, bead.Description, bead.AcceptanceCriteria)
 	command := opencode.BuildArgs(opts.RepoRoot, prompt, opts.Model)
 
 	if opts.DryRun {
+		setState("dry run")
 		fmt.Fprintf(out, "Task: %s - %s\n", leafID, bead.Title)
 		fmt.Fprintln(out, prompt)
 		fmt.Fprintf(out, "Command: %s\n", strings.Join(command, " "))
+		elapsed := now().Sub(startTime).Round(time.Second)
+		fmt.Fprintf(out, "Finished %s: dry_run (%s)\n", leafID, elapsed)
 		return "dry_run", nil
 	}
 
+	setState("bd update")
 	emitPhase(deps.Events, EventBeadsUpdate, leafID, bead.Title)
 	if err := deps.Beads.UpdateStatus(leafID, "in_progress"); err != nil {
 		return "", err
 	}
 
+	setState("opencode running")
 	emitPhase(deps.Events, EventOpenCodeStart, leafID, bead.Title)
 	if err := deps.OpenCode.Run(leafID, opts.RepoRoot, prompt, opts.Model, opts.ConfigRoot, opts.ConfigDir, opts.LogPath); err != nil {
 		if stall, ok := err.(*opencode.StallError); ok {
@@ -110,17 +131,21 @@ func RunOnce(opts RunOnceOptions, deps RunOnceDeps) (string, error) {
 			if err := deps.Beads.UpdateStatusWithReason(leafID, "blocked", reason); err != nil {
 				return "", err
 			}
+			elapsed := now().Sub(startTime).Round(time.Second)
+			fmt.Fprintf(out, "Finished %s: blocked (%s)\n", leafID, elapsed)
 			return "blocked", err
 		}
 		return "", err
 	}
 	emitPhase(deps.Events, EventOpenCodeEnd, leafID, bead.Title)
 
+	setState("git add")
 	emitPhase(deps.Events, EventGitAdd, leafID, bead.Title)
 	if err := deps.Git.AddAll(); err != nil {
 		return "", err
 	}
 
+	setState("git status")
 	emitPhase(deps.Events, EventGitStatus, leafID, bead.Title)
 	dirty, err := deps.Git.IsDirty()
 	if err != nil {
@@ -128,6 +153,7 @@ func RunOnce(opts RunOnceOptions, deps RunOnceDeps) (string, error) {
 	}
 
 	if !dirty {
+		setState("no changes")
 		commitSHA, err := deps.Git.RevParseHead()
 		if err != nil {
 			return "", err
@@ -138,6 +164,8 @@ func RunOnce(opts RunOnceOptions, deps RunOnceDeps) (string, error) {
 		if err := deps.Beads.UpdateStatus(leafID, "blocked"); err != nil {
 			return "", err
 		}
+		elapsed := now().Sub(startTime).Round(time.Second)
+		fmt.Fprintf(out, "Finished %s: blocked (%s)\n", leafID, elapsed)
 		return "blocked", nil
 	}
 
@@ -146,6 +174,7 @@ func RunOnce(opts RunOnceOptions, deps RunOnceDeps) (string, error) {
 		commitMessage = "feat: " + strings.ToLower(bead.Title)
 	}
 
+	setState("git commit")
 	emitPhase(deps.Events, EventGitCommit, leafID, bead.Title)
 	if err := deps.Git.Commit(commitMessage); err != nil {
 		return "", err
@@ -159,11 +188,13 @@ func RunOnce(opts RunOnceOptions, deps RunOnceDeps) (string, error) {
 		return "", err
 	}
 
+	setState("bd close")
 	emitPhase(deps.Events, EventBeadsClose, leafID, bead.Title)
 	if err := deps.Beads.Close(leafID); err != nil {
 		return "", err
 	}
 
+	setState("bd verify")
 	emitPhase(deps.Events, EventBeadsVerify, leafID, bead.Title)
 	closed, err := deps.Beads.Show(leafID)
 	if err != nil {
@@ -176,14 +207,19 @@ func RunOnce(opts RunOnceOptions, deps RunOnceDeps) (string, error) {
 		if err := deps.Beads.UpdateStatus(leafID, "blocked"); err != nil {
 			return "", err
 		}
+		elapsed := now().Sub(startTime).Round(time.Second)
+		fmt.Fprintf(out, "Finished %s: blocked (%s)\n", leafID, elapsed)
 		return "blocked", nil
 	}
 
+	setState("bd sync")
 	emitPhase(deps.Events, EventBeadsSync, leafID, bead.Title)
 	if err := deps.Beads.Sync(); err != nil {
 		return "", err
 	}
 
+	elapsed := now().Sub(startTime).Round(time.Second)
+	fmt.Fprintf(out, "Finished %s: completed (%s)\n", leafID, elapsed)
 	return "completed", nil
 }
 

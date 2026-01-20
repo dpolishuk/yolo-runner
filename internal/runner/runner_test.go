@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+	"time"
 )
 
 type callRecorder struct {
@@ -186,6 +187,9 @@ func TestRunOnceNoTasks(t *testing.T) {
 	}
 	if result != "no_tasks" {
 		t.Fatalf("expected no_tasks, got %q", result)
+	}
+	if !strings.Contains(opts.Out.(*bytes.Buffer).String(), "No tasks available") {
+		t.Fatalf("expected no tasks message, got %q", opts.Out.(*bytes.Buffer).String())
 	}
 	if strings.Join(recorder.calls, ",") != "beads.ready" {
 		t.Fatalf("unexpected calls: %v", recorder.calls)
@@ -384,5 +388,62 @@ func TestRunOnceUsesFallbackCommitMessage(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected fallback commit message, got %v", recorder.calls)
+	}
+}
+
+func TestRunOncePrintsLifecycle(t *testing.T) {
+	start := time.Date(2025, time.January, 1, 0, 0, 0, 0, time.UTC)
+	prevNow := now
+	times := []time.Time{start, start.Add(time.Second)}
+	now = func() time.Time {
+		if len(times) == 0 {
+			return start.Add(time.Second)
+		}
+		current := times[0]
+		times = times[1:]
+		return current
+	}
+	t.Cleanup(func() { now = prevNow })
+
+	recorder := &callRecorder{}
+	beads := &fakeBeads{
+		recorder:   recorder,
+		readyIssue: Issue{ID: "task-1", IssueType: "task", Status: "open"},
+		showQueue: []Bead{
+			{ID: "task-1", Title: "My Task", Status: "open"},
+			{ID: "task-1", Status: "closed"},
+		},
+	}
+	output := &bytes.Buffer{}
+	deps := RunOnceDeps{
+		Beads:    beads,
+		Prompt:   &fakePrompt{recorder: recorder, prompt: "PROMPT"},
+		OpenCode: &fakeOpenCode{recorder: recorder},
+		Git:      &fakeGit{recorder: recorder, dirty: true, rev: "deadbeef"},
+		Logger:   &fakeLogger{recorder: recorder},
+		Events:   &eventRecorder{},
+	}
+
+	opts := RunOnceOptions{RepoRoot: "/repo", RootID: "root", Out: output}
+
+	result, err := RunOnce(opts, deps)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result != "completed" {
+		t.Fatalf("expected completed, got %q", result)
+	}
+	printed := output.String()
+	if !strings.Contains(printed, "Starting task-1: My Task") {
+		t.Fatalf("expected start line, got %q", printed)
+	}
+	if !strings.Contains(printed, "State: selecting task") {
+		t.Fatalf("expected selecting task state, got %q", printed)
+	}
+	if !strings.Contains(printed, "State: opencode running") {
+		t.Fatalf("expected opencode state, got %q", printed)
+	}
+	if !strings.Contains(printed, "Finished task-1: completed (1s)") {
+		t.Fatalf("expected finish line with elapsed, got %q", printed)
 	}
 }
