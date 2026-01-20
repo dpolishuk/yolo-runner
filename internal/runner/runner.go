@@ -1,12 +1,15 @@
 package runner
 
 import (
+	"context"
 	"fmt"
 	"io"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"yolo-runner/internal/opencode"
+	"yolo-runner/internal/ui"
 )
 
 type Bead struct {
@@ -55,14 +58,16 @@ type RunOnceDeps struct {
 }
 
 type RunOnceOptions struct {
-	RepoRoot   string
-	RootID     string
-	Model      string
-	ConfigRoot string
-	ConfigDir  string
-	LogPath    string
-	DryRun     bool
-	Out        io.Writer
+	RepoRoot       string
+	RootID         string
+	Model          string
+	ConfigRoot     string
+	ConfigDir      string
+	LogPath        string
+	DryRun         bool
+	Out            io.Writer
+	ProgressNow    func() time.Time
+	ProgressTicker ui.ProgressTicker
 }
 
 var now = time.Now
@@ -125,18 +130,36 @@ func RunOnce(opts RunOnceOptions, deps RunOnceDeps) (string, error) {
 
 	setState("opencode running")
 	emitPhase(deps.Events, EventOpenCodeStart, leafID, bead.Title)
-	if err := deps.OpenCode.Run(leafID, opts.RepoRoot, prompt, opts.Model, opts.ConfigRoot, opts.ConfigDir, opts.LogPath); err != nil {
-		if stall, ok := err.(*opencode.StallError); ok {
+	logPath := opts.LogPath
+
+	if logPath == "" {
+		logPath = filepath.Join(opts.RepoRoot, "runner-logs", "opencode", leafID+".jsonl")
+	}
+	progress := ui.NewProgress(ui.ProgressConfig{
+		Writer:  out,
+		State:   currentState,
+		LogPath: logPath,
+		Now:     opts.ProgressNow,
+		Ticker:  opts.ProgressTicker,
+	})
+	progressCtx, cancelProgress := context.WithCancel(context.Background())
+	go progress.Run(progressCtx)
+	openCodeErr := deps.OpenCode.Run(leafID, opts.RepoRoot, prompt, opts.Model, opts.ConfigRoot, opts.ConfigDir, logPath)
+	cancelProgress()
+	if openCodeErr != nil {
+		progress.Finish(openCodeErr)
+		if stall, ok := openCodeErr.(*opencode.StallError); ok {
 			reason := stall.Error()
 			if err := deps.Beads.UpdateStatusWithReason(leafID, "blocked", reason); err != nil {
 				return "", err
 			}
 			elapsed := now().Sub(startTime).Round(time.Second)
 			fmt.Fprintf(out, "Finished %s: blocked (%s)\n", leafID, elapsed)
-			return "blocked", err
+			return "blocked", openCodeErr
 		}
-		return "", err
+		return "", openCodeErr
 	}
+	progress.Finish(nil)
 	emitPhase(deps.Events, EventOpenCodeEnd, leafID, bead.Title)
 
 	setState("git add")
