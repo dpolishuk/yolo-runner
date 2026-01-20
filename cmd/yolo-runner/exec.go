@@ -27,7 +27,7 @@ func printCommand(out io.Writer, args []string) {
 	fmt.Fprintln(out, "$ "+strings.Join(args, " "))
 }
 
-func printOutcome(out io.Writer, err error, elapsed time.Duration) {
+func printOutcome(out io.Writer, err error, elapsed time.Duration, command string) {
 	if out == nil {
 		return
 	}
@@ -64,7 +64,7 @@ func runCommandWithOutput(out io.Writer, args ...string) (string, error) {
 	cmd := exec.Command(args[0], args[1:]...)
 	output, err := cmd.CombinedOutput()
 	elapsed := now().Sub(start)
-	printOutcome(out, err, elapsed)
+	printOutcome(out, err, elapsed, strings.Join(args, " "))
 	return string(output), err
 }
 
@@ -75,6 +75,7 @@ type cmdProcess struct {
 	exitCode   int
 	startTime  time.Time
 	out        io.Writer
+	command    string
 }
 
 func (process cmdProcess) Wait() error {
@@ -85,7 +86,7 @@ func (process cmdProcess) Wait() error {
 	if process.stderrFile != nil {
 		_ = process.stderrFile.Close()
 	}
-	printOutcome(process.out, err, now().Sub(process.startTime))
+	printOutcome(process.out, err, now().Sub(process.startTime), process.command)
 	return err
 }
 
@@ -123,14 +124,14 @@ func startCommandWithEnvOutput(out io.Writer, args []string, env map[string]stri
 	}
 	stdoutFile, err := os.Create(stdoutPath)
 	if err != nil {
-		printOutcome(out, err, now().Sub(start))
+		printOutcome(out, err, now().Sub(start), strings.Join(args, " "))
 		return nil, err
 	}
 	stderrPath := strings.TrimSuffix(stdoutPath, ".jsonl") + ".stderr.log"
 	stderrFile, err := os.Create(stderrPath)
 	if err != nil {
 		_ = stdoutFile.Close()
-		printOutcome(out, err, now().Sub(start))
+		printOutcome(out, err, now().Sub(start), strings.Join(args, " "))
 		return nil, err
 	}
 	cmd.Stdout = stdoutFile
@@ -138,8 +139,8 @@ func startCommandWithEnvOutput(out io.Writer, args []string, env map[string]stri
 	if err := cmd.Start(); err != nil {
 		_ = stdoutFile.Close()
 		_ = stderrFile.Close()
-		printOutcome(out, err, now().Sub(start))
+		printOutcome(out, err, now().Sub(start), strings.Join(args, " "))
 		return nil, err
 	}
-	return cmdProcess{cmd: cmd, stdoutFile: stdoutFile, stderrFile: stderrFile, startTime: start, out: out}, nil
+	return cmdProcess{cmd: cmd, stdoutFile: stdoutFile, stderrFile: stderrFile, startTime: start, out: out, command: strings.Join(args, " ")}, nil
 }
