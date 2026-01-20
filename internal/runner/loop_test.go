@@ -45,6 +45,23 @@ func TestRunLoopStopsOnNoTasks(t *testing.T) {
 	}
 }
 
+func TestRunLoopRunsCloseEligibleOnNoTasks(t *testing.T) {
+	recorder := &callRecorder{}
+	beads := &fakeBeads{recorder: recorder}
+	deps := RunOnceDeps{Beads: beads}
+	runOnce := func(opts RunOnceOptions, deps RunOnceDeps) (string, error) {
+		return "no_tasks", nil
+	}
+
+	_, err := RunLoop(RunOnceOptions{}, deps, 0, runOnce)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(recorder.calls) != 1 || recorder.calls[0] != "beads.close-eligible" {
+		t.Fatalf("expected close-eligible call, got %v", recorder.calls)
+	}
+}
+
 func TestRunLoopUpdatesProgressCounter(t *testing.T) {
 	runs := 0
 	capture := []ProgressState{}

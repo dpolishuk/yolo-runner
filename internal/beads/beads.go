@@ -123,6 +123,11 @@ func (a *Adapter) Close(id string) error {
 	return err
 }
 
+func (a *Adapter) CloseEligible() error {
+	_, err := a.runner.Run("bd", "epic", "close-eligible")
+	return err
+}
+
 func (a *Adapter) Sync() error {
 	_, err := a.runner.Run("bd", "sync")
 	return err

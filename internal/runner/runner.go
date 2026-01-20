@@ -27,6 +27,7 @@ type BeadsClient interface {
 	UpdateStatus(id string, status string) error
 	UpdateStatusWithReason(id string, status string, reason string) error
 	Close(id string) error
+	CloseEligible() error
 	Sync() error
 }
 
@@ -334,6 +335,11 @@ func RunLoop(opts RunOnceOptions, deps RunOnceDeps, max int, runOnce func(RunOnc
 			completed++
 			// Keep going; the next call should select a different open task.
 		case "no_tasks":
+			if deps.Beads != nil {
+				if err := deps.Beads.CloseEligible(); err != nil {
+					return completed, err
+				}
+			}
 			return completed, nil
 		default:
 			return completed, nil

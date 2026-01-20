@@ -73,6 +73,13 @@ func (f *fakeBeads) Close(id string) error {
 	return nil
 }
 
+func (f *fakeBeads) CloseEligible() error {
+	if f.recorder != nil {
+		f.recorder.record("beads.close-eligible")
+	}
+	return nil
+}
+
 func (f *fakeBeads) Sync() error {
 	if f.recorder != nil {
 		f.recorder.record("beads.sync")
