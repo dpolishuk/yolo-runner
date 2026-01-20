@@ -85,6 +85,8 @@ type ProgressState struct {
 
 var now = time.Now
 
+const maxStallReasonLength = 512
+
 func RunOnce(opts RunOnceOptions, deps RunOnceDeps) (string, error) {
 	out := opts.Out
 	if out == nil {
@@ -182,9 +184,12 @@ func RunOnce(opts RunOnceOptions, deps RunOnceDeps) (string, error) {
 			return "stopped", openCodeErr
 		}
 		if stall, ok := openCodeErr.(*opencode.StallError); ok {
-			reason := stall.Error()
+			reason := sanitizeStallReason(stall.Error())
 			if err := deps.Beads.UpdateStatusWithReason(leafID, "blocked", reason); err != nil {
-				return "", err
+				fallback := sanitizeStallReason("opencode stall category=" + stall.Category)
+				if fallbackErr := deps.Beads.UpdateStatusWithReason(leafID, "blocked", fallback); fallbackErr != nil {
+					return "", fallbackErr
+				}
 			}
 			elapsed := now().Sub(startTime).Round(time.Second)
 			fmt.Fprintf(out, "Finished %s: blocked (%s)\n", leafID, elapsed)
@@ -290,6 +295,28 @@ func emitPhase(emitter EventEmitter, eventType EventType, issueID string, title 
 		Phase:     string(eventType),
 		EmittedAt: time.Now(),
 	})
+}
+
+func sanitizeStallReason(reason string) string {
+	if reason == "" {
+		return ""
+	}
+	cleaned := strings.Map(func(r rune) rune {
+		switch r {
+		case '\n', '\r', '\t':
+			return ' '
+		default:
+			return r
+		}
+	}, reason)
+	cleaned = strings.TrimSpace(cleaned)
+	if len(cleaned) <= maxStallReasonLength {
+		return cleaned
+	}
+	if maxStallReasonLength <= 3 {
+		return cleaned[:maxStallReasonLength]
+	}
+	return cleaned[:maxStallReasonLength-3] + "..."
 }
 
 func runOpenCode(opts RunOnceOptions, deps RunOnceDeps, issueID string, prompt string, logPath string) error {
