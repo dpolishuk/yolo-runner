@@ -24,7 +24,16 @@ func printCommand(out io.Writer, args []string) {
 	if out == nil {
 		return
 	}
-	fmt.Fprintln(out, "$ "+strings.Join(args, " "))
+	fmt.Fprintln(out, "$ "+strings.Join(redactedCommand(args), " "))
+}
+
+func redactedCommand(args []string) []string {
+	if len(args) >= 3 && args[0] == "opencode" && args[1] == "run" {
+		redacted := append([]string{}, args...)
+		redacted[2] = "<prompt redacted>"
+		return redacted
+	}
+	return args
 }
 
 func printOutcome(out io.Writer, err error, elapsed time.Duration, command string) {

@@ -80,6 +80,22 @@ func TestRunCommandPrintsFailures(t *testing.T) {
 	}
 }
 
+func TestPrintCommandRedactsOpenCodePrompt(t *testing.T) {
+	buffer := &bytes.Buffer{}
+	prompt := "Large prompt with description and acceptance criteria"
+	args := []string{"opencode", "run", prompt, "--agent", "yolo", "--format", "json", "."}
+
+	printCommand(buffer, args)
+
+	printed := buffer.String()
+	if strings.Contains(printed, prompt) {
+		t.Fatalf("expected prompt redacted, got %q", printed)
+	}
+	if !strings.Contains(printed, "$ opencode run <prompt redacted> --agent yolo --format json .") {
+		t.Fatalf("expected redacted command echo, got %q", printed)
+	}
+}
+
 func TestStartCommandWithEnvPrintsPhaseMessages(t *testing.T) {
 	buffer := &bytes.Buffer{}
 	prevOutput := commandOutput
