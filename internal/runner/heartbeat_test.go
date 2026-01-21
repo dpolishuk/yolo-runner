@@ -11,13 +11,17 @@ import (
 )
 
 type fakeProgressTicker struct {
-	ch     chan time.Time
-	closed bool
-	mu     sync.Mutex
+	ch      chan time.Time
+	stopped chan struct{}
+	closed  bool
+	mu      sync.Mutex
 }
 
 func newFakeProgressTicker() *fakeProgressTicker {
-	return &fakeProgressTicker{ch: make(chan time.Time)}
+	return &fakeProgressTicker{
+		ch:      make(chan time.Time),
+		stopped: make(chan struct{}),
+	}
 }
 
 func (f *fakeProgressTicker) C() <-chan time.Time {
@@ -31,6 +35,7 @@ func (f *fakeProgressTicker) Stop() {
 		return
 	}
 	close(f.ch)
+	close(f.stopped)
 	f.closed = true
 }
 
@@ -226,6 +231,11 @@ func TestRunOncePrintsOpenCodeHeartbeat(t *testing.T) {
 	}
 	if runResult != "blocked" {
 		t.Fatalf("expected blocked result, got %q", runResult)
+	}
+	select {
+	case <-ticker.stopped:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatalf("expected progress ticker to stop")
 	}
 
 	finished := output.String()
