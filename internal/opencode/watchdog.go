@@ -236,8 +236,6 @@ func classifyStall(config WatchdogConfig, now time.Time, lastOutput time.Time) *
 	if config.LogPath != "" {
 		if path, err := writeTailFile(config.LogPath, lines); err == nil {
 			stall.TailPath = path
-		} else {
-			stall.TailPath = "unavailable"
 		}
 	}
 	return stall

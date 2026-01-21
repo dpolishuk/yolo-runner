@@ -332,6 +332,9 @@ func TestWatchdogWritesTailFile(t *testing.T) {
 		if !strings.Contains(err.Error(), stall.TailPath) {
 			t.Fatalf("expected tail path in error string, got %q", err.Error())
 		}
+		if strings.Contains(err.Error(), "opencode_tail=") {
+			t.Fatalf("expected no opencode_tail in error string")
+		}
 	case <-time.After(500 * time.Millisecond):
 		t.Fatalf("timed out waiting for watchdog")
 	}
