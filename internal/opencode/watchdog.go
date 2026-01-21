@@ -87,6 +87,8 @@ func (err *StallError) Error() string {
 	}
 	if err.TailPath != "" {
 		parts = append(parts, "opencode_tail_path="+err.TailPath)
+	} else if len(err.Tail) > 0 {
+		parts = append(parts, "opencode_tail="+strings.Join(err.Tail, " | "))
 	}
 	return strings.Join(parts, " ")
 }
@@ -234,6 +236,8 @@ func classifyStall(config WatchdogConfig, now time.Time, lastOutput time.Time) *
 	if config.LogPath != "" {
 		if path, err := writeTailFile(config.LogPath, lines); err == nil {
 			stall.TailPath = path
+		} else {
+			stall.TailPath = "unavailable"
 		}
 	}
 	return stall
