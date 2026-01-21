@@ -87,8 +87,6 @@ func (err *StallError) Error() string {
 	}
 	if err.TailPath != "" {
 		parts = append(parts, "opencode_tail_path="+err.TailPath)
-	} else if len(err.Tail) > 0 {
-		parts = append(parts, "opencode_tail="+strings.Join(err.Tail, " | "))
 	}
 	return strings.Join(parts, " ")
 }
