@@ -69,7 +69,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tickMsg:
 		return m, tickCmd()
 	case tea.KeyMsg:
-		if typed.Type == tea.KeyRunes && len(typed.Runes) == 1 && typed.Runes[0] == 'q' {
+		if typed.Type == tea.KeyCtrlC || (typed.Type == tea.KeyRunes && len(typed.Runes) == 1 && typed.Runes[0] == 'q') {
 			m.stopRequested = true
 			m.stopping = true
 			if m.stopCh != nil && !m.stopNotified {

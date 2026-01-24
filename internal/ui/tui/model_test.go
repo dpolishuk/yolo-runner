@@ -125,3 +125,19 @@ func TestModelShowsQuitHintWhileStopping(t *testing.T) {
 		t.Fatalf("expected quit hint in view, got %q", view)
 	}
 }
+
+func TestModelStopsOnCtrlC(t *testing.T) {
+	stopCh := make(chan struct{})
+	m := NewModelWithStop(func() time.Time { return time.Unix(0, 0) }, stopCh)
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	m = updated.(Model)
+	if !m.StopRequested() {
+		t.Fatalf("expected stop requested")
+	}
+	select {
+	case <-stopCh:
+		// ok
+	default:
+		t.Fatalf("expected stop channel to close")
+	}
+}
