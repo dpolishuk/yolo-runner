@@ -5,3 +5,4 @@
 {"timestamp":"2026-01-24T13:52:10Z","issue_id":"yolo-runner-127.6.12","title":"Stop runner: 'Stopping... q: stop runner' shown but run never stops","status":"completed","commit_sha":"cfbc55fd4f9d7b87dd0a19eda196671d1a6cdc02\n"}
 {"timestamp":"2026-01-24T14:11:18Z","issue_id":"yolo-runner-127.6.14","title":"Quit hint appears only after pressing q","status":"completed","commit_sha":"b16879ef92467a1c489b63efd9d93ba9e5f6a03c\n"}
 {"timestamp": "2026-01-25T01:28:02Z", "issue_id": "yolo-runner-127.5", "title": "Runner workflow: run bd epic close-eligible to reduce bd ready noise", "status": "completed", "commit_sha": "3d2fa0ccc4b3f3cf836cd594c0497ce5ed431a25"}
+{"timestamp": "2026-01-25T01:34:51Z", "issue_id": "yolo-runner-127.6.1", "title": "Runner: if --root is an open leaf, execute it directly", "status": "completed", "commit_sha": "3d6290eea132fe32e14caae9bf0e190958f02aea"}
