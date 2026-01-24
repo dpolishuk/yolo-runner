@@ -21,10 +21,12 @@ type Bead struct {
 
 type BeadsClient interface {
 	Ready(rootID string) (Issue, error)
+	Tree(rootID string) (Issue, error)
 	Show(id string) (Bead, error)
 	UpdateStatus(id string, status string) error
 	UpdateStatusWithReason(id string, status string, reason string) error
 	Close(id string) error
+	CloseEligible() error
 	Sync() error
 }
 
@@ -71,12 +73,22 @@ type RunOnceOptions struct {
 	Out             io.Writer
 	ProgressNow     func() time.Time
 	ProgressTicker  func() (<-chan time.Time, func())
+	Progress        ProgressState
 	Stop            <-chan struct{}
 	CleanupConfirm  func(context.Context) error
 	StatusPorcelain func(context.Context) (string, error)
 	GitRestoreAll   func(context.Context) error
 	GitCleanAll     func(context.Context) error
 }
+
+type ProgressState struct {
+	Completed int
+	Total     int
+}
+
+var now = time.Now
+
+const maxStallReasonLength = 512
 
 type cleanupGit struct {
 	ctx       context.Context
@@ -165,10 +177,22 @@ func RunOnce(opts RunOnceOptions, deps RunOnceDeps) (string, error) {
 		return "", err
 	}
 
+	progressState := opts.Progress
+	if progressState.Total == 0 && deps.Beads != nil {
+		tree, err := deps.Beads.Tree(opts.RootID)
+		if err != nil {
+			return "", err
+		}
+		progressState.Total = CountRunnableLeaves(tree)
+	}
+
 	leafID := SelectFirstOpenLeafTaskID(root)
 	if leafID == "" {
+		fmt.Fprintln(out, "No tasks available")
 		return "no_tasks", nil
 	}
+
+	startTime := now()
 
 	bead, err := deps.Beads.Show(leafID)
 	if err != nil {
@@ -182,7 +206,13 @@ func RunOnce(opts RunOnceOptions, deps RunOnceDeps) (string, error) {
 	}
 	stopCtx := stopState.Context()
 
-	emitPhase(deps.Events, EventSelectTask, leafID, bead.Title)
+	progressLabel := ""
+	if progressState.Total > 0 {
+		progressLabel = fmt.Sprintf("[%d/%d] ", progressState.Completed, progressState.Total)
+	}
+	fmt.Fprintf(out, "Starting %s%s: %s\n", progressLabel, leafID, bead.Title)
+
+	emitPhase(deps.Events, EventSelectTask, leafID, bead.Title, progressState)
 
 	prompt := deps.Prompt.Build(leafID, bead.Title, bead.Description, bead.AcceptanceCriteria)
 	command := opencode.BuildArgs(opts.RepoRoot, prompt, opts.Model)
@@ -194,13 +224,18 @@ func RunOnce(opts RunOnceOptions, deps RunOnceDeps) (string, error) {
 		return "dry_run", nil
 	}
 
-	emitPhase(deps.Events, EventBeadsUpdate, leafID, bead.Title)
+	currentProgress := progressState
+	setState := func(state string) {
+		fmt.Fprintf(out, "State: %s\n", state)
+	}
+	setState("selecting task")
+	emitPhase(deps.Events, EventBeadsUpdate, leafID, bead.Title, currentProgress)
 	if err := deps.Beads.UpdateStatus(leafID, "in_progress"); err != nil {
 		return "", err
 	}
 
 	state := "opencode running"
-	fmt.Fprintf(out, "State: %s\n", state)
+	setState(state)
 	progress := ui.NewProgress(ui.ProgressConfig{
 		Writer:  out,
 		State:   state,
@@ -212,7 +247,7 @@ func RunOnce(opts RunOnceOptions, deps RunOnceDeps) (string, error) {
 	defer cancelProgress()
 	go progress.Run(progressCtx)
 
-	emitPhase(deps.Events, EventOpenCodeStart, leafID, bead.Title)
+	emitPhase(deps.Events, EventOpenCodeStart, leafID, bead.Title, currentProgress)
 	var openCodeErr error
 	if runnerWithContext, ok := deps.OpenCode.(OpenCodeContextRunner); ok {
 		openCodeErr = runnerWithContext.RunWithContext(stopCtx, leafID, opts.RepoRoot, prompt, opts.Model, opts.ConfigRoot, opts.ConfigDir, opts.LogPath)
@@ -224,8 +259,14 @@ func RunOnce(opts RunOnceOptions, deps RunOnceDeps) (string, error) {
 		progress.Finish(openCodeErr)
 		if stall, ok := openCodeErr.(*opencode.StallError); ok {
 			reason := stall.Error()
+			if len(reason) > maxStallReasonLength {
+				reason = reason[:maxStallReasonLength]
+			}
 			if err := deps.Beads.UpdateStatusWithReason(leafID, "blocked", reason); err != nil {
-				return "", err
+				shortReason := fmt.Sprintf("opencode stall category=%s", stall.Category)
+				if err := deps.Beads.UpdateStatusWithReason(leafID, "blocked", shortReason); err != nil {
+					return "", err
+				}
 			}
 			return "blocked", openCodeErr
 		}
@@ -259,14 +300,14 @@ func RunOnce(opts RunOnceOptions, deps RunOnceDeps) (string, error) {
 		return "stopped", context.Canceled
 	}
 
-	emitPhase(deps.Events, EventOpenCodeEnd, leafID, bead.Title)
+	emitPhase(deps.Events, EventOpenCodeEnd, leafID, bead.Title, currentProgress)
 
-	emitPhase(deps.Events, EventGitAdd, leafID, bead.Title)
+	emitPhase(deps.Events, EventGitAdd, leafID, bead.Title, currentProgress)
 	if err := deps.Git.AddAll(); err != nil {
 		return "", err
 	}
 
-	emitPhase(deps.Events, EventGitStatus, leafID, bead.Title)
+	emitPhase(deps.Events, EventGitStatus, leafID, bead.Title, currentProgress)
 	dirty, err := deps.Git.IsDirty()
 	if err != nil {
 		return "", err
@@ -291,7 +332,7 @@ func RunOnce(opts RunOnceOptions, deps RunOnceDeps) (string, error) {
 		commitMessage = "feat: " + strings.ToLower(bead.Title)
 	}
 
-	emitPhase(deps.Events, EventGitCommit, leafID, bead.Title)
+	emitPhase(deps.Events, EventGitCommit, leafID, bead.Title, currentProgress)
 	if err := deps.Git.Commit(commitMessage); err != nil {
 		return "", err
 	}
@@ -304,12 +345,12 @@ func RunOnce(opts RunOnceOptions, deps RunOnceDeps) (string, error) {
 		return "", err
 	}
 
-	emitPhase(deps.Events, EventBeadsClose, leafID, bead.Title)
+	emitPhase(deps.Events, EventBeadsClose, leafID, bead.Title, currentProgress)
 	if err := deps.Beads.Close(leafID); err != nil {
 		return "", err
 	}
 
-	emitPhase(deps.Events, EventBeadsVerify, leafID, bead.Title)
+	emitPhase(deps.Events, EventBeadsVerify, leafID, bead.Title, currentProgress)
 	closed, err := deps.Beads.Show(leafID)
 	if err != nil {
 		return "", err
@@ -324,24 +365,29 @@ func RunOnce(opts RunOnceOptions, deps RunOnceDeps) (string, error) {
 		return "blocked", nil
 	}
 
-	emitPhase(deps.Events, EventBeadsSync, leafID, bead.Title)
+	emitPhase(deps.Events, EventBeadsSync, leafID, bead.Title, currentProgress)
 	if err := deps.Beads.Sync(); err != nil {
 		return "", err
 	}
 
+	elapsed := now().Sub(startTime).Round(time.Second)
+	fmt.Fprintf(out, "Finished %s: completed (%ds)\n", leafID, int(elapsed.Seconds()))
+
 	return "completed", nil
 }
 
-func emitPhase(emitter EventEmitter, eventType EventType, issueID string, title string) {
+func emitPhase(emitter EventEmitter, eventType EventType, issueID string, title string, progress ProgressState) {
 	if emitter == nil {
 		return
 	}
 	emitter.Emit(Event{
-		Type:      eventType,
-		IssueID:   issueID,
-		Title:     title,
-		Phase:     string(eventType),
-		EmittedAt: time.Now(),
+		Type:              eventType,
+		IssueID:           issueID,
+		Title:             title,
+		Phase:             string(eventType),
+		ProgressCompleted: progress.Completed,
+		ProgressTotal:     progress.Total,
+		EmittedAt:         time.Now(),
 	})
 }
 
@@ -352,12 +398,12 @@ func RunLoop(opts RunOnceOptions, deps RunOnceDeps, max int, runOnce func(RunOnc
 
 	completed := 0
 	for {
-		result, err := runOnce(opts, deps)
+		current := opts
+		current.Progress.Completed = completed
+		result, err := runOnce(current, deps)
 		if err != nil {
-			// Allow the caller to keep going after a task is marked blocked.
-			// This is primarily used for stall watchdog cases where we want to
-			// continue with other tasks.
 			if result == "blocked" {
+				completed++
 				continue
 			}
 			return completed, err
@@ -367,8 +413,14 @@ func RunLoop(opts RunOnceOptions, deps RunOnceDeps, max int, runOnce func(RunOnc
 		case "completed":
 			completed++
 		case "blocked":
+			completed++
 			// Keep going; the next call should select a different open task.
 		case "no_tasks":
+			if deps.Beads != nil {
+				if err := deps.Beads.CloseEligible(); err != nil {
+					return completed, err
+				}
+			}
 			return completed, nil
 		default:
 			return completed, nil

@@ -60,6 +60,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.progressCompleted = typed.ProgressCompleted
 		m.progressTotal = typed.ProgressTotal
 		m.lastOutputAt = typed.EmittedAt
+		if typed.Type == runner.EventOpenCodeEnd {
+			m.lastOutputAt = m.now()
+		}
 	case OutputMsg:
 		m.spinnerIndex = (m.spinnerIndex + 1) % len(spinnerFrames)
 		m.lastOutputAt = m.now()
@@ -98,7 +101,7 @@ func (m Model) View() string {
 	if m.progressTotal > 0 {
 		progress = fmt.Sprintf("[%d/%d] ", m.progressCompleted, m.progressTotal)
 	}
-	return fmt.Sprintf("%s %s%s - %s\nphase: %s\nlast runner event %s\n%sq: stop runner\n", spinner, progress, m.taskID, m.taskTitle, m.phase, age, status)
+	return fmt.Sprintf("%s %s%s - %s\nphase: %s\nlast output %s\n%sq: stop runner\n", spinner, progress, m.taskID, m.taskTitle, m.phase, age, status)
 }
 
 func (m Model) lastOutputAge() string {

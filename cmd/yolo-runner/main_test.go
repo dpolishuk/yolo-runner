@@ -12,6 +12,7 @@ import (
 
 	"github.com/anomalyco/yolo-runner/internal/opencode"
 	"github.com/anomalyco/yolo-runner/internal/runner"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 type fakeRunner struct {
@@ -313,6 +314,7 @@ type fakeTUIProgram struct {
 	started chan struct{}
 	quit    chan struct{}
 	events  chan runner.Event
+	inputs  chan tea.Msg
 }
 
 func newFakeTUIProgram() *fakeTUIProgram {
@@ -320,6 +322,7 @@ func newFakeTUIProgram() *fakeTUIProgram {
 		started: make(chan struct{}),
 		quit:    make(chan struct{}),
 		events:  make(chan runner.Event, 1),
+		inputs:  make(chan tea.Msg, 1),
 	}
 }
 
@@ -330,6 +333,10 @@ func (f *fakeTUIProgram) Start() error {
 
 func (f *fakeTUIProgram) Send(event runner.Event) {
 	f.events <- event
+}
+
+func (f *fakeTUIProgram) SendInput(msg tea.Msg) {
+	f.inputs <- msg
 }
 
 func (f *fakeTUIProgram) Quit() {
@@ -383,7 +390,7 @@ func TestRunOnceMainUsesTUIOnTTYByDefault(t *testing.T) {
 	prevIsTerminal := isTerminal
 	prevNewTUIProgram := newTUIProgram
 	isTerminal = func(io.Writer) bool { return true }
-	newTUIProgram = func(stdout io.Writer) tuiProgram { return fakeProgram }
+	newTUIProgram = func(model tea.Model, stdout io.Writer, input io.Reader) tuiProgram { return fakeProgram }
 	t.Cleanup(func() {
 		isTerminal = prevIsTerminal
 		newTUIProgram = prevNewTUIProgram
@@ -421,7 +428,7 @@ func TestRunOnceMainHeadlessDisablesTUI(t *testing.T) {
 	prevIsTerminal := isTerminal
 	prevNewTUIProgram := newTUIProgram
 	isTerminal = func(io.Writer) bool { return true }
-	newTUIProgram = func(stdout io.Writer) tuiProgram {
+	newTUIProgram = func(model tea.Model, stdout io.Writer, input io.Reader) tuiProgram {
 		called = true
 		return newFakeTUIProgram()
 	}

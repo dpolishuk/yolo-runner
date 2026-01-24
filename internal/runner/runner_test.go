@@ -548,7 +548,9 @@ func TestRunOncePrintsLifecycle(t *testing.T) {
 		Events:   &eventRecorder{},
 	}
 
-	opts := RunOnceOptions{RepoRoot: "/repo", RootID: "root", Out: output, ProgressTicker: ticker, LogPath: filepath.Join(t.TempDir(), "log.jsonl")}
+	opts := RunOnceOptions{RepoRoot: "/repo", RootID: "root", Out: output, LogPath: filepath.Join(t.TempDir(), "log.jsonl"), ProgressTicker: func() (<-chan time.Time, func()) {
+		return ticker.C(), ticker.Stop
+	}}
 
 	resultCh := make(chan struct{})
 	var result string

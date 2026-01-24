@@ -212,7 +212,6 @@ func RunOnceMain(args []string, runOnce runOnceFunc, exit exitFunc, stdout io.Wr
 		ConfigDir:  resolvedConfigDir,
 		DryRun:     *dryRun,
 		Out:        stdout,
-		Stop:       runner.NewStopState(),
 	}
 
 	if stdout == nil {
@@ -225,7 +224,7 @@ func RunOnceMain(args []string, runOnce runOnceFunc, exit exitFunc, stdout io.Wr
 	var program tuiProgram
 	if !*headless && isTerminal(stdout) {
 		stopCh := make(chan struct{})
-		options.Stop.Watch(stopCh)
+		options.Stop = stopCh
 		program = newTUIProgram(tui.NewModelWithStop(nil, stopCh), stdout, os.Stdin)
 		deps.Events = tuiEmitter{program: program}
 		go func() {
