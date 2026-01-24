@@ -47,18 +47,51 @@ func (a *Adapter) Ready(rootID string) (runner.Issue, error) {
 }
 
 func (a *Adapter) Tree(rootID string) (runner.Issue, error) {
+	issues, err := a.listTree(rootID)
+	if err != nil {
+		return runner.Issue{}, err
+	}
+	if len(issues) > 0 {
+		if len(issues) == 1 {
+			return issues[0], nil
+		}
+		for _, issue := range issues {
+			if issue.ID == rootID {
+				return issue, nil
+			}
+		}
+		return runner.Issue{
+			ID:        rootID,
+			IssueType: "epic",
+			Status:    "open",
+			Children:  issues,
+		}, nil
+	}
+
 	output, err := a.runner.Run("bd", "show", rootID, "--json")
 	if err != nil {
 		return runner.Issue{}, err
 	}
-	var issues []runner.Issue
-	if err := json.Unmarshal([]byte(output), &issues); err != nil {
+	var fallback []runner.Issue
+	if err := json.Unmarshal([]byte(output), &fallback); err != nil {
 		return runner.Issue{}, err
 	}
-	if len(issues) == 0 {
+	if len(fallback) == 0 {
 		return runner.Issue{}, nil
 	}
-	return issues[0], nil
+	return fallback[0], nil
+}
+
+func (a *Adapter) listTree(rootID string) ([]runner.Issue, error) {
+	output, err := a.runner.Run("bd", "list", "--parent", rootID, "--tree", "--json")
+	if err != nil {
+		return nil, err
+	}
+	var issues []runner.Issue
+	if err := json.Unmarshal([]byte(output), &issues); err != nil {
+		return nil, err
+	}
+	return issues, nil
 }
 
 func (a *Adapter) readyFallback(rootID string) (runner.Issue, error) {

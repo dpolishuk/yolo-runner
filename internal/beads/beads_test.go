@@ -249,7 +249,7 @@ func TestTreeLoadsIssue(t *testing.T) {
 		t.Fatalf("unexpected children: %#v", issue.Children)
 	}
 
-	assertCall(t, runner.calls, []string{"bd", "show", "root", "--json"})
+	assertCall(t, runner.calls, []string{"bd", "list", "--parent", "root", "--tree", "--json"})
 }
 
 func TestErrorsPropagate(t *testing.T) {
