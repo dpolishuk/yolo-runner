@@ -75,7 +75,7 @@ type RunOnceOptions struct {
 	ProgressTicker  func() (<-chan time.Time, func())
 	Progress        ProgressState
 	Stop            <-chan struct{}
-	CleanupConfirm  func(context.Context) error
+	CleanupConfirm  func(summary string) (bool, error)
 	StatusPorcelain func(context.Context) (string, error)
 	GitRestoreAll   func(context.Context) error
 	GitCleanAll     func(context.Context) error
@@ -161,22 +161,6 @@ func progressTickerFrom(fn func() (<-chan time.Time, func())) ui.ProgressTicker 
 	}
 	ch, stop := fn()
 	return progressTickerAdapter{ch: ch, stop: stop}
-}
-
-func cleanupConfirmAdapter(confirm func(context.Context) error, ctx context.Context) func(summary string) (bool, error) {
-	if confirm == nil {
-		return nil
-	}
-	return func(string) (bool, error) {
-		callCtx := ctx
-		if callCtx == nil {
-			callCtx = context.Background()
-		}
-		if err := confirm(callCtx); err != nil {
-			return false, err
-		}
-		return true, nil
-	}
 }
 
 func RunOnce(opts RunOnceOptions, deps RunOnceDeps) (string, error) {
@@ -304,7 +288,7 @@ func RunOnce(opts RunOnceOptions, deps RunOnceDeps) (string, error) {
 				Beads:   deps.Beads,
 				Git:     cleanupGit{ctx: stopCtx, statusFn: opts.StatusPorcelain, restoreFn: opts.GitRestoreAll, cleanFn: opts.GitCleanAll},
 				Out:     out,
-				Confirm: cleanupConfirmAdapter(opts.CleanupConfirm, stopCtx),
+				Confirm: opts.CleanupConfirm,
 			}); err != nil {
 				return "", err
 			}
@@ -319,7 +303,7 @@ func RunOnce(opts RunOnceOptions, deps RunOnceDeps) (string, error) {
 			Beads:   deps.Beads,
 			Git:     cleanupGit{ctx: stopCtx, statusFn: opts.StatusPorcelain, restoreFn: opts.GitRestoreAll, cleanFn: opts.GitCleanAll},
 			Out:     out,
-			Confirm: cleanupConfirmAdapter(opts.CleanupConfirm, stopCtx),
+			Confirm: opts.CleanupConfirm,
 		}); err != nil {
 			return "", err
 		}

@@ -218,6 +218,18 @@ func RunOnceMain(args []string, runOnce runOnceFunc, exit exitFunc, stdout io.Wr
 		DryRun:     *dryRun,
 		Out:        stdout,
 	}
+	options.StatusPorcelain = func(context.Context) (string, error) {
+		return gitAdapter.StatusPorcelain()
+	}
+	options.GitRestoreAll = func(context.Context) error {
+		return gitAdapter.RestoreAll()
+	}
+	options.GitCleanAll = func(context.Context) error {
+		return gitAdapter.CleanAll()
+	}
+	options.CleanupConfirm = func(summary string) (bool, error) {
+		return cleanupConfirmPrompt(summary, os.Stdin, stdout)
+	}
 
 	if stdout == nil {
 		options.Out = io.Discard

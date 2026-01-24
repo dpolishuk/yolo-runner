@@ -425,6 +425,49 @@ func TestRunOnceMainUsesTUIOnTTYByDefault(t *testing.T) {
 	}
 }
 
+func TestRunOnceMainWiresStopCleanupHooks(t *testing.T) {
+	fakeProgram := newFakeTUIProgram()
+	prevIsTerminal := isTerminal
+	prevNewTUIProgram := newTUIProgram
+	isTerminal = func(io.Writer) bool { return true }
+	newTUIProgram = func(model tea.Model, stdout io.Writer, input io.Reader) tuiProgram { return fakeProgram }
+	t.Cleanup(func() {
+		isTerminal = prevIsTerminal
+		newTUIProgram = prevNewTUIProgram
+	})
+
+	tempDir := t.TempDir()
+	writeAgentFile(t, tempDir, "---\npermission: allow\n---\n")
+	runOnce := &fakeRunOnce{result: "no_tasks"}
+	exit := &fakeExit{}
+	out := &bytes.Buffer{}
+	beadsRunner := &fakeRunner{}
+	gitRunner := &fakeGitRunner{}
+
+	code := RunOnceMain([]string{"--repo", tempDir, "--root", "root"}, runOnce.Run, exit.Exit, out, out, beadsRunner, gitRunner)
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d", code)
+	}
+	if runOnce.opts.Stop == nil {
+		t.Fatalf("expected stop channel to be wired")
+	}
+	if runOnce.opts.CleanupConfirm == nil {
+		t.Fatalf("expected cleanup confirmation to be wired")
+	}
+	if runOnce.opts.StatusPorcelain == nil {
+		t.Fatalf("expected status porcelain hook to be wired")
+	}
+	if runOnce.opts.GitRestoreAll == nil {
+		t.Fatalf("expected git restore hook to be wired")
+	}
+	if runOnce.opts.GitCleanAll == nil {
+		t.Fatalf("expected git clean hook to be wired")
+	}
+	waitForSignal(t, fakeProgram.started, "tui start")
+	waitForSignal(t, fakeProgram.quit, "tui quit")
+}
+
 func TestRunOnceMainHeadlessDisablesTUI(t *testing.T) {
 	called := false
 	prevIsTerminal := isTerminal
