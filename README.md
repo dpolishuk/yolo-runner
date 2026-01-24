@@ -116,6 +116,10 @@ Use a throwaway branch or a fresh worktree so the run-once flow can safely creat
 
 Success looks like: the runner finishes without errors, a single commit exists for the bead, the bead is closed and synced, and the logs show a complete OpenCode run with a recorded commit and `bd close`/`bd sync` steps.
 
+## Session Completion
+
+After finishing a batch of tasks, run `bd epic close-eligible` to close epics whose children are complete and keep `bd ready` output clean.
+
 ## Failure Modes
 
 - **No changes after OpenCode run**: task is marked `blocked`; no commit or close.
