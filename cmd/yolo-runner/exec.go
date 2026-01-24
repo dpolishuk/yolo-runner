@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"yolo-runner/internal/opencode"
+	"github.com/anomalyco/yolo-runner/internal/opencode"
 )
 
 var commandOutput io.Writer = os.Stdout

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"yolo-runner/internal/opencode"
+	"github.com/anomalyco/yolo-runner/internal/opencode"
 )
 
 func TestRunOnceMarksBlockedOnStall(t *testing.T) {

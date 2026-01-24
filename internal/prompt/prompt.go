@@ -30,5 +30,15 @@ Your task is: %s - %s
 - All tests must pass before marking task complete
 
 Start now by analyzing the codebase and writing your first failing test.
-`, issueID, title, description, acceptance)
+`, issueID, title, truncate(description, 4000), truncate(acceptance, 2000))
+}
+
+func truncate(value string, maxLen int) string {
+	if maxLen <= 0 {
+		return ""
+	}
+	if len(value) <= maxLen {
+		return value
+	}
+	return value[:maxLen]
 }

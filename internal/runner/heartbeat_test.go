@@ -167,12 +167,14 @@ func TestRunOncePrintsOpenCodeHeartbeat(t *testing.T) {
 	var runResult string
 	go func() {
 		runResult, runErr = RunOnce(RunOnceOptions{
-			RepoRoot:       repoRoot,
-			RootID:         "root",
-			LogPath:        logPath,
-			Out:            output,
-			ProgressNow:    now,
-			ProgressTicker: ticker,
+			RepoRoot:    repoRoot,
+			RootID:      "root",
+			LogPath:     logPath,
+			Out:         output,
+			ProgressNow: now,
+			ProgressTicker: func() (<-chan time.Time, func()) {
+				return ticker.C(), ticker.Stop
+			},
 		}, deps)
 		close(resultCh)
 	}()

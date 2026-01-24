@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"yolo-runner/internal/runner"
+	"github.com/anomalyco/yolo-runner/internal/runner"
 )
 
 type fakeRunner struct {

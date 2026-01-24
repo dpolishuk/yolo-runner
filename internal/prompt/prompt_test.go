@@ -1,6 +1,9 @@
 package prompt
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestBuildIncludesAllFields(t *testing.T) {
 	prompt := Build("task-1", "Title", "Desc", "Acceptance")
@@ -17,6 +20,19 @@ func TestBuildIncludesAllFields(t *testing.T) {
 		"Start now by analyzing the codebase and writing your first failing test.",
 	}) {
 		t.Fatalf("prompt missing expected content: %q", prompt)
+	}
+}
+
+func TestBuildTruncatesLargeFields(t *testing.T) {
+	longDesc := strings.Repeat("d", 5000)
+	longAcc := strings.Repeat("a", 3000)
+	prompt := Build("task-1", "Title", longDesc, longAcc)
+
+	if strings.Contains(prompt, strings.Repeat("d", 4001)) {
+		t.Fatalf("expected description to be truncated")
+	}
+	if strings.Contains(prompt, strings.Repeat("a", 2001)) {
+		t.Fatalf("expected acceptance to be truncated")
 	}
 }
 

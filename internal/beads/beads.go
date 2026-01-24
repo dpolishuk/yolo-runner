@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 
-	"yolo-runner/internal/runner"
+	"github.com/anomalyco/yolo-runner/internal/runner"
 )
 
 type Runner interface {

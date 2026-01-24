@@ -6,7 +6,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"yolo-runner/internal/runner"
+	"github.com/anomalyco/yolo-runner/internal/runner"
 )
 
 type Model struct {

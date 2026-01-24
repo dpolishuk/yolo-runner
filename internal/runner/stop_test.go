@@ -197,8 +197,9 @@ func TestRunOnceStopsOnRequest(t *testing.T) {
 	}
 	openCode := &fakeOpenCodeWithContext{recorder: recorder, started: make(chan struct{})}
 	stop := NewStopState()
+	stopCh := make(chan struct{})
 
-	opts := RunOnceOptions{RepoRoot: "/repo", RootID: "root", Out: &bytes.Buffer{}, Stop: stop}
+	opts := RunOnceOptions{RepoRoot: "/repo", RootID: "root", Out: &bytes.Buffer{}, Stop: stopCh}
 	deps := RunOnceDeps{
 		Beads:    beads,
 		Prompt:   &fakePrompt{recorder: recorder, prompt: "PROMPT"},
@@ -217,6 +218,7 @@ func TestRunOnceStopsOnRequest(t *testing.T) {
 
 	<-openCode.started
 	stop.Request()
+	close(stopCh)
 
 	confirm := func(summary string) (bool, error) {
 		return false, nil
