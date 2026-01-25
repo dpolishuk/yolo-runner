@@ -113,8 +113,9 @@ func RunACPClient(
 	if err != nil {
 		return err
 	}
+	_ = conn.Close()
 
-	if err := <-errCh; err != nil && !errors.Is(err, io.EOF) {
+	if err := <-errCh; err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, net.ErrClosed) {
 		return err
 	}
 
@@ -161,7 +162,21 @@ func (c *acpClient) RequestPermission(ctx context.Context, params *acp.RequestPe
 		}, nil
 	}
 
-	option := params.Options[0]
+	var option acp.PermissionOption
+	found := false
+	for i := range params.Options {
+		candidate := params.Options[i]
+		if candidate.Kind == acp.PermissionOptionKindAllowOnce || candidate.Kind == acp.PermissionOptionKindAllowAlways {
+			option = candidate
+			found = true
+			break
+		}
+	}
+	if !found {
+		return &acp.RequestPermissionResponse{
+			Outcome: acp.NewRequestPermissionOutcomeCancelled(),
+		}, nil
+	}
 	return &acp.RequestPermissionResponse{
 		Outcome: acp.NewRequestPermissionOutcomeSelected(option.OptionId),
 	}, nil
