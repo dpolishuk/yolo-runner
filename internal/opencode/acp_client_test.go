@@ -64,6 +64,40 @@ func TestACPClientCancelsQuestionPermission(t *testing.T) {
 	}
 }
 
+func TestACPClientQuestionSendsPrompt(t *testing.T) {
+	var gotPrompt string
+	client := &acpClient{
+		handler: NewACPHandler("issue-1", "log", nil),
+		promptFn: func(prompt string) error {
+			gotPrompt = prompt
+			return nil
+		},
+	}
+	questionKind := acp.ToolKind("question")
+
+	_, err := client.RequestPermission(context.Background(), &acp.RequestPermissionRequest{
+		ToolCall: acp.ToolCallUpdate{
+			ToolCallId: acp.ToolCallId("tool-1"),
+			Title:      "Need input",
+			Kind:       &questionKind,
+		},
+		Options: []acp.PermissionOption{
+			{
+				Kind:     acp.PermissionOptionKindAllowOnce,
+				Name:     "Allow",
+				OptionId: acp.PermissionOptionId("allow"),
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if gotPrompt != "decide yourself" {
+		t.Fatalf("expected prompt to be sent, got %q", gotPrompt)
+	}
+}
+
 func TestACPClientSessionUpdateCallback(t *testing.T) {
 	called := false
 	client := &acpClient{

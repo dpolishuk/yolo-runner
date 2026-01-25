@@ -95,6 +95,16 @@ func RunACPClient(
 		return err
 	}
 
+	client.promptFn = func(text string) error {
+		_, err := connection.Prompt(ctx, &acp.PromptRequest{
+			SessionId: session.SessionId,
+			Prompt: []acp.ContentBlock{
+				acp.NewContentBlockText(text),
+			},
+		})
+		return err
+	}
+
 	if modeID := findModeID(session.Modes, "yolo"); modeID != "" {
 		if err := connection.SetSessionMode(ctx, &acp.SetSessionModeRequest{
 			ModeId:    modeID,
@@ -125,6 +135,7 @@ func RunACPClient(
 type acpClient struct {
 	handler  *ACPHandler
 	onUpdate func(*acp.SessionNotification)
+	promptFn func(string) error
 }
 
 func (c *acpClient) SessionUpdate(ctx context.Context, params *acp.SessionNotification) error {
@@ -143,8 +154,14 @@ func (c *acpClient) RequestPermission(ctx context.Context, params *acp.RequestPe
 		isQuestion = true
 	}
 	if isQuestion {
+		response := ""
 		if c != nil && c.handler != nil {
-			c.handler.HandleQuestion(ctx, string(params.ToolCall.ToolCallId), params.ToolCall.Title)
+			response = c.handler.HandleQuestion(ctx, string(params.ToolCall.ToolCallId), params.ToolCall.Title)
+		}
+		if response != "" && c != nil && c.promptFn != nil {
+			if err := c.promptFn(response); err != nil {
+				return nil, err
+			}
 		}
 		return &acp.RequestPermissionResponse{
 			Outcome: acp.NewRequestPermissionOutcomeCancelled(),
