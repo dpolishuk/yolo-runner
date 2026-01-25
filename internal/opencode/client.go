@@ -32,6 +32,11 @@ func (client ACPClientFunc) Run(ctx context.Context, issueID string, logPath str
 	return client(ctx, issueID, logPath)
 }
 
+const (
+	acpReadyRetryDelay = 10 * time.Millisecond
+	acpShutdownGrace   = 2 * time.Second
+)
+
 func BuildArgs(repoRoot string, prompt string, model string) []string {
 	args := []string{"opencode", "run", prompt, "--agent", "yolo", "--format", "json"}
 	if model != "" {
@@ -130,6 +135,9 @@ func RunWithACP(ctx context.Context, issueID string, repoRoot string, prompt str
 
 	if acpClient == nil {
 		acpClient = ACPClientFunc(func(ctx context.Context, issueID string, logPath string) error {
+			if err := waitForACPReady(ctx, endpoint, acpReadyRetryDelay); err != nil {
+				return err
+			}
 			handler := NewACPHandler(issueID, logPath, func(logPath string, issueID string, requestType string, decision string) error {
 				return logging.AppendACPRequest(logPath, logging.ACPRequestEntry{
 					IssueID:     issueID,
@@ -150,9 +158,17 @@ func RunWithACP(ctx context.Context, issueID string, repoRoot string, prompt str
 
 	var killErr error
 	var waitErr error
+	timeout := time.NewTimer(acpShutdownGrace)
+	defer timeout.Stop()
 	select {
 	case waitErr = <-waitCh:
-	case <-time.After(10 * time.Millisecond):
+		if !timeout.Stop() {
+			<-timeout.C
+		}
+	case <-ctx.Done():
+		killErr = process.Kill()
+		waitErr = <-waitCh
+	case <-timeout.C:
 		killErr = process.Kill()
 		waitErr = <-waitCh
 	}
@@ -161,4 +177,26 @@ func RunWithACP(ctx context.Context, issueID string, repoRoot string, prompt str
 		return errors.Join(runErr, shutdownErr)
 	}
 	return shutdownErr
+}
+
+func waitForACPReady(ctx context.Context, endpoint string, retryDelay time.Duration) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if retryDelay <= 0 {
+		retryDelay = acpReadyRetryDelay
+	}
+	for {
+		var dialer net.Dialer
+		conn, err := dialer.DialContext(ctx, "tcp", endpoint)
+		if err == nil {
+			_ = conn.Close()
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(retryDelay):
+		}
+	}
 }

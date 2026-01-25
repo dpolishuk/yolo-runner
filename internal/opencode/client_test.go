@@ -3,6 +3,7 @@ package opencode
 import (
 	"context"
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -246,6 +247,73 @@ func TestRunWithACPContextCancelsProcess(t *testing.T) {
 
 	if !proc.killed {
 		t.Fatalf("expected process to be killed")
+	}
+}
+
+func TestRunWithACPWaitsForProcessExit(t *testing.T) {
+	tempDir := t.TempDir()
+	logPath := filepath.Join(tempDir, "runner-logs", "opencode", "issue-1.jsonl")
+	proc := newDelayedProcess()
+	started := make(chan struct{})
+	runner := RunnerFunc(func(args []string, env map[string]string, stdoutPath string) (Process, error) {
+		close(started)
+		return proc, nil
+	})
+
+	acpClient := ACPClientFunc(func(ctx context.Context, issueID string, logPath string) error {
+		return nil
+	})
+
+	go func() {
+		<-started
+		time.Sleep(50 * time.Millisecond)
+		proc.finish(nil)
+	}()
+
+	if err := RunWithACP(context.Background(), "issue-1", tempDir, "prompt", "", "", "", logPath, runner, acpClient); err != nil {
+		t.Fatalf("RunWithACP error: %v", err)
+	}
+	if proc.killed {
+		t.Fatalf("expected process not to be killed")
+	}
+}
+
+func TestWaitForACPReadyRetries(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	addr := listener.Addr().String()
+	if err := listener.Close(); err != nil {
+		t.Fatalf("close listener: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+
+	ready := make(chan struct{})
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		delayedListener, listenErr := net.Listen("tcp", addr)
+		if listenErr != nil {
+			return
+		}
+		defer delayedListener.Close()
+		close(ready)
+		conn, acceptErr := delayedListener.Accept()
+		if acceptErr == nil {
+			_ = conn.Close()
+		}
+	}()
+
+	if err := waitForACPReady(ctx, addr, 10*time.Millisecond); err != nil {
+		t.Fatalf("waitForACPReady error: %v", err)
+	}
+
+	select {
+	case <-ready:
+	default:
+		t.Fatalf("expected listener to start")
 	}
 }
 
