@@ -34,6 +34,18 @@ func TestBuildArgsWithModel(t *testing.T) {
 	}
 }
 
+func TestRedactArgsForRun(t *testing.T) {
+	args := []string{"opencode", "run", "secret prompt", "--agent", "yolo"}
+
+	redacted := RedactArgs(args)
+	if redacted[2] != "<prompt redacted>" {
+		t.Fatalf("expected prompt redacted, got %q", redacted[2])
+	}
+	if args[2] != "secret prompt" {
+		t.Fatalf("expected original args unchanged")
+	}
+}
+
 func TestBuildEnvAddsDisableFlagsAndCI(t *testing.T) {
 	env := BuildEnv(map[string]string{"HELLO": "world"}, "", "")
 

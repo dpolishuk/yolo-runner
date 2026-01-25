@@ -48,6 +48,15 @@ func BuildArgs(repoRoot string, prompt string, model string) []string {
 	return args
 }
 
+func RedactArgs(args []string) []string {
+	if len(args) >= 3 && args[0] == "opencode" && args[1] == "run" {
+		redacted := append([]string{}, args...)
+		redacted[2] = "<prompt redacted>"
+		return redacted
+	}
+	return args
+}
+
 func BuildEnv(baseEnv map[string]string, configRoot string, configDir string) map[string]string {
 	env := map[string]string{}
 	if baseEnv != nil {
