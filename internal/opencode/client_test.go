@@ -94,7 +94,11 @@ func TestRunEnsuresConfigAndOverwritesLog(t *testing.T) {
 	defaultHomeDir = func() (string, error) { return homeDir, nil }
 	t.Cleanup(func() { defaultHomeDir = os.UserHomeDir })
 
-	if err := Run(
+	acpClient := ACPClientFunc(func(ctx context.Context, issueID string, logPath string) error {
+		return nil
+	})
+	if err := RunWithACP(
+		context.Background(),
 		"issue-1",
 		"/repo",
 		"prompt",
@@ -103,6 +107,7 @@ func TestRunEnsuresConfigAndOverwritesLog(t *testing.T) {
 		configDir,
 		logPath,
 		runner,
+		acpClient,
 	); err != nil {
 		t.Fatalf("Run error: %v", err)
 	}
@@ -172,7 +177,11 @@ func TestRunDefaultsLogPath(t *testing.T) {
 	defaultHomeDir = func() (string, error) { return homeDir, nil }
 	t.Cleanup(func() { defaultHomeDir = os.UserHomeDir })
 
-	if err := Run(
+	acpClient := ACPClientFunc(func(ctx context.Context, issueID string, logPath string) error {
+		return nil
+	})
+	if err := RunWithACP(
+		context.Background(),
 		"issue-99",
 		repoRoot,
 		"prompt",
@@ -181,6 +190,7 @@ func TestRunDefaultsLogPath(t *testing.T) {
 		configDir,
 		"",
 		runner,
+		acpClient,
 	); err != nil {
 		t.Fatalf("Run error: %v", err)
 	}
@@ -199,7 +209,7 @@ func TestRunDefaultsLogPath(t *testing.T) {
 	}
 }
 
-func TestRunWithContextCancelsProcess(t *testing.T) {
+func TestRunWithACPContextCancelsProcess(t *testing.T) {
 	tempDir := t.TempDir()
 	configRoot := filepath.Join(tempDir, "config")
 	configDir := filepath.Join(configRoot, "opencode")
@@ -214,8 +224,12 @@ func TestRunWithContextCancelsProcess(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
+	acpClient := ACPClientFunc(func(ctx context.Context, issueID string, logPath string) error {
+		<-ctx.Done()
+		return ctx.Err()
+	})
 	go func() {
-		done <- RunWithContext(ctx, "issue-1", "/repo", "prompt", "", configRoot, configDir, logPath, runner)
+		done <- RunWithACP(ctx, "issue-1", "/repo", "prompt", "", configRoot, configDir, logPath, runner, acpClient)
 	}()
 
 	<-started

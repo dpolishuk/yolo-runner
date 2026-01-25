@@ -2,8 +2,14 @@ package opencode
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"net"
 	"os"
 	"path/filepath"
+	"time"
+
+	"github.com/anomalyco/yolo-runner/internal/logging"
 )
 
 type Runner interface {
@@ -14,6 +20,16 @@ type RunnerFunc func(args []string, env map[string]string, stdoutPath string) (P
 
 func (runner RunnerFunc) Start(args []string, env map[string]string, stdoutPath string) (Process, error) {
 	return runner(args, env, stdoutPath)
+}
+
+type ACPClient interface {
+	Run(ctx context.Context, issueID string, logPath string) error
+}
+
+type ACPClientFunc func(ctx context.Context, issueID string, logPath string) error
+
+func (client ACPClientFunc) Run(ctx context.Context, issueID string, logPath string) error {
+	return client(ctx, issueID, logPath)
 }
 
 func BuildArgs(repoRoot string, prompt string, model string) []string {
@@ -58,50 +74,14 @@ func BuildEnv(baseEnv map[string]string, configRoot string, configDir string) ma
 }
 
 func Run(issueID string, repoRoot string, prompt string, model string, configRoot string, configDir string, logPath string, runner Runner) error {
-	if runner == nil {
-		return nil
-	}
-	if configRoot != "" {
-		if err := os.MkdirAll(configRoot, 0o755); err != nil {
-			return err
-		}
-	}
-	if configDir != "" {
-		if err := os.MkdirAll(configDir, 0o755); err != nil {
-			return err
-		}
-		configFile := filepath.Join(configDir, "opencode.json")
-		if _, err := os.Stat(configFile); os.IsNotExist(err) {
-			if err := os.WriteFile(configFile, []byte("{}"), 0o644); err != nil {
-				return err
-			}
-		}
-	}
-	if logPath == "" {
-		logPath = filepath.Join(repoRoot, "runner-logs", "opencode", issueID+".jsonl")
-	}
-	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
-		return err
-	}
-
-	args := BuildArgs(repoRoot, prompt, model)
-	env := BuildEnv(nil, configRoot, configDir)
-	process, err := runner.Start(args, env, logPath)
-	if err != nil {
-		return err
-	}
-	watchdog := NewWatchdog(WatchdogConfig{
-		LogPath:        logPath,
-		OpenCodeLogDir: filepath.Join(os.Getenv("HOME"), ".local", "share", "opencode", "log"),
-		TailLines:      50,
-	})
-	if err := watchdog.Monitor(process); err != nil {
-		return err
-	}
-	return nil
+	return RunWithACP(context.Background(), issueID, repoRoot, prompt, model, configRoot, configDir, logPath, runner, nil)
 }
 
 func RunWithContext(ctx context.Context, issueID string, repoRoot string, prompt string, model string, configRoot string, configDir string, logPath string, runner Runner) error {
+	return RunWithACP(ctx, issueID, repoRoot, prompt, model, configRoot, configDir, logPath, runner, nil)
+}
+
+func RunWithACP(ctx context.Context, issueID string, repoRoot string, prompt string, model string, configRoot string, configDir string, logPath string, runner Runner, acpClient ACPClient) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -131,27 +111,54 @@ func RunWithContext(ctx context.Context, issueID string, repoRoot string, prompt
 		return err
 	}
 
-	args := BuildArgs(repoRoot, prompt, model)
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return err
+	}
+	port := listener.Addr().(*net.TCPAddr).Port
+	if err := listener.Close(); err != nil {
+		return err
+	}
+
+	endpoint := fmt.Sprintf("127.0.0.1:%d", port)
+	args := BuildACPArgs(repoRoot, port)
 	env := BuildEnv(nil, configRoot, configDir)
 	process, err := runner.Start(args, env, logPath)
 	if err != nil {
 		return err
 	}
-	watchdog := NewWatchdog(WatchdogConfig{
-		LogPath:        logPath,
-		OpenCodeLogDir: filepath.Join(os.Getenv("HOME"), ".local", "share", "opencode", "log"),
-		TailLines:      50,
-	})
-	resultCh := make(chan error, 1)
+
+	if acpClient == nil {
+		acpClient = ACPClientFunc(func(ctx context.Context, issueID string, logPath string) error {
+			handler := NewACPHandler(issueID, logPath, func(logPath string, issueID string, requestType string, decision string) error {
+				return logging.AppendACPRequest(logPath, logging.ACPRequestEntry{
+					IssueID:     issueID,
+					RequestType: requestType,
+					Decision:    decision,
+				})
+			})
+			return RunACPClient(ctx, endpoint, repoRoot, prompt, handler, nil)
+		})
+	}
+
+	runErr := acpClient.Run(ctx, issueID, logPath)
+
+	waitCh := make(chan error, 1)
 	go func() {
-		resultCh <- watchdog.Monitor(process)
+		waitCh <- process.Wait()
 	}()
 
+	var killErr error
+	var waitErr error
 	select {
-	case err := <-resultCh:
-		return err
-	case <-ctx.Done():
-		_ = process.Kill()
-		return ctx.Err()
+	case waitErr = <-waitCh:
+	case <-time.After(10 * time.Millisecond):
+		killErr = process.Kill()
+		waitErr = <-waitCh
 	}
+	shutdownErr := errors.Join(killErr, waitErr)
+	if runErr != nil {
+		return errors.Join(runErr, shutdownErr)
+	}
+	return shutdownErr
 }
