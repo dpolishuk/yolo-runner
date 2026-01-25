@@ -59,3 +59,20 @@ func TestACPClientCancelsQuestionPermission(t *testing.T) {
 		t.Fatalf("expected cancelled outcome, got %#v", response.Outcome)
 	}
 }
+
+func TestACPClientSessionUpdateCallback(t *testing.T) {
+	called := false
+	client := &acpClient{
+		onUpdate: func(_ *acp.SessionNotification) {
+			called = true
+		},
+	}
+
+	if err := client.SessionUpdate(context.Background(), &acp.SessionNotification{}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !called {
+		t.Fatalf("expected session update callback to be called")
+	}
+}

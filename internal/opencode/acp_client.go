@@ -43,7 +43,14 @@ func (h *ACPHandler) HandleQuestion(ctx context.Context, requestID string, promp
 	return "decide yourself"
 }
 
-func RunACPClient(ctx context.Context, endpoint string, repoRoot string, prompt string, handler *ACPHandler) error {
+func RunACPClient(
+	ctx context.Context,
+	endpoint string,
+	repoRoot string,
+	prompt string,
+	handler *ACPHandler,
+	onUpdate func(*acp.SessionNotification),
+) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -59,7 +66,7 @@ func RunACPClient(ctx context.Context, endpoint string, repoRoot string, prompt 
 	}
 	defer conn.Close()
 
-	client := &acpClient{handler: handler}
+	client := &acpClient{handler: handler, onUpdate: onUpdate}
 	connection := acp.NewClientSideConnection(client, conn, conn)
 
 	errCh := make(chan error, 1)
@@ -115,10 +122,14 @@ func RunACPClient(ctx context.Context, endpoint string, repoRoot string, prompt 
 }
 
 type acpClient struct {
-	handler *ACPHandler
+	handler  *ACPHandler
+	onUpdate func(*acp.SessionNotification)
 }
 
 func (c *acpClient) SessionUpdate(ctx context.Context, params *acp.SessionNotification) error {
+	if c != nil && c.onUpdate != nil {
+		c.onUpdate(params)
+	}
 	return nil
 }
 
