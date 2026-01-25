@@ -103,6 +103,7 @@ func TestSendQuestionResponsesDrainsQueue(t *testing.T) {
 	responses := make(chan string, 2)
 	responses <- "first"
 	responses <- "second"
+	close(responses)
 
 	var got []string
 	promptFn := func(text string) error {
@@ -119,6 +120,33 @@ func TestSendQuestionResponsesDrainsQueue(t *testing.T) {
 	}
 
 	if !reflect.DeepEqual(got, []string{"first", "second"}) {
+		t.Fatalf("unexpected prompts: %#v", got)
+	}
+}
+
+func TestSendQuestionResponsesWaitsForLateResponse(t *testing.T) {
+	responses := make(chan string, 1)
+
+	go func() {
+		time.Sleep(10 * time.Millisecond)
+		responses <- "late"
+		close(responses)
+	}()
+
+	var got []string
+	promptFn := func(text string) error {
+		got = append(got, text)
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	if err := sendQuestionResponses(ctx, promptFn, responses); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !reflect.DeepEqual(got, []string{"late"}) {
 		t.Fatalf("unexpected prompts: %#v", got)
 	}
 }

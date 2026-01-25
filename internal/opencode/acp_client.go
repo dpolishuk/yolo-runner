@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 
 	acp "github.com/ironpark/acp-go"
 )
@@ -123,6 +124,7 @@ func RunACPClient(
 	if err != nil {
 		return err
 	}
+	client.closeQuestionResponses()
 	if err := sendQuestionResponses(ctx, promptFn, client.questionResponses); err != nil {
 		return err
 	}
@@ -164,16 +166,16 @@ func sendQuestionResponses(ctx context.Context, promptFn func(string) error, res
 			if err := promptFn(response); err != nil {
 				return err
 			}
-		default:
-			return nil
 		}
 	}
 }
 
 type acpClient struct {
-	handler           *ACPHandler
-	onUpdate          func(*acp.SessionNotification)
-	questionResponses chan string
+	handler                 *ACPHandler
+	onUpdate                func(*acp.SessionNotification)
+	questionResponses       chan string
+	questionResponsesMu     sync.Mutex
+	questionResponsesClosed bool
 }
 
 func (c *acpClient) SessionUpdate(ctx context.Context, params *acp.SessionNotification) error {
@@ -196,11 +198,15 @@ func (c *acpClient) RequestPermission(ctx context.Context, params *acp.RequestPe
 		if c != nil && c.handler != nil {
 			response = c.handler.HandleQuestion(ctx, string(params.ToolCall.ToolCallId), params.ToolCall.Title)
 		}
-		if response != "" && c != nil && c.questionResponses != nil {
-			select {
-			case c.questionResponses <- response:
-			default:
+		if response != "" && c != nil {
+			c.questionResponsesMu.Lock()
+			if !c.questionResponsesClosed && c.questionResponses != nil {
+				select {
+				case c.questionResponses <- response:
+				default:
+				}
 			}
+			c.questionResponsesMu.Unlock()
 		}
 		return &acp.RequestPermissionResponse{
 			Outcome: acp.NewRequestPermissionOutcomeCancelled(),
@@ -236,6 +242,21 @@ func (c *acpClient) RequestPermission(ctx context.Context, params *acp.RequestPe
 	return &acp.RequestPermissionResponse{
 		Outcome: acp.NewRequestPermissionOutcomeSelected(option.OptionId),
 	}, nil
+}
+
+func (c *acpClient) closeQuestionResponses() {
+	if c == nil {
+		return
+	}
+	c.questionResponsesMu.Lock()
+	defer c.questionResponsesMu.Unlock()
+	if c.questionResponsesClosed {
+		return
+	}
+	c.questionResponsesClosed = true
+	if c.questionResponses != nil {
+		close(c.questionResponses)
+	}
 }
 
 func (c *acpClient) ReadTextFile(ctx context.Context, params *acp.ReadTextFileRequest) (*acp.ReadTextFileResponse, error) {
