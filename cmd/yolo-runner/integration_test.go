@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
+
 	"github.com/anomalyco/yolo-runner/internal/beads"
 	"github.com/anomalyco/yolo-runner/internal/exec"
 	"github.com/anomalyco/yolo-runner/internal/runner"
@@ -65,11 +67,15 @@ func TestIntegration_AllRequirementsWorkTogether(t *testing.T) {
 	model := tui.NewModelWithStop(func() time.Time { return time.Now() }, nil)
 
 	// Set up a basic task context so the view shows properly
-	model = model.Update(runner.Event{
+	var cmd tea.Cmd
+	var updatedModel tea.Model = model
+	updatedModel, cmd = updatedModel.Update(runner.Event{
 		Type: "select_task",
 		IssueID: "task-1",
 		Title: "Example Task",
-	}).(tui.Model)
+	})
+	model = updatedModel.(tui.Model)
+	_ = cmd // Suppress unused variable warning
 
 	// Simulate different events and verify they show user-friendly labels
 	testEvents := []struct {
@@ -83,8 +89,15 @@ func TestIntegration_AllRequirementsWorkTogether(t *testing.T) {
 	}
 
 	for _, test := range testEvents {
-		// The model would get this event and map to label
-		// We're testing that our mapping function works correctly
+		// Update model with current event
+		var updatedModel tea.Model = model
+		updatedModel, _ = updatedModel.Update(runner.Event{
+			Type:    runner.EventType(test.eventType),
+			IssueID:  "task-1",
+			Title:   "Example Task",
+		})
+		model = updatedModel.(tui.Model)
+		
 		view := model.View()
 
 		if !containsView(view, test.expectedLabel) {

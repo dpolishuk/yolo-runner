@@ -128,15 +128,14 @@ func (m Model) View() string {
 	
 	// Main task info
 	if m.taskID != "" || m.taskTitle != "" {
-		progress := ""
-		if m.progressTotal > 0 {
-			progress = fmt.Sprintf("[%d/%d] ", m.progressCompleted, m.progressTotal)
-		}
-		parts = append(parts, fmt.Sprintf("%s %s%s - %s", spinner, progress, m.taskID, m.taskTitle))
+		parts = append(parts, fmt.Sprintf("%s %s - %s", spinner, m.taskID, m.taskTitle))
 	}
 	
-	// Status bar with spinner, state, and age
+	// Status bar with spinner, progress, state, and age
 	statusBarParts := []string{spinner}
+	if m.progressTotal > 0 {
+		statusBarParts = append(statusBarParts, fmt.Sprintf("[%d/%d]", m.progressCompleted, m.progressTotal))
+	}
 	if m.phase != "" {
 		statusBarParts = append(statusBarParts, m.phase)
 	}

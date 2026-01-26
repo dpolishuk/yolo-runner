@@ -26,7 +26,7 @@ func TestModelRendersTaskAndPhase(t *testing.T) {
 	if !strings.Contains(view, "task-1 - Example Task") {
 		t.Fatalf("expected task id and title in view, got %q", view)
 	}
-	if !strings.Contains(view, "running") {
+	if !strings.Contains(view, "getting task info") {
 		t.Fatalf("expected phase in view, got %q", view)
 	}
 	if !strings.Contains(view, "(5s)") {
@@ -176,7 +176,7 @@ func TestModelRendersStatusBarInSingleLine(t *testing.T) {
 		// Check if this line contains spinner, state info, and age
 		if strings.Contains(line, "-") || strings.Contains(line, "\\") || strings.Contains(line, "|") || strings.Contains(line, "/") {
 			// Found spinner, check if it also contains phase and age info
-			if strings.Contains(line, "running") && strings.Contains(line, "5s") {
+			if strings.Contains(line, "getting task info") && strings.Contains(line, "5s") {
 				statusBarFound = true
 			}
 		}
@@ -235,7 +235,7 @@ func TestModelStatusBarExactFormat(t *testing.T) {
 	m = updated.(Model)
 
 	view := m.View()
-	expected := "- task-1 - Example Task\n- running task-1 (5s)\nq: stop runner\n"
+	expected := "- task-1 - Example Task\n- getting task info task-1 (5s)\nq: stop runner\n"
 	
 	if view != expected {
 		t.Fatalf("expected exact format %q, got %q", expected, view)
@@ -254,9 +254,45 @@ func TestModelStatusBarExactFormat(t *testing.T) {
 	m = updated.(Model)
 	
 	view = m.View()
-	expected = "- [2/5] task-1 - Example Task\n- running task-1 (5s)\nq: stop runner\n"
+	expected = "- task-1 - Example Task\n- [2/5] getting task info task-1 (5s)\nq: stop runner\n"
 	
 	if view != expected {
 		t.Fatalf("expected exact format with progress %q, got %q", expected, view)
+	}
+}
+
+func TestModelStatusBarShowsProgress(t *testing.T) {
+	fixedNow := time.Date(2026, 1, 19, 12, 0, 10, 0, time.UTC)
+	m := NewModel(func() time.Time { return fixedNow })
+	updated, _ := m.Update(runner.Event{
+		Type:              runner.EventSelectTask,
+		IssueID:           "task-1",
+		Title:             "Example Task",
+		Phase:             "running",
+		ProgressCompleted: 2,
+		ProgressTotal:     5,
+		EmittedAt:         fixedNow.Add(-5 * time.Second),
+	})
+	m = updated.(Model)
+
+	view := m.View()
+	lines := strings.Split(strings.TrimSpace(view), "\n")
+	
+	// Find the status bar line (should contain spinner and phase)
+	var statusBarLine string
+	for _, line := range lines {
+		if strings.Contains(line, "getting task info") && strings.Contains(line, "task-1") && strings.Contains(line, "(5s)") {
+			statusBarLine = line
+			break
+		}
+	}
+	
+	if statusBarLine == "" {
+		t.Fatalf("expected to find status bar line with getting task info phase and task-1, got view: %q", view)
+	}
+	
+	// Status bar should contain progress [2/5]
+	if !strings.Contains(statusBarLine, "[2/5]") {
+		t.Fatalf("expected status bar to contain progress [2/5], got: %q", statusBarLine)
 	}
 }
