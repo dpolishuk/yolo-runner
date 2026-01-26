@@ -95,8 +95,8 @@ func TestAgentMessageAggregator_NonAgentMessageChunks(t *testing.T) {
 	)
 
 	got := aggregator.ProcessUpdate(&toolUpdate)
-	expected := "tool_call id=tool-1 title=\"Read file\" kind=read status=pending"
+	expected := "⏳ \x1b[33mtool_call\x1b[0m id=tool-1 title=\"Read file\" kind=read status=pending"
 	if got != expected {
-		t.Fatalf("expected tool call to pass through unchanged: %q, got: %q", expected, got)
+		t.Fatalf("expected tool call to have status badge: %q, got: %q", expected, got)
 	}
 }

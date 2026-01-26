@@ -54,7 +54,36 @@ func formatSessionUpdate(update *acp.SessionUpdate) string {
 }
 
 func formatToolCall(prefix string, id acp.ToolCallId, title string, kind *acp.ToolKind, status *acp.ToolCallStatus) string {
-	parts := []string{prefix, fmt.Sprintf("id=%s", id)}
+	// Determine emoji and color based on status
+	var emoji string
+	var color string
+	var resetColor = "\x1b[0m"
+
+	if status == nil {
+		emoji = "⚪"
+		color = "\x1b[37m" // White
+	} else {
+		switch *status {
+		case acp.ToolCallStatusPending:
+			emoji = "⏳"
+			color = "\x1b[33m" // Yellow
+		case acp.ToolCallStatusInProgress:
+			emoji = "🔄"
+			color = "\x1b[34m" // Blue
+		case acp.ToolCallStatusCompleted:
+			emoji = "✅"
+			color = "\x1b[32m" // Green
+		case acp.ToolCallStatusFailed:
+			emoji = "❌"
+			color = "\x1b[31m" // Red
+		default:
+			emoji = "⚪"
+			color = "\x1b[37m" // White (neutral for unknown status)
+		}
+	}
+
+	// Build the parts list
+	parts := []string{fmt.Sprintf("%s %s%s%s", emoji, color, prefix, resetColor), fmt.Sprintf("id=%s", id)}
 	if title != "" {
 		parts = append(parts, fmt.Sprintf("title=\"%s\"", title))
 	}
