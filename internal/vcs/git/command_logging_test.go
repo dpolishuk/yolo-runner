@@ -42,7 +42,7 @@ func TestGitCommandsRouteOutputToLogFiles(t *testing.T) {
 			testFunc: func() error {
 				return adapter.Commit("test commit")
 			},
-			expectError: true,
+			expectError: false,
 		},
 		{
 			name: "IsDirty command",
@@ -50,7 +50,7 @@ func TestGitCommandsRouteOutputToLogFiles(t *testing.T) {
 				_, err := adapter.IsDirty()
 				return err
 			},
-			expectError: true,
+			expectError: false,
 		},
 		{
 			name: "RevParseHead command",
@@ -58,7 +58,7 @@ func TestGitCommandsRouteOutputToLogFiles(t *testing.T) {
 				_, err := adapter.RevParseHead()
 				return err
 			},
-			expectError: true,
+			expectError: false,
 		},
 		{
 			name: "StatusPorcelain command",
@@ -66,21 +66,21 @@ func TestGitCommandsRouteOutputToLogFiles(t *testing.T) {
 				_, err := adapter.StatusPorcelain()
 				return err
 			},
-			expectError: true,
+			expectError: false,
 		},
 		{
 			name: "RestoreAll command",
 			testFunc: func() error {
 				return adapter.RestoreAll()
 			},
-			expectError: true,
+			expectError: false,
 		},
 		{
 			name: "CleanAll command",
 			testFunc: func() error {
 				return adapter.CleanAll()
 			},
-			expectError: true,
+			expectError: false,
 		},
 	}
 
