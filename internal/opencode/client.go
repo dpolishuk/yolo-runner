@@ -153,11 +153,12 @@ func RunWithACP(ctx context.Context, issueID string, repoRoot string, prompt str
 					Decision:    decision,
 				})
 			})
+			aggregator := NewAgentMessageAggregator()
 			onUpdate := func(note *acp.SessionNotification) {
 				if note == nil {
 					return
 				}
-				if line := formatSessionUpdate(&note.Update); line != "" {
+				if line := aggregator.ProcessUpdate(&note.Update); line != "" {
 					writeConsoleLine(os.Stderr, fmt.Sprintf("ACP[%s] %s", issueID, line))
 				}
 			}
