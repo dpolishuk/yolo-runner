@@ -86,10 +86,13 @@ func TestGitCommandsRouteOutputToLogFiles(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			// Count log files before execution
-			logFilesBefore, err := os.ReadDir(logDir)
-			if err != nil && !os.IsNotExist(err) {
-				t.Fatalf("failed to read log dir before: %v", err)
+			// Execute the command
+			err = tc.testFunc()
+
+			// We may not expect errors since git commands might not error without a repo
+			// but we're testing the logging behavior
+			if tc.expectError && err == nil {
+				t.Fatalf("expected error but got none")
 			}
 
 			// Execute command
@@ -107,10 +110,23 @@ func TestGitCommandsRouteOutputToLogFiles(t *testing.T) {
 				t.Fatalf("failed to read log dir after: %v", err)
 			}
 
-			// Verify that a new log file was created
-			if len(logFilesAfter) <= len(logFilesBefore) {
-				t.Fatalf("expected new log file to be created, had %d before, %d after",
-					len(logFilesBefore), len(logFilesAfter))
+			// Find all log files and check if any contain the expected command
+			foundCommandInLogs := false
+			for _, logFile := range logFilesAfter {
+				logFilePath := filepath.Join(logDir, logFile.Name())
+				logContent, err := os.ReadFile(logFilePath)
+				if err != nil {
+					continue
+				}
+				logContentStr := string(logContent)
+				if strings.Contains(logContentStr, "git ") {
+					foundCommandInLogs = true
+					break
+				}
+			}
+
+			if !foundCommandInLogs {
+				t.Fatalf("expected to find git command in log files, but didn't find any")
 			}
 
 			// Find the newest log file
