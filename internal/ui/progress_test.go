@@ -241,6 +241,22 @@ func TestProgressSpinnerAdvancesOnNewBytes(t *testing.T) {
 	}
 }
 
+func TestProgressFinishPrintsCRLF(t *testing.T) {
+	buffer := &bytes.Buffer{}
+	progress := NewProgress(ProgressConfig{
+		Writer: buffer,
+		State:  "opencode running",
+		Ticker: newFakeProgressTicker(),
+	})
+
+	progress.Finish(nil)
+
+	expectedOutput := "\r\nOpenCode finished\r\n\x1b[?25h"
+	if buffer.String() != expectedOutput {
+		t.Fatalf("unexpected finish output: %q, expected: %q", buffer.String(), expectedOutput)
+	}
+}
+
 func TestProgressClearsShorterAgeLine(t *testing.T) {
 	tempDir := t.TempDir()
 	logPath := filepath.Join(tempDir, "issue-3.jsonl")
@@ -337,8 +353,11 @@ func TestProgressFinishPrintsFinalLine(t *testing.T) {
 
 	progress.Finish(nil)
 	output := buffer.String()
-	if !strings.Contains(output, "\nOpenCode finished\n") {
+	if !strings.Contains(output, "\r\nOpenCode finished\r\n") {
 		t.Fatalf("expected finished line, got %q", output)
+	}
+	if !strings.Contains(output, "\x1b[?25h") {
+		t.Fatalf("expected cursor show sequence, got %q", output)
 	}
 }
 
@@ -363,7 +382,10 @@ func TestProgressFinishResetsLinePosition(t *testing.T) {
 	progress.Finish(nil)
 
 	output := buffer.String()
-	if !strings.Contains(output, "\r\nOpenCode finished\n") {
+	if !strings.Contains(output, "\r\nOpenCode finished\r\n") {
 		t.Fatalf("expected finish to start on new line, got %q", output)
+	}
+	if !strings.Contains(output, "\x1b[?25h") {
+		t.Fatalf("expected cursor show sequence, got %q", output)
 	}
 }

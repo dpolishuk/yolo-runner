@@ -116,6 +116,31 @@ func TestRunCommandPrintsPhaseMessages(t *testing.T) {
 	}
 }
 
+func TestRunCommandPrintsCRLFWhenTerminal(t *testing.T) {
+	buffer := &bytes.Buffer{}
+	prevOutput := commandOutput
+	prevIsTerminal := isTerminal
+	t.Cleanup(func() {
+		commandOutput = prevOutput
+		isTerminal = prevIsTerminal
+	})
+	commandOutput = buffer
+	isTerminal = func(io.Writer) bool { return true }
+
+	_, err := runCommand("/bin/sh", "-c", "true")
+	if err != nil {
+		t.Fatalf("runCommand error: %v", err)
+	}
+
+	printed := buffer.String()
+	if !strings.Contains(printed, "\r\n") {
+		t.Fatalf("expected CRLF output, got %q", printed)
+	}
+	if !regexp.MustCompile(`\r\n$`).MatchString(printed) {
+		t.Fatalf("expected output to end with CRLF, got %q", printed)
+	}
+}
+
 func TestRunCommandPrintsFailures(t *testing.T) {
 	buffer := &bytes.Buffer{}
 	prevOutput := commandOutput

@@ -8,3 +8,4 @@
 {"timestamp": "2026-01-25T01:34:51Z", "issue_id": "yolo-runner-127.6.1", "title": "Runner: if --root is an open leaf, execute it directly", "status": "completed", "commit_sha": "3d6290eea132fe32e14caae9bf0e190958f02aea"}
 {"timestamp": "2026-01-25T01:41:28Z", "issue_id": "yolo-runner-127.6.5", "title": "Nice-to-have: show progress [x/y] tasks executed/remaining", "status": "completed", "commit_sha": "14c5cc44cf499a11fc60a94c150287e69f914ca2"}
 {"timestamp": "2026-01-25T01:47:13Z", "issue_id": "yolo-runner-127.6.6", "title": "Add stop-runner key (q) with graceful shutdown + cleanup", "status": "completed", "commit_sha": "9094d741611062698950fb7c08768d160d690568"}
+{"timestamp":"2026-01-25T22:23:16Z","issue_id":"yolo-runner-127.3.1","title":"v1.2: Refuse to run if YOLO agent missing","status":"completed","commit_sha":"66a87bdf1fed8be35173726de614c2a85586e9cc\n"}

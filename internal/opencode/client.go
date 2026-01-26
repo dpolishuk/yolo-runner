@@ -11,6 +11,7 @@ import (
 
 	"github.com/anomalyco/yolo-runner/internal/logging"
 	acp "github.com/ironpark/acp-go"
+	"golang.org/x/term"
 )
 
 type Runner interface {
@@ -144,7 +145,7 @@ func RunWithACP(ctx context.Context, issueID string, repoRoot string, prompt str
 		acpClient = ACPClientFunc(func(ctx context.Context, issueID string, logPath string) error {
 			handler := NewACPHandler(issueID, logPath, func(logPath string, issueID string, requestType string, decision string) error {
 				if line := formatACPRequest(requestType, decision); line != "" {
-					fmt.Fprintf(os.Stderr, "ACP[%s] %s\n", issueID, line)
+					writeConsoleLine(os.Stderr, fmt.Sprintf("ACP[%s] %s", issueID, line))
 				}
 				return logging.AppendACPRequest(logPath, logging.ACPRequestEntry{
 					IssueID:     issueID,
@@ -157,7 +158,7 @@ func RunWithACP(ctx context.Context, issueID string, repoRoot string, prompt str
 					return
 				}
 				if line := formatSessionUpdate(&note.Update); line != "" {
-					fmt.Fprintf(os.Stderr, "ACP[%s] %s\n", issueID, line)
+					writeConsoleLine(os.Stderr, fmt.Sprintf("ACP[%s] %s", issueID, line))
 				}
 			}
 			return RunACPClient(ctx, stdio.Stdin(), stdio.Stdout(), repoRoot, prompt, handler, onUpdate)
@@ -192,4 +193,15 @@ func RunWithACP(ctx context.Context, issueID string, repoRoot string, prompt str
 		return errors.Join(runErr, shutdownErr)
 	}
 	return shutdownErr
+}
+
+func writeConsoleLine(out io.Writer, line string) {
+	if out == nil || line == "" {
+		return
+	}
+	if file, ok := out.(*os.File); ok && term.IsTerminal(int(file.Fd())) {
+		fmt.Fprintf(out, "\r\x1b[2K%s\r\n", line)
+		return
+	}
+	fmt.Fprintln(out, line)
 }

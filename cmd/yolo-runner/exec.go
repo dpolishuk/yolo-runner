@@ -24,6 +24,10 @@ func printCommand(out io.Writer, args []string) {
 	if out == nil {
 		return
 	}
+	if isTerminal(out) {
+		fmt.Fprintf(out, "\r\x1b[2K$ %s\r\n", strings.Join(redactedCommand(args), " "))
+		return
+	}
 	fmt.Fprintln(out, "$ "+strings.Join(redactedCommand(args), " "))
 }
 
@@ -45,6 +49,10 @@ func printOutcome(out io.Writer, err error, elapsed time.Duration, command strin
 	if err != nil {
 		status = "failed"
 		exitCode = exitCodeFromError(err)
+	}
+	if isTerminal(out) {
+		fmt.Fprintf(out, "\r\x1b[2K%s (exit=%d, elapsed=%s)\r\n", status, exitCode, formatElapsed(elapsed))
+		return
 	}
 	fmt.Fprintf(out, "%s (exit=%d, elapsed=%s)\n", status, exitCode, formatElapsed(elapsed))
 }

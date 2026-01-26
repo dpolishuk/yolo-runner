@@ -92,6 +92,8 @@ func (p *Progress) Run(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
+			// Ensure cursor is visible when progress stops due to context cancellation
+			p.showCursor()
 			return
 		case now := <-ticker.C():
 			p.render(now)
@@ -123,7 +125,9 @@ func (p *Progress) Finish(err error) {
 		return
 	}
 	p.finished = true
-	fmt.Fprint(p.config.Writer, "\r\nOpenCode finished\n")
+	fmt.Fprint(p.config.Writer, "\r\nOpenCode finished\r\n")
+	// Ensure cursor is visible after finishing
+	fmt.Fprint(p.config.Writer, "\x1b[?25h")
 }
 
 func (p *Progress) render(now time.Time) {
@@ -165,6 +169,15 @@ func (p *Progress) renderLocked(now time.Time) {
 	}
 	fmt.Fprintf(p.config.Writer, "\r%s%s", line, pad)
 	p.lastRenderLen = lineLen
+}
+
+func (p *Progress) showCursor() {
+	if p == nil {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	fmt.Fprint(p.config.Writer, "\x1b[?25h")
 }
 
 func fileSize(path string) int64 {
