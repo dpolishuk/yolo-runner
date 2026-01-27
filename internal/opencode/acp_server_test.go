@@ -4,7 +4,7 @@ import "testing"
 
 func TestBuildACPArgsIncludesPrintLogsAndCwd(t *testing.T) {
 	args := BuildACPArgs("/repo")
-	expected := []string{"opencode", "acp", "--print-logs", "--cwd", "/repo"}
+	expected := []string{"opencode", "acp", "--print-logs", "--log-level", "DEBUG", "--cwd", "/repo"}
 	if len(args) != len(expected) {
 		t.Fatalf("unexpected args length: %v", args)
 	}
@@ -17,7 +17,7 @@ func TestBuildACPArgsIncludesPrintLogsAndCwd(t *testing.T) {
 
 func TestBuildACPArgsWithModel(t *testing.T) {
 	args := BuildACPArgsWithModel("/repo", "gpt-4o")
-	expected := []string{"opencode", "acp", "--print-logs", "--cwd", "/repo", "--model", "gpt-4o"}
+	expected := []string{"opencode", "acp", "--print-logs", "--log-level", "DEBUG", "--cwd", "/repo"}
 	if len(args) != len(expected) {
 		t.Fatalf("unexpected args length: %v", args)
 	}
@@ -30,7 +30,7 @@ func TestBuildACPArgsWithModel(t *testing.T) {
 
 func TestBuildACPArgsWithEmptyModel(t *testing.T) {
 	args := BuildACPArgsWithModel("/repo", "")
-	expected := []string{"opencode", "acp", "--print-logs", "--cwd", "/repo"}
+	expected := []string{"opencode", "acp", "--print-logs", "--log-level", "DEBUG", "--cwd", "/repo"}
 	if len(args) != len(expected) {
 		t.Fatalf("unexpected args length: %v", args)
 	}

@@ -5,9 +5,6 @@ func BuildACPArgs(repoRoot string) []string {
 }
 
 func BuildACPArgsWithModel(repoRoot string, model string) []string {
-	args := []string{"opencode", "acp", "--print-logs", "--cwd", repoRoot}
-	if model != "" {
-		args = append(args, "--model", model)
-	}
+	args := []string{"opencode", "acp", "--print-logs", "--log-level", "DEBUG", "--cwd", repoRoot}
 	return args
 }

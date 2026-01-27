@@ -120,7 +120,7 @@ func lastRender(output string) string {
 	parts := strings.Split(output, "\r")
 	for i := len(parts) - 1; i >= 0; i-- {
 		if strings.TrimSpace(parts[i]) != "" {
-			return parts[i]
+			return strings.TrimPrefix(parts[i], "\x1b[2K")
 		}
 	}
 	return ""

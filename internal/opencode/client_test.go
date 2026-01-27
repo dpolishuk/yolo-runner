@@ -349,17 +349,24 @@ func TestRunUsesACPClient(t *testing.T) {
 	}
 }
 
-func TestRunWithACPIncludesModelInArgs(t *testing.T) {
+func TestRunWithACPIncludesModelInConfigContent(t *testing.T) {
 	tempDir := t.TempDir()
 	repoRoot := filepath.Join(tempDir, "repo")
 	if err := os.MkdirAll(repoRoot, 0o755); err != nil {
 		t.Fatalf("mkdir repo root: %v", err)
 	}
+	configRoot := filepath.Join(tempDir, "config")
+	configDir := filepath.Join(configRoot, "opencode")
 	logPath := filepath.Join(tempDir, "runner-logs", "opencode", "issue-1.jsonl")
 
 	var capturedArgs []string
+	var capturedEnv map[string]string
 	runner := RunnerFunc(func(args []string, env map[string]string, stdoutPath string) (Process, error) {
 		capturedArgs = append([]string{}, args...)
+		capturedEnv = map[string]string{}
+		for key, value := range env {
+			capturedEnv[key] = value
+		}
 		proc := newFakeProcess()
 		close(proc.waitCh)
 		return proc, nil
@@ -367,20 +374,17 @@ func TestRunWithACPIncludesModelInArgs(t *testing.T) {
 	acpClient := ACPClientFunc(func(ctx context.Context, issueID string, logPath string) error {
 		return nil
 	})
-	if err := RunWithACP(context.Background(), "issue-1", repoRoot, "prompt", "zai-coding-plan/glm-4.7", "", "", logPath, runner, acpClient); err != nil {
+	if err := RunWithACP(context.Background(), "issue-1", repoRoot, "prompt", "zai-coding-plan/glm-4.7", configRoot, configDir, logPath, runner, acpClient); err != nil {
 		t.Fatalf("RunWithACP error: %v", err)
 	}
 
-	// Check that --model is in the args
-	foundModel := false
-	for i, arg := range capturedArgs {
-		if arg == "--model" && i+1 < len(capturedArgs) && capturedArgs[i+1] == "zai-coding-plan/glm-4.7" {
-			foundModel = true
-			break
-		}
+	if capturedEnv["OPENCODE_CONFIG_CONTENT"] != "{\"model\":\"zai-coding-plan/glm-4.7\"}" {
+		t.Fatalf("expected model in config content, got %q", capturedEnv["OPENCODE_CONFIG_CONTENT"])
 	}
-	if !foundModel {
-		t.Fatalf("expected --model flag with value in args: %v", capturedArgs)
+	for _, arg := range capturedArgs {
+		if arg == "--model" {
+			t.Fatalf("did not expect --model in args: %v", capturedArgs)
+		}
 	}
 }
 
@@ -390,11 +394,18 @@ func TestRunWithACPNoModelWhenEmpty(t *testing.T) {
 	if err := os.MkdirAll(repoRoot, 0o755); err != nil {
 		t.Fatalf("mkdir repo root: %v", err)
 	}
+	configRoot := filepath.Join(tempDir, "config")
+	configDir := filepath.Join(configRoot, "opencode")
 	logPath := filepath.Join(tempDir, "runner-logs", "opencode", "issue-1.jsonl")
 
 	var capturedArgs []string
+	var capturedEnv map[string]string
 	runner := RunnerFunc(func(args []string, env map[string]string, stdoutPath string) (Process, error) {
 		capturedArgs = append([]string{}, args...)
+		capturedEnv = map[string]string{}
+		for key, value := range env {
+			capturedEnv[key] = value
+		}
 		proc := newFakeProcess()
 		close(proc.waitCh)
 		return proc, nil
@@ -402,7 +413,7 @@ func TestRunWithACPNoModelWhenEmpty(t *testing.T) {
 	acpClient := ACPClientFunc(func(ctx context.Context, issueID string, logPath string) error {
 		return nil
 	})
-	if err := RunWithACP(context.Background(), "issue-1", repoRoot, "prompt", "", "", "", logPath, runner, acpClient); err != nil {
+	if err := RunWithACP(context.Background(), "issue-1", repoRoot, "prompt", "", configRoot, configDir, logPath, runner, acpClient); err != nil {
 		t.Fatalf("RunWithACP error: %v", err)
 	}
 
@@ -411,5 +422,8 @@ func TestRunWithACPNoModelWhenEmpty(t *testing.T) {
 		if arg == "--model" {
 			t.Fatalf("did not expect --model in args when model is empty: %v", capturedArgs)
 		}
+	}
+	if capturedEnv["OPENCODE_CONFIG_CONTENT"] != "{}" {
+		t.Fatalf("expected empty config content, got %q", capturedEnv["OPENCODE_CONFIG_CONTENT"])
 	}
 }

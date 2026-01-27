@@ -651,19 +651,13 @@ func TestOpenCodeRunWithModelInACPMode(t *testing.T) {
 		t.Fatalf("expected acp client to be called")
 	}
 
-	// Check that --model flag is in args
-	foundModel := false
-	for i, arg := range openCodeRunner.args {
-		if arg == "--model" && i+1 < len(openCodeRunner.args) && openCodeRunner.args[i+1] == "zai-coding-plan/glm-4.7" {
-			foundModel = true
-			break
+	for _, arg := range openCodeRunner.args {
+		if arg == "--model" {
+			t.Fatalf("did not expect --model in args: %v", openCodeRunner.args)
 		}
 	}
-	if !foundModel {
-		t.Fatalf("expected --model flag with value in args: %v", openCodeRunner.args)
-	}
 
-	// Check that model is also set in OPENCODE_CONFIG_CONTENT
+	// Check that model is set in OPENCODE_CONFIG_CONTENT
 	if openCodeRunner.env["OPENCODE_CONFIG_CONTENT"] != "{\"model\":\"zai-coding-plan/glm-4.7\"}" {
 		t.Fatalf("expected OPENCODE_CONFIG_CONTENT with model, got %q", openCodeRunner.env["OPENCODE_CONFIG_CONTENT"])
 	}
@@ -693,6 +687,14 @@ func TestOpenCodeRunWithEmptyModelInACPMode(t *testing.T) {
 	}
 	if !acpCalled {
 		t.Fatalf("expected acp client to be called")
+	}
+	for _, arg := range openCodeRunner.args {
+		if arg == "--model" {
+			t.Fatalf("did not expect --model in args: %v", openCodeRunner.args)
+		}
+	}
+	if openCodeRunner.env["OPENCODE_CONFIG_CONTENT"] != "{}" {
+		t.Fatalf("expected OPENCODE_CONFIG_CONTENT empty, got %q", openCodeRunner.env["OPENCODE_CONFIG_CONTENT"])
 	}
 
 	// Check that --model flag is NOT in args when model is empty

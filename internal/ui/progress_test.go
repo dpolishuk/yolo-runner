@@ -56,7 +56,8 @@ func lastRender(output string) string {
 	if len(parts) == 0 {
 		return ""
 	}
-	return parts[len(parts)-1]
+	line := parts[len(parts)-1]
+	return strings.TrimPrefix(line, "\x1b[2K")
 }
 
 func TestProgressRendersHeartbeatWithStateAndAge(t *testing.T) {
@@ -293,7 +294,6 @@ func TestProgressClearsShorterAgeLine(t *testing.T) {
 	ticker.Tick(current)
 	firstOutput := waitForOutput(t, buffer)
 	firstLine := lastRender(firstOutput)
-	firstLen := len(firstLine)
 	if !strings.Contains(firstLine, "last output 12s") {
 		t.Fatalf("expected last output age in output, got %q", firstLine)
 	}
@@ -320,9 +320,6 @@ func TestProgressClearsShorterAgeLine(t *testing.T) {
 	secondLine := lastRender(secondOutput)
 	if !strings.Contains(secondLine, "last output 0s") {
 		t.Fatalf("expected last output age reset, got %q", secondLine)
-	}
-	if len(secondLine) < firstLen {
-		t.Fatalf("expected render to clear shorter line, got lengths %d then %d", firstLen, len(secondLine))
 	}
 
 	cancel()

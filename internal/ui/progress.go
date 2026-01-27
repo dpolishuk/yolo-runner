@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strings"
 	"sync"
 	"time"
 )
@@ -142,7 +141,7 @@ func (p *Progress) renderLocked(now time.Time) {
 	}
 	// Always advance spinner on timer tick
 	p.spinnerIndex = (p.spinnerIndex + 1) % len(spinnerFrames)
-	
+
 	if p.config.LogPath != "" {
 		currentSize := fileSize(p.config.LogPath)
 		if currentSize > p.lastSize {
@@ -164,13 +163,8 @@ func (p *Progress) renderLocked(now time.Time) {
 	}
 	spinner := spinnerFrames[p.spinnerIndex%len(spinnerFrames)]
 	line := fmt.Sprintf("%s %s - last output %s", spinner, p.state, age)
-	pad := ""
-	lineLen := len(line)
-	if p.lastRenderLen > lineLen {
-		pad = strings.Repeat(" ", p.lastRenderLen-lineLen)
-	}
-	fmt.Fprintf(p.config.Writer, "\r%s%s", line, pad)
-	p.lastRenderLen = lineLen
+	fmt.Fprintf(p.config.Writer, "\r\x1b[2K%s", line)
+	p.lastRenderLen = len(line)
 }
 
 func (p *Progress) showCursor() {
