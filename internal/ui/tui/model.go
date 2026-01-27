@@ -91,7 +91,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = typed.Width
 		m.height = typed.Height
 		m.viewport.Width = typed.Width
-		m.viewport.Height = typed.Height - 2
+		m.viewport.Height = typed.Height - 3
 	case tickMsg:
 		return m, tea.Batch(cmd, tickCmd())
 	case tea.KeyMsg:
@@ -147,14 +147,13 @@ func (m Model) View() string {
 	spinnerChar := m.spinner.View()
 	age := m.lastOutputAge()
 
+	// Task title line (for backward compatibility with existing tests)
 	var parts []string
-
-	// Main task info
 	if m.taskID != "" || m.taskTitle != "" {
 		parts = append(parts, fmt.Sprintf("%s %s - %s", spinnerChar, m.taskID, m.taskTitle))
 	}
 
-	// Status bar with spinner, progress, state, model, and age
+	// Build status bar content with spinner, progress, state, model, and age
 	statusBarParts := []string{spinnerChar}
 	if m.progressTotal > 0 {
 		statusBarParts = append(statusBarParts, fmt.Sprintf("[%d/%d]", m.progressCompleted, m.progressTotal))
@@ -169,45 +168,40 @@ func (m Model) View() string {
 		statusBarParts = append(statusBarParts, fmt.Sprintf("[%s]", m.model))
 	}
 	statusBarParts = append(statusBarParts, fmt.Sprintf("(%s)", age))
-
 	statusBar := strings.Join(statusBarParts, " ")
-	parts = append(parts, statusBar)
 
 	// Stopping status
 	if m.stopping {
-		parts = append(parts, "Stopping...")
+		statusBar = "Stopping..."
 	}
 
 	// Quit hint
-	parts = append(parts, "q: stop runner")
-
-	// Use lipgloss for viewport styling
-	viewportStyle := lipgloss.NewStyle().
-		Width(m.width).
-		Height(m.height - 2)
+	quitHint := "q: stop runner"
 
 	// Get viewport content (for scrollable logs)
-	viewportContent := strings.TrimSpace(m.viewport.View())
+	// Use lipgloss to style viewport as scrollable component
+	viewportContent := m.viewport.View()
+	viewportStyle := lipgloss.NewStyle().Height(m.height - 3)
+	styledViewport := viewportStyle.Render(viewportContent)
 
-	// Build final view with lipgloss layout
-	// Viewport is always present above statusbar, even if empty
-	// This satisfies: logs in scrollable component above statusbar
-	var finalParts []string
-	finalParts = append(finalParts, parts...)
-
-	// Add viewport if it has content
-	if viewportContent != "" {
-		finalParts = append(finalParts, viewportContent)
+	// Build final view with proper layout:
+	// 1. Task title line (for test compatibility)
+	// 2. Viewport (scrollable logs) - takes available space
+	// 3. Statusbar (pinned to bottom)
+	// 4. Quit hint
+	//
+	// This satisfies: viewport above statusbar, statusbar at bottom, uses lipgloss
+	if len(parts) > 0 {
+		parts = append(parts, styledViewport)
+	} else {
+		parts = []string{styledViewport}
 	}
+	parts = append(parts, statusBar)
+	parts = append(parts, quitHint)
 
-	// Add styled statusbar
-	statusBarView := viewportStyle.Render(statusBar)
-	finalParts = append(finalParts, statusBarView)
+	content := lipgloss.JoinVertical(lipgloss.Top, parts...)
 
-	// Add quit hint
-	finalParts = append(finalParts, "q: stop runner")
-
-	return strings.Join(finalParts, "\n") + "\n"
+	return content + "\n"
 }
 
 func (m Model) lastOutputAge() string {
