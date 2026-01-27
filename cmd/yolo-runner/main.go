@@ -260,6 +260,7 @@ func RunOnceMain(args []string, runOnce runOnceFunc, exit exitFunc, stdout io.Wr
 		options.Stop = stopCh
 		program = newTUIProgram(tui.NewModelWithStop(nil, stopCh), stdout, os.Stdin)
 		deps.Events = tuiEmitter{program: program}
+		options.Out = io.Discard
 		go func() {
 			if err := program.Start(); err != nil {
 				fmt.Fprintln(stderr, err)

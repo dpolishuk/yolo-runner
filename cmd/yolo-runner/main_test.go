@@ -418,6 +418,9 @@ func TestRunOnceMainUsesTUIOnTTYByDefault(t *testing.T) {
 	if runOnce.deps.Events == nil {
 		t.Fatalf("expected events emitter to be set")
 	}
+	if runOnce.opts.Out != io.Discard {
+		t.Fatalf("expected stdout to be discarded when TUI is active")
+	}
 	runOnce.deps.Events.Emit(runner.Event{Type: runner.EventSelectTask})
 	waitForSignal(t, fakeProgram.started, "tui start")
 	waitForSignal(t, fakeProgram.quit, "tui quit")
