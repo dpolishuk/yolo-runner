@@ -53,7 +53,7 @@ func TestFormatToolCallWithStatusBadges(t *testing.T) {
 			expected: "⏳ \x1b[33mtool_call\x1b[0m id=tool-1 title=\"Read file\" kind=read status=pending",
 		},
 		{
-			name:     "in_progress status", 
+			name:     "in_progress status",
 			status:   acp.ToolCallStatusPtr(acp.ToolCallStatusInProgress),
 			expected: "🔄 \x1b[34mtool_call\x1b[0m id=tool-1 title=\"Read file\" kind=read status=in_progress",
 		},
@@ -105,9 +105,10 @@ func TestFormatToolCallUpdateWithStatusBadges(t *testing.T) {
 		nil,
 		nil,
 	)
+	update.GetToolcallupdate().Title = "Test operation"
 
 	got := formatSessionUpdate(&update)
-	expected := "✅ \x1b[32mtool_call_update\x1b[0m id=tool-1 status=completed"
+	expected := "✅ \x1b[32mtool_call_update\x1b[0m Test operation"
 	if got != expected {
 		t.Errorf("expected %q, got %q", expected, got)
 	}

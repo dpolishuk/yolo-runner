@@ -85,7 +85,12 @@ func formatToolCall(prefix string, id acp.ToolCallId, title string, kind *acp.To
 		}
 	}
 
-	// Build the parts list
+	// For tool_call_update, only show emoji + label + title (simplified format)
+	if prefix == "tool_call_update" {
+		return fmt.Sprintf("%s %s%s%s %s", emoji, color, prefix, resetColor, title)
+	}
+
+	// For tool_call, show full details (emoji + label + id + title + kind + status)
 	parts := []string{fmt.Sprintf("%s %s%s%s", emoji, color, prefix, resetColor), fmt.Sprintf("id=%s", id)}
 	if title != "" {
 		parts = append(parts, fmt.Sprintf("title=\"%s\"", title))
@@ -122,9 +127,6 @@ func truncateACPText(text string, limit int) string {
 	}
 	return text[:limit]
 }
-
-
-
 
 // normalizeAgentThoughtText strips newlines and carriage returns from agent thought text
 // and replaces them with spaces to prevent breaking TUI layout
