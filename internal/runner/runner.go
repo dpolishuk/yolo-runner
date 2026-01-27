@@ -223,7 +223,7 @@ func RunOnce(opts RunOnceOptions, deps RunOnceDeps) (string, error) {
 	}
 	fmt.Fprintf(out, "Starting %s%s: %s\n", progressLabel, leafID, bead.Title)
 
-	emitPhase(deps.Events, EventSelectTask, leafID, bead.Title, progressState)
+	emitPhase(deps.Events, EventSelectTask, leafID, bead.Title, progressState, "")
 
 	prompt := deps.Prompt.Build(leafID, bead.Title, bead.Description, bead.AcceptanceCriteria)
 	command := opencode.BuildArgs(opts.RepoRoot, prompt, opts.Model)
@@ -239,7 +239,7 @@ func RunOnce(opts RunOnceOptions, deps RunOnceDeps) (string, error) {
 		fmt.Fprintf(out, "State: %s\n", state)
 	}
 	setState("selecting task")
-	emitPhase(deps.Events, EventBeadsUpdate, leafID, bead.Title, currentProgress)
+	emitPhase(deps.Events, EventBeadsUpdate, leafID, bead.Title, currentProgress, "")
 	if err := deps.Beads.UpdateStatus(leafID, "in_progress"); err != nil {
 		return "", err
 	}
@@ -257,7 +257,7 @@ func RunOnce(opts RunOnceOptions, deps RunOnceDeps) (string, error) {
 	defer cancelProgress()
 	go progress.Run(progressCtx)
 
-	emitPhase(deps.Events, EventOpenCodeStart, leafID, bead.Title, currentProgress)
+	emitPhase(deps.Events, EventOpenCodeStart, leafID, bead.Title, currentProgress, opts.Model)
 	var openCodeErr error
 	if runnerWithContext, ok := deps.OpenCode.(OpenCodeContextRunner); ok {
 		openCodeErr = runnerWithContext.RunWithContext(stopCtx, leafID, opts.RepoRoot, prompt, opts.Model, opts.ConfigRoot, opts.ConfigDir, opts.LogPath)
@@ -312,14 +312,14 @@ func RunOnce(opts RunOnceOptions, deps RunOnceDeps) (string, error) {
 		return "stopped", context.Canceled
 	}
 
-	emitPhase(deps.Events, EventOpenCodeEnd, leafID, bead.Title, currentProgress)
+	emitPhase(deps.Events, EventOpenCodeEnd, leafID, bead.Title, currentProgress, opts.Model)
 
-	emitPhase(deps.Events, EventGitAdd, leafID, bead.Title, currentProgress)
+	emitPhase(deps.Events, EventGitAdd, leafID, bead.Title, currentProgress, "")
 	if err := deps.Git.AddAll(); err != nil {
 		return "", err
 	}
 
-	emitPhase(deps.Events, EventGitStatus, leafID, bead.Title, currentProgress)
+	emitPhase(deps.Events, EventGitStatus, leafID, bead.Title, currentProgress, "")
 	dirty, err := deps.Git.IsDirty()
 	if err != nil {
 		return "", err
@@ -344,7 +344,7 @@ func RunOnce(opts RunOnceOptions, deps RunOnceDeps) (string, error) {
 		commitMessage = "feat: " + strings.ToLower(bead.Title)
 	}
 
-	emitPhase(deps.Events, EventGitCommit, leafID, bead.Title, currentProgress)
+	emitPhase(deps.Events, EventGitCommit, leafID, bead.Title, currentProgress, "")
 	if err := deps.Git.Commit(commitMessage); err != nil {
 		return "", err
 	}
@@ -357,12 +357,12 @@ func RunOnce(opts RunOnceOptions, deps RunOnceDeps) (string, error) {
 		return "", err
 	}
 
-	emitPhase(deps.Events, EventBeadsClose, leafID, bead.Title, currentProgress)
+	emitPhase(deps.Events, EventBeadsClose, leafID, bead.Title, currentProgress, "")
 	if err := deps.Beads.Close(leafID); err != nil {
 		return "", err
 	}
 
-	emitPhase(deps.Events, EventBeadsVerify, leafID, bead.Title, currentProgress)
+	emitPhase(deps.Events, EventBeadsVerify, leafID, bead.Title, currentProgress, "")
 	closed, err := deps.Beads.Show(leafID)
 	if err != nil {
 		return "", err
@@ -377,7 +377,7 @@ func RunOnce(opts RunOnceOptions, deps RunOnceDeps) (string, error) {
 		return "blocked", nil
 	}
 
-	emitPhase(deps.Events, EventBeadsSync, leafID, bead.Title, currentProgress)
+	emitPhase(deps.Events, EventBeadsSync, leafID, bead.Title, currentProgress, "")
 	if err := deps.Beads.Sync(); err != nil {
 		return "", err
 	}
@@ -388,7 +388,7 @@ func RunOnce(opts RunOnceOptions, deps RunOnceDeps) (string, error) {
 	return "completed", nil
 }
 
-func emitPhase(emitter EventEmitter, eventType EventType, issueID string, title string, progress ProgressState) {
+func emitPhase(emitter EventEmitter, eventType EventType, issueID string, title string, progress ProgressState, model string) {
 	if emitter == nil {
 		return
 	}
@@ -397,6 +397,7 @@ func emitPhase(emitter EventEmitter, eventType EventType, issueID string, title 
 		IssueID:           issueID,
 		Title:             title,
 		Phase:             string(eventType),
+		Model:             model,
 		ProgressCompleted: progress.Completed,
 		ProgressTotal:     progress.Total,
 		EmittedAt:         time.Now(),

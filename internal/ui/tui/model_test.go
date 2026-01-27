@@ -296,3 +296,74 @@ func TestModelStatusBarShowsProgress(t *testing.T) {
 		t.Fatalf("expected status bar to contain progress [2/5], got: %q", statusBarLine)
 	}
 }
+
+func TestModelStatusBarShowsModel(t *testing.T) {
+	fixedNow := time.Date(2026, 1, 19, 12, 0, 10, 0, time.UTC)
+	m := NewModel(func() time.Time { return fixedNow })
+	updated, _ := m.Update(runner.Event{
+		Type:              runner.EventOpenCodeStart,
+		IssueID:           "task-1",
+		Title:             "Example Task",
+		Phase:             "starting opencode",
+		Model:             "claude-3-5-sonnet",
+		EmittedAt:         fixedNow.Add(-5 * time.Second),
+	})
+	m = updated.(Model)
+
+	view := m.View()
+	lines := strings.Split(strings.TrimSpace(view), "\n")
+
+	// Find the status bar line
+	var statusBarLine string
+	for _, line := range lines {
+		if strings.Contains(line, "starting opencode") && strings.Contains(line, "task-1") && strings.Contains(line, "(5s)") {
+			statusBarLine = line
+			break
+		}
+	}
+
+	if statusBarLine == "" {
+		t.Fatalf("expected to find status bar line with starting opencode phase, got view: %q", view)
+	}
+
+	// Status bar should contain the model name
+	if !strings.Contains(statusBarLine, "claude-3-5-sonnet") {
+		t.Fatalf("expected status bar to contain model 'claude-3-5-sonnet', got: %q", statusBarLine)
+	}
+}
+
+func TestModelStatusBarShowsMultipleModelFormats(t *testing.T) {
+	fixedNow := time.Date(2026, 1, 19, 12, 0, 10, 0, time.UTC)
+
+	testCases := []struct {
+		model    string
+		expected string
+	}{
+		{"gpt-4", "gpt-4"},
+		{"claude-3-5-sonnet-20241022", "claude-3-5-sonnet-20241022"},
+		{"gemini-pro", "gemini-pro"},
+		{"o1-preview", "o1-preview"},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.model, func(t *testing.T) {
+			m := NewModel(func() time.Time { return fixedNow })
+			updated, _ := m.Update(runner.Event{
+				Type:      runner.EventOpenCodeStart,
+				IssueID:   "task-1",
+				Title:     "Example Task",
+				Phase:     "starting opencode",
+				Model:     tc.model,
+				EmittedAt: fixedNow.Add(-5 * time.Second),
+			})
+			m = updated.(Model)
+
+			view := m.View()
+
+			// View should contain the model name
+			if !strings.Contains(view, tc.expected) {
+				t.Fatalf("expected view to contain model %q, got: %q", tc.expected, view)
+			}
+		})
+	}
+}

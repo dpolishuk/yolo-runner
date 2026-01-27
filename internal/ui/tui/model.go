@@ -14,6 +14,7 @@ type Model struct {
 	taskID            string
 	taskTitle         string
 	phase             string
+	model             string
 	progressCompleted int
 	progressTotal     int
 	lastOutputAt      time.Time
@@ -59,6 +60,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.taskTitle = typed.Title
 		// Convert phase string back to EventType and map to user-friendly label
 		m.phase = getPhaseLabel(typed.Type)
+		m.model = typed.Model
 		m.progressCompleted = typed.ProgressCompleted
 		m.progressTotal = typed.ProgressTotal
 		m.lastOutputAt = typed.EmittedAt
@@ -131,7 +133,7 @@ func (m Model) View() string {
 		parts = append(parts, fmt.Sprintf("%s %s - %s", spinner, m.taskID, m.taskTitle))
 	}
 	
-	// Status bar with spinner, progress, state, and age
+	// Status bar with spinner, progress, state, model, and age
 	statusBarParts := []string{spinner}
 	if m.progressTotal > 0 {
 		statusBarParts = append(statusBarParts, fmt.Sprintf("[%d/%d]", m.progressCompleted, m.progressTotal))
@@ -141,6 +143,9 @@ func (m Model) View() string {
 	}
 	if m.taskID != "" {
 		statusBarParts = append(statusBarParts, fmt.Sprintf("%s", m.taskID))
+	}
+	if m.model != "" {
+		statusBarParts = append(statusBarParts, fmt.Sprintf("[%s]", m.model))
 	}
 	statusBarParts = append(statusBarParts, fmt.Sprintf("(%s)", age))
 	

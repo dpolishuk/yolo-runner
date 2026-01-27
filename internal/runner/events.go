@@ -24,6 +24,7 @@ type Event struct {
 	Phase             string    `json:"phase"`
 	ProgressCompleted int       `json:"progress_completed"`
 	ProgressTotal     int       `json:"progress_total"`
+	Model             string    `json:"model"`
 	EmittedAt         time.Time `json:"emitted_at"`
 }
 
