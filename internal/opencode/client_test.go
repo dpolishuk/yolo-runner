@@ -46,7 +46,7 @@ func TestRedactArgsForRun(t *testing.T) {
 }
 
 func TestBuildEnvAddsDisableFlagsAndCI(t *testing.T) {
-	env := BuildEnv(map[string]string{"HELLO": "world"}, "", "")
+	env := BuildEnv(map[string]string{"HELLO": "world"}, "", "", "")
 
 	if env["CI"] != "true" {
 		t.Fatalf("expected CI true, got %q", env["CI"])
@@ -65,6 +65,17 @@ func TestBuildEnvAddsDisableFlagsAndCI(t *testing.T) {
 	}
 	if env["HELLO"] != "world" {
 		t.Fatalf("expected base env preserved")
+	}
+}
+
+func TestBuildEnvSetsModelConfigContent(t *testing.T) {
+	tempDir := t.TempDir()
+	configRoot := filepath.Join(tempDir, "config")
+	configDir := filepath.Join(configRoot, "opencode")
+
+	env := BuildEnv(nil, configRoot, configDir, "zai-coding-plan/glm-4.7")
+	if env["OPENCODE_CONFIG_CONTENT"] != "{\"model\":\"zai-coding-plan/glm-4.7\"}" {
+		t.Fatalf("unexpected config content: %q", env["OPENCODE_CONFIG_CONTENT"])
 	}
 }
 

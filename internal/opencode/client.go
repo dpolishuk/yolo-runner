@@ -2,6 +2,7 @@ package opencode
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -56,7 +57,7 @@ func RedactArgs(args []string) []string {
 	return args
 }
 
-func BuildEnv(baseEnv map[string]string, configRoot string, configDir string) map[string]string {
+func BuildEnv(baseEnv map[string]string, configRoot string, configDir string, model string) map[string]string {
 	env := map[string]string{}
 	if baseEnv != nil {
 		for key, value := range baseEnv {
@@ -82,7 +83,15 @@ func BuildEnv(baseEnv map[string]string, configRoot string, configDir string) ma
 		}
 		env["OPENCODE_CONFIG_DIR"] = configDir
 		env["OPENCODE_CONFIG"] = configFile
-		env["OPENCODE_CONFIG_CONTENT"] = "{}"
+		configContent := map[string]string{}
+		if model != "" {
+			configContent["model"] = model
+		}
+		payload, err := json.Marshal(configContent)
+		if err != nil {
+			payload = []byte("{}")
+		}
+		env["OPENCODE_CONFIG_CONTENT"] = string(payload)
 	}
 
 	return env
@@ -127,7 +136,7 @@ func RunWithACP(ctx context.Context, issueID string, repoRoot string, prompt str
 	}
 
 	args := BuildACPArgs(repoRoot)
-	env := BuildEnv(nil, configRoot, configDir)
+	env := BuildEnv(nil, configRoot, configDir, model)
 	process, err := runner.Start(args, env, logPath)
 	if err != nil {
 		return err
