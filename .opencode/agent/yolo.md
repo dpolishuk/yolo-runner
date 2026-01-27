@@ -1,7 +1,7 @@
 ---
 description: YOLO automation agent for beads task implementation
 mode: primary
-model: openai/gpt-5.2-codex
+model: zai-coding-plan/glm-4.7
 temperature: 0.1
 tools:
   bash: true
