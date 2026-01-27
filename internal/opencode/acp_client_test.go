@@ -3,6 +3,7 @@ package opencode
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"path/filepath"
 	"reflect"
@@ -294,12 +295,15 @@ func TestRunACPClientSendsVerificationPrompt(t *testing.T) {
 		t.Fatalf("RunACPClient error: %v", err)
 	}
 
-	prompts := agent.getPrompts()
-	if len(prompts) < 2 {
-		t.Fatalf("expected at least 2 prompts, got %d", len(prompts))
+	records := agent.getPromptRecords()
+	if len(records) < 2 {
+		t.Fatalf("expected at least 2 prompts, got %d", len(records))
 	}
-	if prompts[1] != verificationPrompt {
-		t.Fatalf("expected verification prompt, got %q", prompts[1])
+	if records[1].Text != verificationPrompt {
+		t.Fatalf("expected verification prompt, got %q", records[1].Text)
+	}
+	if records[0].SessionId == records[1].SessionId {
+		t.Fatalf("expected verification prompt in a new session")
 	}
 
 	select {
@@ -343,13 +347,62 @@ func TestRunACPClientHandlesDelayedVerification(t *testing.T) {
 	}
 }
 
+func TestRunACPClientRetriesAfterNotDone(t *testing.T) {
+	clientToAgentReader, clientToAgentWriter := io.Pipe()
+	agentToClientReader, agentToClientWriter := io.Pipe()
+
+	serverErr := make(chan error, 1)
+	agent := &testACPAgent{verifyResults: []string{"NOT DONE", "DONE"}}
+	go func() {
+		agentConn := acp.NewAgentSideConnection(agent, clientToAgentReader, agentToClientWriter)
+		agent.client = agentConn.Client()
+		err := agentConn.Start(context.Background())
+		_ = agentToClientWriter.Close()
+		serverErr <- err
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	t.Cleanup(cancel)
+
+	if err := RunACPClient(ctx, clientToAgentWriter, agentToClientReader, t.TempDir(), "do work", nil, nil); err != nil {
+		t.Fatalf("RunACPClient error: %v", err)
+	}
+
+	records := agent.getPromptRecords()
+	if len(records) < 4 {
+		t.Fatalf("expected at least 4 prompts, got %d", len(records))
+	}
+	if records[1].Text != verificationPrompt || records[3].Text != verificationPrompt {
+		t.Fatalf("expected verification prompts at steps 2 and 4")
+	}
+	if records[0].Text == verificationPrompt || records[2].Text == verificationPrompt {
+		t.Fatalf("expected task prompts before verification")
+	}
+
+	select {
+	case err := <-serverErr:
+		if err != nil && !errors.Is(err, io.EOF) {
+			t.Fatalf("unexpected server error: %v", err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatalf("expected server connection to close")
+	}
+}
+
+type promptRecord struct {
+	SessionId acp.SessionId
+	Text      string
+}
+
 type testACPAgent struct {
-	client       acp.Client
-	prompts      []string
-	promptCount  int
-	verifyResult string
-	verifyDelay  time.Duration
-	mu           sync.Mutex
+	client        acp.Client
+	prompts       []promptRecord
+	promptCount   int
+	verifyResult  string
+	verifyResults []string
+	verifyDelay   time.Duration
+	sessionCount  int
+	mu            sync.Mutex
 }
 
 func (a *testACPAgent) Initialize(ctx context.Context, params *acp.InitializeRequest) (*acp.InitializeResponse, error) {
@@ -367,7 +420,11 @@ func (a *testACPAgent) Authenticate(ctx context.Context, params *acp.Authenticat
 }
 
 func (a *testACPAgent) NewSession(ctx context.Context, params *acp.NewSessionRequest) (*acp.NewSessionResponse, error) {
-	return &acp.NewSessionResponse{SessionId: acp.SessionId("session-1")}, nil
+	a.mu.Lock()
+	a.sessionCount++
+	count := a.sessionCount
+	a.mu.Unlock()
+	return &acp.NewSessionResponse{SessionId: acp.SessionId("session-" + fmt.Sprint(count))}, nil
 }
 
 func (a *testACPAgent) LoadSession(ctx context.Context, params *acp.LoadSessionRequest) (*acp.LoadSessionResponse, error) {
@@ -384,25 +441,32 @@ func (a *testACPAgent) Prompt(ctx context.Context, params *acp.PromptRequest) (*
 		text = params.Prompt[0].GetText().Text
 	}
 	a.mu.Lock()
-	a.prompts = append(a.prompts, text)
+	a.prompts = append(a.prompts, promptRecord{SessionId: params.SessionId, Text: text})
 	a.promptCount++
-	count := a.promptCount
 	a.mu.Unlock()
-	if count == 2 && a.client != nil {
+	if text == verificationPrompt && a.client != nil {
 		response := a.verifyResult
+		if len(a.verifyResults) > 0 {
+			response = a.verifyResults[0]
+			if len(a.verifyResults) > 1 {
+				a.mu.Lock()
+				a.verifyResults = a.verifyResults[1:]
+				a.mu.Unlock()
+			}
+		}
 		if response == "" {
 			response = "DONE"
 		}
 		delay := a.verifyDelay
-		go func() {
+		go func(sessionId acp.SessionId, reply string) {
 			if delay > 0 {
 				time.Sleep(delay)
 			}
 			_ = a.client.SessionUpdate(context.Background(), &acp.SessionNotification{
-				SessionId: params.SessionId,
-				Update:    acp.NewSessionUpdateAgentMessageChunk(acp.NewContentBlockText(response)),
+				SessionId: sessionId,
+				Update:    acp.NewSessionUpdateAgentMessageChunk(acp.NewContentBlockText(reply)),
 			})
-		}()
+		}(params.SessionId, response)
 	}
 	return &acp.PromptResponse{StopReason: acp.StopReasonEndTurn}, nil
 }
@@ -410,7 +474,17 @@ func (a *testACPAgent) Prompt(ctx context.Context, params *acp.PromptRequest) (*
 func (a *testACPAgent) getPrompts() []string {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return append([]string{}, a.prompts...)
+	result := make([]string, 0, len(a.prompts))
+	for _, prompt := range a.prompts {
+		result = append(result, prompt.Text)
+	}
+	return result
+}
+
+func (a *testACPAgent) getPromptRecords() []promptRecord {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return append([]promptRecord{}, a.prompts...)
 }
 
 func (a *testACPAgent) Cancel(ctx context.Context, params *acp.CancelNotification) error {

@@ -83,65 +83,90 @@ func RunACPClient(
 		return err
 	}
 
-	session, err := connection.NewSession(ctx, &acp.NewSessionRequest{
-		Cwd:        repoRoot,
-		McpServers: []acp.McpServer{},
-	})
-	if err != nil {
-		return err
-	}
-
-	promptFn := func(text string) error {
-		_, err := connection.Prompt(ctx, &acp.PromptRequest{
-			SessionId: session.SessionId,
-			Prompt: []acp.ContentBlock{
-				acp.NewContentBlockText(text),
-			},
+	newSession := func() (*acp.NewSessionResponse, error) {
+		session, err := connection.NewSession(ctx, &acp.NewSessionRequest{
+			Cwd:        repoRoot,
+			McpServers: []acp.McpServer{},
 		})
-		return err
+		if err != nil {
+			return nil, err
+		}
+		if modeID := findModeID(session.Modes, "yolo"); modeID != "" {
+			if err := connection.SetSessionMode(ctx, &acp.SetSessionModeRequest{
+				ModeId:    modeID,
+				SessionId: session.SessionId,
+			}); err != nil {
+				return nil, err
+			}
+		}
+		return session, nil
 	}
 
-	runPrompt := func(text string) (string, error) {
+	promptFn := func(sessionId acp.SessionId) func(string) error {
+		return func(text string) error {
+			_, err := connection.Prompt(ctx, &acp.PromptRequest{
+				SessionId: sessionId,
+				Prompt: []acp.ContentBlock{
+					acp.NewContentBlockText(text),
+				},
+			})
+			return err
+		}
+	}
+
+	runPrompt := func(sessionId acp.SessionId, text string) (string, error) {
 		client.startCapture()
-		if err := promptFn(text); err != nil {
+		if err := promptFn(sessionId)(text); err != nil {
 			return "", err
 		}
 		client.waitForCaptureIdle(ctx, verificationIdleDelay)
 		response := client.stopCapture()
-		if err := sendQuestionResponses(ctx, promptFn, client.drainQuestionResponses()); err != nil {
+		if err := sendQuestionResponses(ctx, promptFn(sessionId), client.drainQuestionResponses()); err != nil {
 			return "", err
 		}
 		return response, nil
 	}
 
-	if modeID := findModeID(session.Modes, "yolo"); modeID != "" {
-		if err := connection.SetSessionMode(ctx, &acp.SetSessionModeRequest{
-			ModeId:    modeID,
-			SessionId: session.SessionId,
-		}); err != nil {
-			return err
+	cancelSession := func(sessionId acp.SessionId) {
+		_ = connection.Cancel(ctx, &acp.CancelNotification{SessionId: sessionId})
+	}
+
+	runOnce := func() (bool, error) {
+		session, err := newSession()
+		if err != nil {
+			return false, err
 		}
+		if _, err := runPrompt(session.SessionId, prompt); err != nil {
+			return false, err
+		}
+		cancelSession(session.SessionId)
+
+		verifySession, err := newSession()
+		if err != nil {
+			return false, err
+		}
+		verificationText, err := runPrompt(verifySession.SessionId, verificationPrompt)
+		if err != nil {
+			return false, err
+		}
+		cancelSession(verifySession.SessionId)
+		verified, ok := parseVerificationResponse(verificationText)
+		if !ok || !verified {
+			return false, nil
+		}
+		return true, nil
 	}
 
-	if _, err := runPrompt(prompt); err != nil {
-		return err
-	}
-
-	verificationText, err := runPrompt(verificationPrompt)
+	verified, err := runOnce()
 	if err != nil {
 		return err
 	}
-	verified, ok := parseVerificationResponse(verificationText)
-	if !ok || !verified {
-		if _, err := runPrompt(prompt); err != nil {
-			return err
-		}
-		verificationText, err = runPrompt(verificationPrompt)
+	if !verified {
+		verified, err = runOnce()
 		if err != nil {
 			return err
 		}
-		verified, ok = parseVerificationResponse(verificationText)
-		if !ok || !verified {
+		if !verified {
 			return errors.New("verification did not confirm completion")
 		}
 	}
