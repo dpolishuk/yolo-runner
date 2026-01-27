@@ -19,7 +19,7 @@ type Model struct {
 	progressTotal     int
 	lastOutputAt      time.Time
 	now               func() time.Time
-	spinnerIndex      int
+	spinner           Spinner
 	stopRequested     bool
 	stopping          bool
 	stopCh            chan struct{}
@@ -38,11 +38,11 @@ func NewModelWithStop(now func() time.Time, stopCh chan struct{}) Model {
 	if now == nil {
 		now = time.Now
 	}
-	return Model{now: now, stopCh: stopCh}
+	return Model{now: now, stopCh: stopCh, spinner: NewSpinner()}
 }
 
 func (m Model) Init() tea.Cmd {
-	return tickCmd()
+	return tea.Batch(m.spinner.Init(), tickCmd())
 }
 
 type tickMsg struct{}
@@ -54,6 +54,10 @@ func tickCmd() tea.Cmd {
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmd tea.Cmd
+	// Always pass message to spinner so it can receive TickMsg
+	m.spinner, cmd = m.spinner.Update(msg)
+
 	switch typed := msg.(type) {
 	case runner.Event:
 		m.taskID = typed.IssueID
@@ -68,10 +72,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.lastOutputAt = m.now()
 		}
 	case OutputMsg:
-		m.spinnerIndex = (m.spinnerIndex + 1) % len(spinnerFrames)
 		m.lastOutputAt = m.now()
 	case tickMsg:
-		return m, tickCmd()
+		return m, tea.Batch(cmd, tickCmd())
 	case tea.KeyMsg:
 		if typed.Type == tea.KeyCtrlC || (typed.Type == tea.KeyRunes && len(typed.Runes) == 1 && typed.Runes[0] == 'q') {
 			m.stopRequested = true
@@ -91,7 +94,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.stopRequested = true
 		m.stopping = true
 	}
-	return m, nil
+	return m, cmd
 }
 
 // getPhaseLabel maps event types to user-friendly labels
@@ -123,18 +126,18 @@ func getPhaseLabel(eventType runner.EventType) string {
 }
 
 func (m Model) View() string {
-	spinner := spinnerFrames[m.spinnerIndex%len(spinnerFrames)]
+	spinnerChar := m.spinner.View()
 	age := m.lastOutputAge()
-	
+
 	var parts []string
-	
+
 	// Main task info
 	if m.taskID != "" || m.taskTitle != "" {
-		parts = append(parts, fmt.Sprintf("%s %s - %s", spinner, m.taskID, m.taskTitle))
+		parts = append(parts, fmt.Sprintf("%s %s - %s", spinnerChar, m.taskID, m.taskTitle))
 	}
-	
+
 	// Status bar with spinner, progress, state, model, and age
-	statusBarParts := []string{spinner}
+	statusBarParts := []string{spinnerChar}
 	if m.progressTotal > 0 {
 		statusBarParts = append(statusBarParts, fmt.Sprintf("[%d/%d]", m.progressCompleted, m.progressTotal))
 	}
@@ -148,18 +151,18 @@ func (m Model) View() string {
 		statusBarParts = append(statusBarParts, fmt.Sprintf("[%s]", m.model))
 	}
 	statusBarParts = append(statusBarParts, fmt.Sprintf("(%s)", age))
-	
+
 	statusBar := strings.Join(statusBarParts, " ")
 	parts = append(parts, statusBar)
-	
+
 	// Stopping status
 	if m.stopping {
 		parts = append(parts, "Stopping...")
 	}
-	
+
 	// Quit hint
 	parts = append(parts, "q: stop runner")
-	
+
 	return strings.Join(parts, "\n") + "\n"
 }
 
@@ -178,5 +181,3 @@ func (m Model) StopRequested() bool {
 func (m Model) StopChannel() chan struct{} {
 	return m.stopCh
 }
-
-var spinnerFrames = []string{"-", "\\", "|", "/"}
