@@ -75,6 +75,8 @@ func tickCmd() tea.Cmd {
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.spinner, cmd = m.spinner.Update(msg)
+	var statusbarCmd tea.Cmd
+	m.statusbar, statusbarCmd = m.statusbar.Update(msg)
 
 	switch typed := msg.(type) {
 	case runner.Event:
@@ -94,6 +96,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			rendered := m.renderMarkdown(typed.Thought)
 			m.viewport.SetContent(rendered)
 		}
+		// Update statusbar synchronously with current state
+		age := m.lastOutputAge()
+		spinner := m.spinner.View()
+		updateMsg := UpdateStatusBarMsg{Event: typed, LastOutputAge: age, Spinner: spinner}
+		m.statusbar, _ = m.statusbar.Update(updateMsg)
+		return m, tea.Batch(cmd, statusbarCmd)
 	case OutputMsg:
 		m.lastOutputAt = m.now()
 	case tea.WindowSizeMsg:
@@ -102,7 +110,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.viewport.Width = typed.Width
 		m.viewport.Height = typed.Height - 3
 	case tickMsg:
-		return m, tea.Batch(cmd, tickCmd())
+		// On tick, update statusbar with new age if we have task info
+		if m.taskID != "" {
+			age := m.lastOutputAge()
+			spinner := m.spinner.View()
+			// Reconstruct event for statusbar update
+			event := runner.Event{
+				Type:              getEventTypeForPhase(m.phase),
+				IssueID:           m.taskID,
+				Title:             m.taskTitle,
+				Model:             m.model,
+				ProgressCompleted: m.progressCompleted,
+				ProgressTotal:     m.progressTotal,
+			}
+			updateMsg := UpdateStatusBarMsg{Event: event, LastOutputAge: age, Spinner: spinner}
+			m.statusbar, _ = m.statusbar.Update(updateMsg)
+		}
+		return m, tea.Batch(cmd, statusbarCmd, tickCmd())
 	case tea.KeyMsg:
 		if typed.Type == tea.KeyCtrlC || (typed.Type == tea.KeyRunes && len(typed.Runes) == 1 && typed.Runes[0] == 'q') {
 			m.stopRequested = true
@@ -116,13 +140,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					close(m.stopCh)
 				}
 			}
-			return m, func() tea.Msg { return stopTickMsg{} }
+			// Update statusbar with stopping state
+			m.statusbar, _ = m.statusbar.Update(StopStatusBarMsg{})
+			return m, tea.Batch(cmd, statusbarCmd, func() tea.Msg { return stopTickMsg{} })
 		}
 	case stopTickMsg:
 		m.stopRequested = true
 		m.stopping = true
+		// Update statusbar with stopping state
+		m.statusbar, _ = m.statusbar.Update(StopStatusBarMsg{})
 	}
-	return m, cmd
+	return m, tea.Batch(cmd, statusbarCmd)
 }
 
 func getPhaseLabel(eventType runner.EventType) string {
@@ -152,21 +180,35 @@ func getPhaseLabel(eventType runner.EventType) string {
 	}
 }
 
+func getEventTypeForPhase(phase string) runner.EventType {
+	switch phase {
+	case "getting task info":
+		return runner.EventSelectTask
+	case "updating task status":
+		return runner.EventBeadsUpdate
+	case "starting opencode":
+		return runner.EventOpenCodeStart
+	case "opencode finished":
+		return runner.EventOpenCodeEnd
+	case "adding changes":
+		return runner.EventGitAdd
+	case "checking status":
+		return runner.EventGitStatus
+	case "committing changes":
+		return runner.EventGitCommit
+	case "closing task":
+		return runner.EventBeadsClose
+	case "verifying closure":
+		return runner.EventBeadsVerify
+	case "syncing beads":
+		return runner.EventBeadsSync
+	default:
+		return runner.EventType(phase)
+	}
+}
+
 func (m Model) View() string {
 	spinnerChar := m.spinner.View()
-	age := m.lastOutputAge()
-
-	// Update statusbar component with current state
-	// Manually set the phase in statusbar since we need it from Model state, not Event
-	m.statusbar.taskID = m.taskID
-	m.statusbar.phase = m.phase
-	m.statusbar.model = m.model
-	m.statusbar.progressCompleted = m.progressCompleted
-	m.statusbar.progressTotal = m.progressTotal
-	m.statusbar.lastOutputAge = age
-	m.statusbar.spinner = spinnerChar
-	m.statusbar.stopping = m.stopping
-	m.statusbar.SetWidth(m.width)
 
 	// Task title line (for backward compatibility with existing tests)
 	var parts []string

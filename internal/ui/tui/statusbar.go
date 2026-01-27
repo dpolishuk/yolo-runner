@@ -4,13 +4,14 @@ import (
 	"fmt"
 	"strings"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/anomalyco/yolo-runner/internal/runner"
 )
 
-// StatusBar is a component for rendering TUI status bar at the bottom
-// It uses lipgloss for styling and provides a clean interface for status updates
+// StatusBar is a Bubble Tea component for rendering TUI status bar at the bottom
+// It uses lipgloss for styling and follows the teacup (Bubble Tea component) pattern
 type StatusBar struct {
 	taskID            string
 	phase             string
@@ -30,16 +31,39 @@ func NewStatusBar() StatusBar {
 	}
 }
 
-// Update updates the status bar state from a runner.Event
-func (s *StatusBar) Update(event runner.Event, lastOutputAge string, spinner string, stopping bool) {
-	s.taskID = event.IssueID
-	s.phase = getPhaseLabel(event.Type)
-	s.model = event.Model
-	s.progressCompleted = event.ProgressCompleted
-	s.progressTotal = event.ProgressTotal
-	s.lastOutputAge = lastOutputAge
-	s.spinner = spinner
-	s.stopping = stopping
+// Init initializes the status bar component
+func (s StatusBar) Init() tea.Cmd {
+	return nil
+}
+
+// UpdateStatusBarMsg is a message to update status bar state
+type UpdateStatusBarMsg struct {
+	Event         runner.Event
+	LastOutputAge string
+	Spinner       string
+}
+
+// StopStatusBarMsg is a message to set the stopping state
+type StopStatusBarMsg struct{}
+
+// Update handles messages and updates the status bar state
+func (s StatusBar) Update(msg tea.Msg) (StatusBar, tea.Cmd) {
+	switch typed := msg.(type) {
+	case tea.WindowSizeMsg:
+		s.width = typed.Width
+	case UpdateStatusBarMsg:
+		s.taskID = typed.Event.IssueID
+		s.phase = getPhaseLabel(typed.Event.Type)
+		s.model = typed.Event.Model
+		s.progressCompleted = typed.Event.ProgressCompleted
+		s.progressTotal = typed.Event.ProgressTotal
+		s.lastOutputAge = typed.LastOutputAge
+		s.spinner = typed.Spinner
+	case StopStatusBarMsg:
+		s.stopping = true
+	}
+
+	return s, nil
 }
 
 // View returns the rendered status bar
