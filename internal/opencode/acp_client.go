@@ -11,6 +11,8 @@ import (
 	acp "github.com/ironpark/acp-go"
 )
 
+const verificationPrompt = "Verify task completion: run required tests if not already run, then reply with DONE or NOT DONE."
+
 type ACPDecision string
 
 const (
@@ -97,6 +99,18 @@ func RunACPClient(
 		return err
 	}
 
+	runPrompt := func(text string) (string, error) {
+		client.startCapture()
+		if err := promptFn(text); err != nil {
+			return "", err
+		}
+		response := client.stopCapture()
+		if err := sendQuestionResponses(ctx, promptFn, client.drainQuestionResponses()); err != nil {
+			return "", err
+		}
+		return response, nil
+	}
+
 	if modeID := findModeID(session.Modes, "yolo"); modeID != "" {
 		if err := connection.SetSessionMode(ctx, &acp.SetSessionModeRequest{
 			ModeId:    modeID,
@@ -106,19 +120,30 @@ func RunACPClient(
 		}
 	}
 
-	_, err = connection.Prompt(ctx, &acp.PromptRequest{
-		SessionId: session.SessionId,
-		Prompt: []acp.ContentBlock{
-			acp.NewContentBlockText(prompt),
-		},
-	})
+	if _, err := runPrompt(prompt); err != nil {
+		return err
+	}
+
+	verificationText, err := runPrompt(verificationPrompt)
 	if err != nil {
 		return err
 	}
-	client.closeQuestionResponses()
-	if err := sendQuestionResponses(ctx, promptFn, client.drainQuestionResponses()); err != nil {
-		return err
+	verified, ok := parseVerificationResponse(verificationText)
+	if !ok || !verified {
+		if _, err := runPrompt(prompt); err != nil {
+			return err
+		}
+		verificationText, err = runPrompt(verificationPrompt)
+		if err != nil {
+			return err
+		}
+		verified, ok = parseVerificationResponse(verificationText)
+		if !ok || !verified {
+			return errors.New("verification did not confirm completion")
+		}
 	}
+
+	client.closeQuestionResponses()
 	_ = stdin.Close()
 
 	if err := <-errCh; err != nil && !errors.Is(err, io.EOF) {
@@ -151,17 +176,37 @@ func sendQuestionResponses(ctx context.Context, promptFn func(string) error, res
 	return nil
 }
 
+func parseVerificationResponse(text string) (bool, bool) {
+	if text == "" {
+		return false, false
+	}
+	normalized := strings.ToLower(text)
+	if strings.Contains(normalized, "not done") || strings.Contains(normalized, "not complete") {
+		return false, true
+	}
+	if strings.Contains(normalized, "done") {
+		return true, true
+	}
+	return false, false
+}
+
 type acpClient struct {
 	handler                 *ACPHandler
 	onUpdate                func(*acp.SessionNotification)
 	questionResponses       []string
 	questionResponsesMu     sync.Mutex
 	questionResponsesClosed bool
+	captureMu               sync.Mutex
+	captureBuffer           strings.Builder
+	captureEnabled          bool
 }
 
 func (c *acpClient) SessionUpdate(ctx context.Context, params *acp.SessionNotification) error {
 	if c != nil && c.onUpdate != nil {
 		c.onUpdate(params)
+	}
+	if c != nil {
+		c.captureMessage(params)
 	}
 	return nil
 }
@@ -216,6 +261,53 @@ func (c *acpClient) RequestPermission(ctx context.Context, params *acp.RequestPe
 	return &acp.RequestPermissionResponse{
 		Outcome: acp.NewRequestPermissionOutcomeSelected(option.OptionId),
 	}, nil
+}
+
+func (c *acpClient) startCapture() {
+	if c == nil {
+		return
+	}
+	c.captureMu.Lock()
+	defer c.captureMu.Unlock()
+	c.captureBuffer.Reset()
+	c.captureEnabled = true
+}
+
+func (c *acpClient) stopCapture() string {
+	if c == nil {
+		return ""
+	}
+	c.captureMu.Lock()
+	defer c.captureMu.Unlock()
+	c.captureEnabled = false
+	return c.captureBuffer.String()
+}
+
+func (c *acpClient) captureMessage(params *acp.SessionNotification) {
+	if c == nil || params == nil {
+		return
+	}
+	if !c.captureEnabled {
+		return
+	}
+	content := ""
+	if update := params.Update.GetAgentmessagechunk(); update != nil {
+		if update.Content.IsText() {
+			content = update.Content.GetText().Text
+		}
+	} else if update := params.Update.GetAgentthoughtchunk(); update != nil {
+		if update.Content.IsText() {
+			content = update.Content.GetText().Text
+		}
+	}
+	if content == "" {
+		return
+	}
+	c.captureMu.Lock()
+	defer c.captureMu.Unlock()
+	if c.captureEnabled {
+		c.captureBuffer.WriteString(content)
+	}
 }
 
 func (c *acpClient) closeQuestionResponses() {
