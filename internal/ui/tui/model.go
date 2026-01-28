@@ -6,7 +6,6 @@ import (
 
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/anomalyco/yolo-runner/internal/runner"
@@ -28,8 +27,9 @@ type Model struct {
 	stopNotified      bool
 	viewport          viewport.Model
 	logs              []string
-	thought           string    // Agent thoughts in markdown format
-	statusbar         StatusBar // Teacup-style status bar component
+	thought           string         // Agent thoughts in markdown format
+	statusbar         StatusBar      // Teacup-style status bar component
+	markdownBubble    MarkdownBubble // Teacup-style markdown bubble component for rendering agent messages
 	width             int
 	height            int
 }
@@ -49,19 +49,20 @@ func NewModelWithStop(now func() time.Time, stopCh chan struct{}) Model {
 	vp := viewport.New(80, 20)
 	vp.SetContent("")
 	return Model{
-		viewport:  vp,
-		logs:      []string{},
-		width:     80,
-		height:    24,
-		now:       now,
-		stopCh:    stopCh,
-		spinner:   NewSpinner(),
-		statusbar: NewStatusBar(),
+		viewport:       vp,
+		logs:           []string{},
+		width:          80,
+		height:         24,
+		now:            now,
+		stopCh:         stopCh,
+		spinner:        NewSpinner(),
+		statusbar:      NewStatusBar(),
+		markdownBubble: NewMarkdownBubble(),
 	}
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(m.spinner.Init(), tickCmd())
+	return tea.Batch(m.spinner.Init(), m.markdownBubble.Init(), tickCmd())
 }
 
 type tickMsg struct{}
@@ -77,6 +78,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	m.spinner, cmd = m.spinner.Update(msg)
 	var statusbarCmd tea.Cmd
 	m.statusbar, statusbarCmd = m.statusbar.Update(msg)
+	var markdownBubbleCmd tea.Cmd
+	m.markdownBubble, markdownBubbleCmd = m.markdownBubble.Update(msg)
 
 	switch typed := msg.(type) {
 	case runner.Event:
@@ -91,10 +94,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if typed.Type == runner.EventOpenCodeEnd {
 			m.lastOutputAt = m.now()
 		}
-		// Render markdown thoughts and update viewport
+		// Update markdown bubble with thoughts and render to viewport
 		if typed.Thought != "" {
-			rendered := m.renderMarkdown(typed.Thought)
-			m.viewport.SetContent(rendered)
+			m.markdownBubble, _ = m.markdownBubble.Update(SetMarkdownContentMsg{Content: typed.Thought})
+			m.viewport.SetContent(m.markdownBubble.View())
 		}
 		// Update statusbar synchronously with current state
 		age := m.lastOutputAge()
@@ -126,7 +129,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			updateMsg := UpdateStatusBarMsg{Event: event, LastOutputAge: age, Spinner: spinner}
 			m.statusbar, _ = m.statusbar.Update(updateMsg)
 		}
-		return m, tea.Batch(cmd, statusbarCmd, tickCmd())
+		return m, tea.Batch(cmd, statusbarCmd, markdownBubbleCmd, tickCmd())
 	case tea.KeyMsg:
 		if typed.Type == tea.KeyCtrlC || (typed.Type == tea.KeyRunes && len(typed.Runes) == 1 && typed.Runes[0] == 'q') {
 			m.stopRequested = true
@@ -259,27 +262,4 @@ func (m Model) StopRequested() bool {
 
 func (m Model) StopChannel() chan struct{} {
 	return m.stopCh
-}
-
-func (m Model) renderMarkdown(markdown string) string {
-	if markdown == "" {
-		return ""
-	}
-
-	// Create a glamour renderer for terminal markdown rendering
-	renderer, err := glamour.NewTermRenderer(
-		glamour.WithAutoStyle(),
-		glamour.WithWordWrap(m.width),
-	)
-	if err != nil {
-		// Fallback to plain text if glamour fails
-		return markdown
-	}
-
-	rendered, err := renderer.Render(markdown)
-	if err != nil {
-		return markdown
-	}
-
-	return rendered
 }

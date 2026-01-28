@@ -52,8 +52,11 @@ func (m MarkdownBubble) View() string {
 		return style.Render("")
 	}
 
+	// Strip control sequences before rendering
+	strippedContent := stripControlSequences(m.content)
+
 	// Normalize newlines before rendering
-	normalizedContent := normalizeMarkdownNewlines(m.content)
+	normalizedContent := normalizeMarkdownNewlines(strippedContent)
 
 	// Create a glamour renderer for terminal markdown rendering
 	renderer, err := glamour.NewTermRenderer(
@@ -71,6 +74,53 @@ func (m MarkdownBubble) View() string {
 	}
 
 	return rendered
+}
+
+// stripControlSequences removes ANSI escape codes and other control sequences
+// from text before rendering as markdown
+func stripControlSequences(text string) string {
+	// Remove ANSI escape sequences (colors, etc.)
+	// ANSI escape sequences start with \x1b[ and end with m
+	result := text
+	for {
+		start := findSubstring(result, "\x1b[")
+		if start < 0 {
+			break
+		}
+		end := findSubstring(result[start:], "m")
+		if end < 0 {
+			break
+		}
+		result = result[:start] + result[start+end+1:]
+	}
+
+	// Remove null characters
+	result = strings.ReplaceAll(result, "\x00", "")
+
+	// Remove other ASCII control characters (except newline, tab, carriage return)
+	// Keep: \n (0x0A), \r (0x0D), \t (0x09)
+	clean := make([]rune, 0, len(result))
+	for _, r := range result {
+		if r == '\n' || r == '\r' || r == '\t' || r >= 32 {
+			clean = append(clean, r)
+		}
+	}
+	result = string(clean)
+
+	return result
+}
+
+// findSubstring is a helper to find substring index
+func findSubstring(s, substr string) int {
+	if len(substr) == 0 {
+		return 0
+	}
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return i
+		}
+	}
+	return -1
 }
 
 // SetWidth sets the width for markdown rendering
