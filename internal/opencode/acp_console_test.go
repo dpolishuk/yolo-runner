@@ -1,6 +1,8 @@
 package opencode
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 
 	acp "github.com/ironpark/acp-go"
@@ -30,6 +32,17 @@ func TestFormatSessionUpdateAgentMessage(t *testing.T) {
 	expected := "agent_message \"Hello there\""
 	if got != expected {
 		t.Fatalf("unexpected output: %q", got)
+	}
+}
+
+func TestFormatSessionUpdateDoesNotTruncateMessages(t *testing.T) {
+	longText := strings.Repeat("a", acpConsoleSnippetLimit+20)
+	update := acp.NewSessionUpdateAgentMessageChunk(acp.NewContentBlockText(longText))
+
+	got := formatSessionUpdate(&update)
+	expected := fmt.Sprintf("agent_message %q", longText)
+	if got != expected {
+		t.Fatalf("expected full message, got %q", got)
 	}
 }
 

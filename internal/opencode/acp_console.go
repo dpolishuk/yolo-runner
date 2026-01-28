@@ -115,7 +115,7 @@ func formatMessage(prefix string, content *acp.ContentBlock) string {
 	if text == "" {
 		return prefix
 	}
-	return fmt.Sprintf("%s %q", prefix, truncateACPText(text, acpConsoleSnippetLimit))
+	return fmt.Sprintf("%s %q", prefix, text)
 }
 
 func truncateACPText(text string, limit int) string {
