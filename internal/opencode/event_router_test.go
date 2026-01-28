@@ -1,0 +1,340 @@
+package opencode
+
+import (
+	"testing"
+
+	acp "github.com/ironpark/acp-go"
+)
+
+// TestEventRouter_RoutesToolCallToBubbleStore tests that ACP tool_call events
+// are routed to LogBubbleStore's UpsertToolCall method
+func TestEventRouter_RoutesToolCallToBubbleStore(t *testing.T) {
+	store := NewLogBubbleStore()
+	router := NewEventRouter(store)
+
+	// Create a tool call event
+	pendingStatus := acp.ToolCallStatusPending
+	executeKind := acp.ToolKindExecute
+
+	// Create an ACP session update containing tool call
+	update := acp.NewSessionUpdateToolCall(
+		"tool-1",
+		"Test Tool Call",
+		&executeKind,
+		&pendingStatus,
+		nil,
+		nil,
+	)
+
+	// Route event
+	err := router.RouteACPUpdate(&update)
+	if err != nil {
+		t.Fatalf("expected no error routing ACP update, got: %v", err)
+	}
+
+	// Verify that tool call was added to bubble store
+	bubbles := store.GetBubbles()
+	if len(bubbles) != 1 {
+		t.Fatalf("expected 1 bubble after routing tool call, got %d", len(bubbles))
+	}
+
+	if !containsString(bubbles[0], "tool-1") {
+		t.Errorf("expected bubble to contain tool call id 'tool-1', got: %s", bubbles[0])
+	}
+	if !containsString(bubbles[0], "Test Tool Call") {
+		t.Errorf("expected bubble to contain tool call title 'Test Tool Call', got: %s", bubbles[0])
+	}
+}
+
+// TestEventRouter_RoutesToolCallUpdateToBubbleStore tests that ACP tool_call_update events
+// are routed to LogBubbleStore's UpsertToolCallUpdate method
+func TestEventRouter_RoutesToolCallUpdateToBubbleStore(t *testing.T) {
+	store := NewLogBubbleStore()
+	router := NewEventRouter(store)
+
+	// Create a tool call update event
+	inProgressStatus := acp.ToolCallStatusInProgress
+
+	// Create an ACP session update containing tool call update
+	update := acp.NewSessionUpdateToolCallUpdate(
+		"tool-1",
+		&inProgressStatus,
+		nil,
+		nil,
+	)
+
+	// Route event
+	err := router.RouteACPUpdate(&update)
+	if err != nil {
+		t.Fatalf("expected no error routing ACP update, got: %v", err)
+	}
+
+	// Verify that tool call update was added to bubble store
+	bubbles := store.GetBubbles()
+	if len(bubbles) != 1 {
+		t.Fatalf("expected 1 bubble after routing tool call update, got %d", len(bubbles))
+	}
+
+	if !containsString(bubbles[0], "tool_call_update") {
+		t.Errorf("expected bubble to contain 'tool_call_update', got: %s", bubbles[0])
+	}
+}
+
+// TestEventRouter_ToolCallUpdatesSameBubble tests that multiple tool call updates
+// for the same tool call id update the same bubble in the store
+func TestEventRouter_ToolCallUpdatesSameBubble(t *testing.T) {
+	store := NewLogBubbleStore()
+	router := NewEventRouter(store)
+
+	// Initial tool call
+	pendingStatus := acp.ToolCallStatusPending
+
+	update1 := acp.NewSessionUpdateToolCall(
+		"tool-1",
+		"Test Tool Call",
+		nil,
+		&pendingStatus,
+		nil,
+		nil,
+	)
+
+	err := router.RouteACPUpdate(&update1)
+	if err != nil {
+		t.Fatalf("expected no error routing first update, got: %v", err)
+	}
+
+	bubbles := store.GetBubbles()
+	if len(bubbles) != 1 {
+		t.Fatalf("expected 1 bubble after initial tool call, got %d", len(bubbles))
+	}
+
+	// Update the same tool call
+	inProgressStatus := acp.ToolCallStatusInProgress
+
+	update2 := acp.NewSessionUpdateToolCallUpdate(
+		"tool-1",
+		&inProgressStatus,
+		nil,
+		nil,
+	)
+
+	err = router.RouteACPUpdate(&update2)
+	if err != nil {
+		t.Fatalf("expected no error routing update, got: %v", err)
+	}
+
+	// Verify we still have only 1 bubble (not 2)
+	bubbles = store.GetBubbles()
+	if len(bubbles) != 1 {
+		t.Fatalf("expected 1 bubble after update (same bubble updated), got %d", len(bubbles))
+	}
+
+	// Verify that the bubble was updated with new status
+	if !containsString(bubbles[0], "tool_call_update") {
+		t.Errorf("expected bubble to be updated to tool_call_update format, got: %s", bubbles[0])
+	}
+}
+
+// TestEventRouter_RoutesMultipleToolCalls tests that multiple different tool calls
+// are routed and stored separately
+func TestEventRouter_RoutesMultipleToolCalls(t *testing.T) {
+	store := NewLogBubbleStore()
+	router := NewEventRouter(store)
+
+	// Create first tool call
+	pendingStatus := acp.ToolCallStatusPending
+
+	update1 := acp.NewSessionUpdateToolCall(
+		"tool-1",
+		"First Tool",
+		nil,
+		&pendingStatus,
+		nil,
+		nil,
+	)
+
+	err := router.RouteACPUpdate(&update1)
+	if err != nil {
+		t.Fatalf("expected no error routing first tool call, got: %v", err)
+	}
+
+	// Create second tool call
+	update2 := acp.NewSessionUpdateToolCall(
+		"tool-2",
+		"Second Tool",
+		nil,
+		&pendingStatus,
+		nil,
+		nil,
+	)
+
+	err = router.RouteACPUpdate(&update2)
+	if err != nil {
+		t.Fatalf("expected no error routing second tool call, got: %v", err)
+	}
+
+	// Verify we have 2 separate bubbles
+	bubbles := store.GetBubbles()
+	if len(bubbles) != 2 {
+		t.Fatalf("expected 2 bubbles after routing two tool calls, got %d", len(bubbles))
+	}
+
+	if !containsString(bubbles[0], "tool-1") {
+		t.Errorf("expected first bubble to be tool-1, got: %s", bubbles[0])
+	}
+	if !containsString(bubbles[1], "tool-2") {
+		t.Errorf("expected second bubble to be tool-2, got: %s", bubbles[1])
+	}
+}
+
+// TestEventRouter_HandlesNilACPUpdate tests that nil ACP updates are handled gracefully
+func TestEventRouter_HandlesNilACPUpdate(t *testing.T) {
+	store := NewLogBubbleStore()
+	router := NewEventRouter(store)
+
+	// Route nil update
+	err := router.RouteACPUpdate(nil)
+	if err != nil {
+		t.Fatalf("expected no error routing nil ACP update, got: %v", err)
+	}
+
+	// Verify no bubbles were added
+	bubbles := store.GetBubbles()
+	if len(bubbles) != 0 {
+		t.Errorf("expected 0 bubbles after nil update, got %d", len(bubbles))
+	}
+}
+
+// TestEventRouter_HandlesEmptyACPUpdate tests that empty ACP updates (no tool call data)
+// are handled gracefully
+func TestEventRouter_HandlesEmptyACPUpdate(t *testing.T) {
+	store := NewLogBubbleStore()
+	router := NewEventRouter(store)
+
+	// Route empty update - create a plan update which has no tool call data
+	update := acp.NewSessionUpdatePlan(nil)
+
+	err := router.RouteACPUpdate(&update)
+	if err != nil {
+		t.Fatalf("expected no error routing empty ACP update, got: %v", err)
+	}
+
+	// Verify no bubbles were added
+	bubbles := store.GetBubbles()
+	if len(bubbles) != 0 {
+		t.Errorf("expected 0 bubbles after empty update, got %d", len(bubbles))
+	}
+}
+
+// TestEventRouter_RoutesAgentThoughts tests that agent thoughts from ACP updates
+// are routed to bubble store as log entries
+func TestEventRouter_RoutesAgentThoughts(t *testing.T) {
+	store := NewLogBubbleStore()
+	router := NewEventRouter(store)
+
+	// Create an ACP update with agent thought
+	content := acp.NewContentBlockText("## Analysis\n\nThis is a thought.")
+	update := acp.NewSessionUpdateAgentThoughtChunk(content)
+
+	// Route update
+	err := router.RouteACPUpdate(&update)
+	if err != nil {
+		t.Fatalf("expected no error routing agent thought, got: %v", err)
+	}
+
+	// Verify that agent thought was added to bubble store
+	bubbles := store.GetBubbles()
+	if len(bubbles) != 1 {
+		t.Fatalf("expected 1 bubble after routing agent thought, got %d", len(bubbles))
+	}
+
+	if !containsString(bubbles[0], "agent_thought") {
+		t.Errorf("expected bubble to contain 'agent_thought', got: %s", bubbles[0])
+	}
+}
+
+// TestEventRouter_MaintainsOrderingAcrossUpdates tests that bubble store maintains
+// correct ordering when multiple tool calls are updated
+func TestEventRouter_MaintainsOrderingAcrossUpdates(t *testing.T) {
+	store := NewLogBubbleStore()
+	router := NewEventRouter(store)
+
+	// Create three tool calls
+	pendingStatus := acp.ToolCallStatusPending
+
+	update1 := acp.NewSessionUpdateToolCall(
+		"tool-1",
+		"First Tool",
+		nil,
+		&pendingStatus,
+		nil,
+		nil,
+	)
+
+	update2 := acp.NewSessionUpdateToolCall(
+		"tool-2",
+		"Second Tool",
+		nil,
+		&pendingStatus,
+		nil,
+		nil,
+	)
+
+	update3 := acp.NewSessionUpdateToolCall(
+		"tool-3",
+		"Third Tool",
+		nil,
+		&pendingStatus,
+		nil,
+		nil,
+	)
+
+	// Route them in order
+	router.RouteACPUpdate(&update1)
+	router.RouteACPUpdate(&update2)
+	router.RouteACPUpdate(&update3)
+
+	bubbles := store.GetBubbles()
+	if len(bubbles) != 3 {
+		t.Fatalf("expected 3 bubbles, got %d", len(bubbles))
+	}
+
+	// Verify initial ordering
+	if !containsString(bubbles[0], "tool-1") {
+		t.Errorf("expected first bubble to be tool-1, got: %s", bubbles[0])
+	}
+	if !containsString(bubbles[1], "tool-2") {
+		t.Errorf("expected second bubble to be tool-2, got: %s", bubbles[1])
+	}
+	if !containsString(bubbles[2], "tool-3") {
+		t.Errorf("expected third bubble to be tool-3, got: %s", bubbles[2])
+	}
+
+	// Update tool-2 - it should stay in position
+	inProgressStatus := acp.ToolCallStatusInProgress
+
+	update4 := acp.NewSessionUpdateToolCallUpdate(
+		"tool-2",
+		&inProgressStatus,
+		nil,
+		nil,
+	)
+
+	router.RouteACPUpdate(&update4)
+
+	bubbles = store.GetBubbles()
+	if len(bubbles) != 3 {
+		t.Fatalf("expected 3 bubbles after update, got %d", len(bubbles))
+	}
+
+	// Verify ordering is stable (tool-2 still in middle)
+	if !containsString(bubbles[0], "tool-1") {
+		t.Errorf("expected first bubble to still be tool-1, got: %s", bubbles[0])
+	}
+	if !containsString(bubbles[1], "tool-2") {
+		t.Errorf("expected second bubble to still be tool-2, got: %s", bubbles[1])
+	}
+	if !containsString(bubbles[2], "tool-3") {
+		t.Errorf("expected third bubble to still be tool-3, got: %s", bubbles[2])
+	}
+}
