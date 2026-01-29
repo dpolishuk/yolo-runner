@@ -2,10 +2,28 @@ package beads
 
 import (
 	"encoding/json"
+	"fmt"
+	"os"
 	"strings"
 
 	"github.com/anomalyco/yolo-runner/internal/runner"
 )
+
+func traceJSONParse(operation string, data []byte, target interface{}) error {
+	if err := json.Unmarshal(data, target); err != nil {
+		fmt.Fprintf(os.Stderr, "JSON parse error in %s: %v\n", operation, err)
+		fmt.Fprintf(os.Stderr, "First 200 bytes: %q\n", string(data[:min(200, len(data))]))
+		return err
+	}
+	return nil
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
 
 type Runner interface {
 	Run(args ...string) (string, error)
@@ -29,7 +47,7 @@ func (a *Adapter) Ready(rootID string) (runner.Issue, error) {
 		return runner.Issue{}, err
 	}
 	var issues []runner.Issue
-	if err := json.Unmarshal([]byte(output), &issues); err != nil {
+	if err := traceJSONParse("Ready", []byte(output), &issues); err != nil {
 		return runner.Issue{}, err
 	}
 	if len(issues) == 0 {
@@ -83,12 +101,12 @@ func (a *Adapter) Tree(rootID string) (runner.Issue, error) {
 }
 
 func (a *Adapter) listTree(rootID string) ([]runner.Issue, error) {
-	output, err := a.runner.Run("bd", "list", "--parent", rootID, "--tree", "--json")
+	output, err := a.runner.Run("bd", "list", "--parent", rootID, "--json")
 	if err != nil {
 		return nil, err
 	}
 	var issues []runner.Issue
-	if err := json.Unmarshal([]byte(output), &issues); err != nil {
+	if err := traceJSONParse("listTree", []byte(output), &issues); err != nil {
 		return nil, err
 	}
 	return issues, nil
@@ -100,7 +118,7 @@ func (a *Adapter) readyFallback(rootID string) (runner.Issue, error) {
 		return runner.Issue{}, err
 	}
 	var issues []runner.Issue
-	if err := json.Unmarshal([]byte(output), &issues); err != nil {
+	if err := traceJSONParse("readyFallback", []byte(output), &issues); err != nil {
 		return runner.Issue{}, err
 	}
 	if len(issues) == 0 {
@@ -130,7 +148,7 @@ func (a *Adapter) Show(id string) (runner.Bead, error) {
 		return runner.Bead{}, err
 	}
 	var issues []showIssue
-	if err := json.Unmarshal([]byte(output), &issues); err != nil {
+	if err := traceJSONParse("Show", []byte(output), &issues); err != nil {
 		return runner.Bead{}, err
 	}
 	if len(issues) == 0 {
