@@ -10,7 +10,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/anomalyco/yolo-runner/internal/beads"
 	"github.com/anomalyco/yolo-runner/internal/exec"
@@ -362,12 +361,14 @@ func inferDefaultRootID(repoRoot string) (string, error) {
 	count := 0
 	var match roadmapCandidate
 	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
+		line := scanner.Bytes()
+		if len(line) == 0 {
 			continue
 		}
 		var item roadmapCandidate
-		if err := json.Unmarshal([]byte(line), &item); err != nil {
+		if err := json.Unmarshal(line, &item); err != nil {
+			fmt.Fprintln(os.Stderr, "Error parsing line in issues.jsonl:", err)
+			fmt.Fprintf(os.Stderr, "Line content (first 100 bytes): %q\n", string(line[:min(100, len(line))]))
 			continue
 		}
 		if item.Title == "Roadmap" && item.Type == "epic" && (item.Status == "open" || item.Status == "in_progress") {
