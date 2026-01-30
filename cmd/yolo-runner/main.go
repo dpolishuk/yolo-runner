@@ -254,12 +254,16 @@ func RunOnceMain(args []string, runOnce runOnceFunc, exit exitFunc, stdout io.Wr
 	}
 
 	var program tuiProgram
+	var tuiWriter *tuiLogWriter
+	previousCommandOutput := commandOutput
 	if !*headless && isTerminal(stdout) {
 		stopCh := make(chan struct{})
 		options.Stop = stopCh
 		program = newTUIProgram(tui.NewModelWithStop(nil, stopCh), stdout, os.Stdin)
 		deps.Events = tuiEmitter{program: program}
-		options.Out = io.Discard
+		tuiWriter = newTUILogWriter(program)
+		options.Out = tuiWriter
+		commandOutput = tuiWriter
 		go func() {
 			if err := program.Start(); err != nil {
 				fmt.Fprintln(stderr, err)
@@ -269,6 +273,12 @@ func RunOnceMain(args []string, runOnce runOnceFunc, exit exitFunc, stdout io.Wr
 			}
 		}()
 	}
+	defer func() {
+		commandOutput = previousCommandOutput
+		if tuiWriter != nil {
+			tuiWriter.Flush()
+		}
+	}()
 	if isTerminal(stdout) {
 		defer fmt.Fprint(stdout, "\x1b[?25h")
 	}

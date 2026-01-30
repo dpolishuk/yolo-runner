@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/viewport"
@@ -35,6 +36,10 @@ type Model struct {
 }
 
 type OutputMsg struct{}
+
+type AppendLogMsg struct {
+	Line string
+}
 
 type stopTickMsg struct{}
 
@@ -80,9 +85,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	m.statusbar, statusbarCmd = m.statusbar.Update(msg)
 	var markdownBubbleCmd tea.Cmd
 	m.markdownBubble, markdownBubbleCmd = m.markdownBubble.Update(msg)
+	var viewportCmd tea.Cmd
 
 	switch typed := msg.(type) {
 	case runner.Event:
+		m.appendLogLines(formatRunnerEventLine(typed))
 		m.taskID = typed.IssueID
 		m.taskTitle = typed.Title
 		m.phase = getPhaseLabel(typed.Type)
@@ -94,10 +101,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if typed.Type == runner.EventOpenCodeEnd {
 			m.lastOutputAt = m.now()
 		}
-		// Update markdown bubble with thoughts and render to viewport
+		// Append markdown bubble for thoughts into the log view
 		if typed.Thought != "" {
 			m.markdownBubble, _ = m.markdownBubble.Update(SetMarkdownContentMsg{Content: typed.Thought})
-			m.viewport.SetContent(m.markdownBubble.View())
+			m.appendLogLines(m.markdownBubble.View())
 		}
 		// Update statusbar synchronously with current state
 		age := m.lastOutputAge()
@@ -107,6 +114,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmd, statusbarCmd)
 	case OutputMsg:
 		m.lastOutputAt = m.now()
+	case AppendLogMsg:
+		m.lastOutputAt = m.now()
+		m.appendLogLines(typed.Line)
 	case tea.WindowSizeMsg:
 		m.width = typed.Width
 		m.height = typed.Height
@@ -147,13 +157,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.statusbar, _ = m.statusbar.Update(StopStatusBarMsg{})
 			return m, tea.Batch(cmd, statusbarCmd, func() tea.Msg { return stopTickMsg{} })
 		}
+		m.viewport, viewportCmd = m.viewport.Update(msg)
+	case tea.MouseMsg:
+		m.viewport, viewportCmd = m.viewport.Update(msg)
 	case stopTickMsg:
 		m.stopRequested = true
 		m.stopping = true
 		// Update statusbar with stopping state
 		m.statusbar, _ = m.statusbar.Update(StopStatusBarMsg{})
 	}
-	return m, tea.Batch(cmd, statusbarCmd)
+	return m, tea.Batch(cmd, statusbarCmd, viewportCmd)
 }
 
 func getPhaseLabel(eventType runner.EventType) string {
@@ -246,6 +259,34 @@ func (m Model) View() string {
 	content := lipgloss.JoinVertical(lipgloss.Top, parts...)
 
 	return content + "\n"
+}
+
+func (m *Model) appendLogLines(text string) {
+	if text == "" {
+		return
+	}
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	text = strings.ReplaceAll(text, "\r", "\n")
+	lines := strings.Split(text, "\n")
+	for _, line := range lines {
+		m.logs = append(m.logs, line)
+	}
+	m.viewport.SetContent(strings.Join(m.logs, "\n"))
+	m.viewport.GotoBottom()
+}
+
+func formatRunnerEventLine(event runner.Event) string {
+	parts := []string{"[runner]"}
+	if event.IssueID != "" {
+		parts = append(parts, event.IssueID)
+	}
+	if event.Title != "" {
+		parts = append(parts, event.Title)
+	}
+	if len(parts) == 1 {
+		parts = append(parts, "event update")
+	}
+	return strings.Join(parts, " ")
 }
 
 func (m Model) lastOutputAge() string {

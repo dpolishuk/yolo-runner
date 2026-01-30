@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/anomalyco/yolo-runner/internal/opencode"
 	"github.com/anomalyco/yolo-runner/internal/runner"
+	"github.com/anomalyco/yolo-runner/internal/ui/tui"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -418,8 +420,8 @@ func TestRunOnceMainUsesTUIOnTTYByDefault(t *testing.T) {
 	if runOnce.deps.Events == nil {
 		t.Fatalf("expected events emitter to be set")
 	}
-	if runOnce.opts.Out != io.Discard {
-		t.Fatalf("expected stdout to be discarded when TUI is active")
+	if runOnce.opts.Out == io.Discard {
+		t.Fatalf("expected stdout to be routed to TUI when active")
 	}
 	runOnce.deps.Events.Emit(runner.Event{Type: runner.EventSelectTask})
 	waitForSignal(t, fakeProgram.started, "tui start")
@@ -429,6 +431,50 @@ func TestRunOnceMainUsesTUIOnTTYByDefault(t *testing.T) {
 		// ok
 	case <-time.After(200 * time.Millisecond):
 		t.Fatalf("expected event to be forwarded to TUI")
+	}
+}
+
+func TestRunOnceMainTuiRoutesOutputToProgram(t *testing.T) {
+	fakeProgram := newFakeTUIProgram()
+	prevIsTerminal := isTerminal
+	prevNewTUIProgram := newTUIProgram
+	isTerminal = func(io.Writer) bool { return true }
+	newTUIProgram = func(model tea.Model, stdout io.Writer, input io.Reader) tuiProgram { return fakeProgram }
+	t.Cleanup(func() {
+		isTerminal = prevIsTerminal
+		newTUIProgram = prevNewTUIProgram
+	})
+
+	tempDir := t.TempDir()
+	writeAgentFile(t, tempDir, "---\npermission: allow\n---\n")
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+
+	runOnce := func(opts runner.RunOnceOptions, deps runner.RunOnceDeps) (string, error) {
+		fmt.Fprint(opts.Out, "runner output line\n")
+		return "no_tasks", nil
+	}
+
+	code := RunOnceMain([]string{"--repo", tempDir, "--root", "root"}, runOnce, nil, stdout, stderr, nil, nil)
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d", code)
+	}
+
+	if strings.Contains(stdout.String(), "runner output line") {
+		t.Fatalf("expected output to be routed to TUI, got %q", stdout.String())
+	}
+
+	select {
+	case msg := <-fakeProgram.inputs:
+		logMsg, ok := msg.(tui.AppendLogMsg)
+		if !ok {
+			t.Fatalf("expected AppendLogMsg, got %T", msg)
+		}
+		if logMsg.Line != "runner output line" {
+			t.Fatalf("expected log line to be routed to TUI, got %q", logMsg.Line)
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatalf("expected log message to be forwarded to TUI")
 	}
 }
 

@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -662,5 +663,75 @@ func TestModelUsesStatusBarComponent(t *testing.T) {
 
 	if !statusBarFound {
 		t.Fatalf("expected statusbar to be positioned before quit hint at bottom, got view: %q", view)
+	}
+}
+
+func TestModelAppendsLogLinesToViewport(t *testing.T) {
+	fixedNow := time.Date(2026, 1, 19, 12, 0, 10, 0, time.UTC)
+	m := NewModel(func() time.Time { return fixedNow })
+
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 8})
+	m = updated.(Model)
+
+	updated, _ = m.Update(AppendLogMsg{Line: "first log line"})
+	m = updated.(Model)
+	updated, _ = m.Update(AppendLogMsg{Line: "second log line"})
+	m = updated.(Model)
+
+	view := m.View()
+	if !strings.Contains(view, "first log line") {
+		t.Fatalf("expected first log line in view, got %q", view)
+	}
+	if !strings.Contains(view, "second log line") {
+		t.Fatalf("expected second log line in view, got %q", view)
+	}
+	if strings.Index(view, "first log line") > strings.Index(view, "second log line") {
+		t.Fatalf("expected log lines to remain in order, got %q", view)
+	}
+}
+
+func TestModelScrollsLogViewport(t *testing.T) {
+	fixedNow := time.Date(2026, 1, 19, 12, 0, 10, 0, time.UTC)
+	m := NewModel(func() time.Time { return fixedNow })
+
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 40, Height: 6})
+	m = updated.(Model)
+
+	for i := 0; i < 10; i++ {
+		updated, _ = m.Update(AppendLogMsg{Line: fmt.Sprintf("log line %d", i)})
+		m = updated.(Model)
+	}
+
+	// Ensure we can scroll down from the top
+	m.viewport.GotoTop()
+	if m.viewport.YOffset != 0 {
+		t.Fatalf("expected viewport to start at top, got %d", m.viewport.YOffset)
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = updated.(Model)
+	if m.viewport.YOffset == 0 {
+		t.Fatalf("expected viewport to scroll on key down")
+	}
+}
+
+func TestModelAppendsRunnerEventsToLogView(t *testing.T) {
+	fixedNow := time.Date(2026, 1, 19, 12, 0, 10, 0, time.UTC)
+	m := NewModel(func() time.Time { return fixedNow })
+
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 8})
+	m = updated.(Model)
+
+	updated, _ = m.Update(runner.Event{
+		Type:      runner.EventSelectTask,
+		IssueID:   "task-1",
+		Title:     "Example Task",
+		EmittedAt: fixedNow.Add(-5 * time.Second),
+	})
+	m = updated.(Model)
+
+	view := m.View()
+	if !strings.Contains(view, "[runner] task-1 Example Task") {
+		t.Fatalf("expected runner event log in view, got %q", view)
 	}
 }

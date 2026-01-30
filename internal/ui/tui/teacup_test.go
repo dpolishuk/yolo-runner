@@ -217,16 +217,16 @@ func TestViewportAboveStatusBar(t *testing.T) {
 	m = updated.(Model)
 
 	// Add content to viewport
-	m.viewport.GotoTop()
-	m.viewport.SetContent("Line 1\nLine 2\nLine 3")
-
-	// Update with event
 	updated, _ = m.Update(runner.Event{
 		Type:      runner.EventSelectTask,
 		IssueID:   "task-1",
 		Title:     "Example Task",
 		EmittedAt: fixedNow.Add(-5 * time.Second),
 	})
+	m = updated.(Model)
+
+	// Add content to viewport via log append
+	updated, _ = m.Update(AppendLogMsg{Line: "Line 1"})
 	m = updated.(Model)
 
 	view := m.View()
