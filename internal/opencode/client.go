@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+	"strings"
 
 	"github.com/anomalyco/yolo-runner/internal/logging"
 	acp "github.com/ironpark/acp-go"
@@ -27,8 +28,6 @@ func (runner RunnerFunc) Start(args []string, env map[string]string, stdoutPath 
 
 type ACPClient interface {
 	Run(ctx context.Context, issueID string, logPath string) error
-}
-
 type ACPClientFunc func(ctx context.Context, issueID string, logPath string) error
 
 func (client ACPClientFunc) Run(ctx context.Context, issueID string, logPath string) error {
@@ -175,7 +174,48 @@ func RunWithACP(ctx context.Context, issueID string, repoRoot string, prompt str
 		})
 	}
 
-	runErr := acpClient.Run(ctx, issueID, logPath)
+	// Add timeout mechanism for detecting stuck OpenCode processes and initialization failures
+	initTimeout := 30 * time.Second
+	if deadline, ok := ctx.Deadline(); ok {
+		remaining := time.Until(deadline)
+		if remaining < initTimeout {
+			initTimeout = remaining
+		}
+	}
+	
+	// Monitor for initialization failures
+	initCtx, initCancel := context.WithTimeout(ctx, initTimeout)
+	defer initCancel()
+	
+	// Check stderr logs for Serena initialization failures
+	stderrPath := strings.TrimSuffix(logPath, ".jsonl") + ".stderr.log"
+	go monitorInitFailures(initCtx, stderrPath, initCancel)
+	
+	// Set up watchdog to detect stuck processes
+	watchdog := NewWatchdog(WatchdogConfig{
+		LogPath:         logPath,
+		Timeout:         initTimeout,
+		Interval:        1 * time.Second,
+		CompletionGrace: 100 * time.Millisecond,
+		TailLines:       10,
+		Now:             time.Now,
+		After:           time.After,
+		NewTicker: func(d time.Duration) WatchdogTicker {
+			return realWatchdogTicker{ticker: time.NewTicker(d)}
+		},
+	})
+	
+	watchdogCh := make(chan error, 1)
+	go func() {
+		watchdogCh <- watchdog.Monitor(process)
+	}()
+
+
+// Run ACP client in goroutine to avoid blocking
+	acpErrCh := make(chan error, 1)
+	go func() {
+		acpErrCh <- acpClient.Run(ctx, issueID, logPath)
+	}()
 
 	waitCh := make(chan error, 1)
 	go func() {
@@ -184,6 +224,7 @@ func RunWithACP(ctx context.Context, issueID string, repoRoot string, prompt str
 
 	var killErr error
 	var waitErr error
+	var runErr error
 	timeout := time.NewTimer(acpShutdownGrace)
 	defer timeout.Stop()
 	select {
@@ -191,13 +232,40 @@ func RunWithACP(ctx context.Context, issueID string, repoRoot string, prompt str
 		if !timeout.Stop() {
 			<-timeout.C
 		}
+	case acpErr := <-acpErrCh:
+		// ACP client completed (or failed)
+		runErr = acpErr
+		if !timeout.Stop() {
+			<-timeout.C
+		}
 	case <-ctx.Done():
 		killErr = process.Kill()
 		waitErr = <-waitCh
+	case watchdogErr := <-watchdogCh:
+		// Watchdog detected a stall or timeout
+		writeConsoleLine(os.Stderr, fmt.Sprintf("OpenCode stall detected: %v", watchdogErr))
+		killErr = process.Kill()
+		waitErr = <-waitCh
+		// Return watchdog error as primary error
+		return watchdogErr
 	case <-timeout.C:
 		killErr = process.Kill()
 		waitErr = <-waitCh
 	}
+
+	// Wait for remaining operations to complete
+	if runErr == nil {
+		select {
+		case acpErr := <-acpErrCh:
+			runErr = acpErr
+		case waitErr = <-waitCh:
+			// Process completed
+		}
+	} else {
+		// Wait for process to complete
+		waitErr = <-waitCh
+	}
+
 	shutdownErr := errors.Join(killErr, waitErr)
 	if runErr != nil {
 		return errors.Join(runErr, shutdownErr)
