@@ -117,26 +117,8 @@ func TestStatusBarPinnedToBottomInLayout(t *testing.T) {
 	view := strings.TrimSpace(m.View())
 	lines := strings.Split(view, "\n")
 
-	// Find the quit hint line (should be last)
-	quitHintIndex := -1
-	for i, line := range lines {
-		if strings.Contains(line, "q: stop runner") {
-			quitHintIndex = i
-			break
-		}
-	}
-
-	if quitHintIndex == -1 {
-		t.Fatalf("expected to find quit hint in view")
-	}
-
-	// The statusbar should be immediately before the quit hint
-	if quitHintIndex == 0 {
-		t.Fatalf("expected statusbar to be before quit hint")
-	}
-
-	// The line before quit hint should contain statusbar content (task ID, phase, age)
-	statusBarLine := lines[quitHintIndex-1]
+	// The statusbar should be the last line
+	statusBarLine := lines[len(lines)-1]
 	if !strings.Contains(statusBarLine, "task-1") {
 		t.Fatalf("expected statusbar line to contain task ID, got: %q", statusBarLine)
 	}
@@ -235,11 +217,8 @@ func TestViewportAboveStatusBar(t *testing.T) {
 	// Find viewport content (lines)
 	viewportContentFound := false
 	statusBarFound := false
-	quitHintFound := false
-
 	viewportIndex := -1
 	statusBarIndex := -1
-	quitHintIndex := -1
 
 	for i, line := range lines {
 		if strings.Contains(line, "Line 1") {
@@ -249,10 +228,6 @@ func TestViewportAboveStatusBar(t *testing.T) {
 		if strings.Contains(line, "task-1") && strings.Contains(line, "getting task info") {
 			statusBarFound = true
 			statusBarIndex = i
-		}
-		if strings.Contains(line, "q: stop runner") {
-			quitHintFound = true
-			quitHintIndex = i
 		}
 	}
 
@@ -264,17 +239,9 @@ func TestViewportAboveStatusBar(t *testing.T) {
 		t.Fatalf("expected statusbar in view, got: %q", view)
 	}
 
-	if !quitHintFound {
-		t.Fatalf("expected quit hint in view, got: %q", view)
-	}
-
-	// Verify order: viewport above statusbar, statusbar above quit hint
+	// Verify order: viewport above statusbar
 	if viewportIndex >= statusBarIndex {
 		t.Fatalf("expected viewport (index %d) to be above statusbar (index %d)", viewportIndex, statusBarIndex)
-	}
-
-	if statusBarIndex >= quitHintIndex {
-		t.Fatalf("expected statusbar (index %d) to be above quit hint (index %d)", statusBarIndex, quitHintIndex)
 	}
 }
 
@@ -327,8 +294,8 @@ func TestResizeCorrectly(t *testing.T) {
 		t.Fatalf("expected viewport width to be 120 after resize, got %d", m.viewport.Width)
 	}
 
-	// Viewport height should account for other components (title line, statusbar, quit hint)
-	expectedViewportHeight := 40 - 3 // Height minus title line, statusbar, and quit hint
+	// Viewport height should account for other components (statusbar only)
+	expectedViewportHeight := 40 - 1 // Height minus statusbar
 	if m.viewport.Height != expectedViewportHeight {
 		t.Fatalf("expected viewport height to be %d after resize, got %d", expectedViewportHeight, m.viewport.Height)
 	}

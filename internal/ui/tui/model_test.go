@@ -30,10 +30,6 @@ func TestModelUsesBubblesSpinnerNotCustomFrames(t *testing.T) {
 	lines := strings.Split(strings.TrimSpace(view), "\n")
 	customChars := []string{"-", "\\", "|", "/"}
 	for _, line := range lines {
-		// Skip the quit hint line which starts with "q:"
-		if strings.HasPrefix(line, "q:") {
-			continue
-		}
 		// Skip the stopping line which starts with "Stopping"
 		if strings.HasPrefix(line, "Stopping") {
 			continue
@@ -68,14 +64,14 @@ func TestModelRendersTaskAndPhase(t *testing.T) {
 	m = updated.(Model)
 
 	view := m.View()
-	if !strings.Contains(view, "task-1 - Example Task") {
-		t.Fatalf("expected task id and title in view, got %q", view)
-	}
 	if !strings.Contains(view, "getting task info") {
 		t.Fatalf("expected phase in view, got %q", view)
 	}
 	if !strings.Contains(view, "(5s)") {
 		t.Fatalf("expected last output age in view, got %q", view)
+	}
+	if !strings.Contains(view, "Example Task") {
+		t.Fatalf("expected task title to be present in view logs, got %q", view)
 	}
 }
 
@@ -161,18 +157,18 @@ func TestModelInitSchedulesTick(t *testing.T) {
 	}
 }
 
-func TestModelShowsQuitHintOnStart(t *testing.T) {
+func TestModelDoesNotShowQuitHintOnStart(t *testing.T) {
 	m := NewModel(func() time.Time { return time.Unix(0, 0) })
 	view := m.View()
-	if !strings.Contains(view, "q: stop runner") {
-		t.Fatalf("expected quit hint in view, got %q", view)
+	if strings.Contains(view, "q: stop runner") {
+		t.Fatalf("expected quit hint to be removed from view, got %q", view)
 	}
 	if strings.Contains(view, "Stopping...") {
 		t.Fatalf("did not expect stopping status in view, got %q", view)
 	}
 }
 
-func TestModelShowsQuitHintWhileStopping(t *testing.T) {
+func TestModelShowsStoppingStatusWhileStopping(t *testing.T) {
 	m := NewModel(func() time.Time { return time.Unix(0, 0) })
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
 	m = updated.(Model)
@@ -180,8 +176,8 @@ func TestModelShowsQuitHintWhileStopping(t *testing.T) {
 	if !strings.Contains(view, "Stopping...") {
 		t.Fatalf("expected stopping status in view, got %q", view)
 	}
-	if !strings.Contains(view, "q: stop runner") {
-		t.Fatalf("expected quit hint in view, got %q", view)
+	if strings.Contains(view, "q: stop runner") {
+		t.Fatalf("expected quit hint to be removed from view, got %q", view)
 	}
 }
 
@@ -219,10 +215,6 @@ func TestModelRendersStatusBarInSingleLine(t *testing.T) {
 	// Should have a status bar line containing spinner, phase, and last output age
 	statusBarFound := false
 	for _, line := range lines {
-		if strings.Contains(line, "task-1 - Example Task") {
-			// This is the task title line, not status bar
-			continue
-		}
 		if strings.Contains(line, "phase:") {
 			// This should not exist anymore - phase should be in status bar
 			t.Fatalf("phase should be in status bar, not separate line: %q", line)
@@ -295,9 +287,6 @@ func TestModelStatusBarExactFormat(t *testing.T) {
 	view := m.View()
 
 	// Check that view contains expected components (not exact format since spinner changes)
-	if !strings.Contains(view, "task-1 - Example Task") {
-		t.Fatalf("expected task id and title in view, got %q", view)
-	}
 	if !strings.Contains(view, "getting task info") {
 		t.Fatalf("expected phase in view, got %q", view)
 	}
@@ -306,9 +295,6 @@ func TestModelStatusBarExactFormat(t *testing.T) {
 	}
 	if !strings.Contains(view, "(5s)") {
 		t.Fatalf("expected last output age in view, got %q", view)
-	}
-	if !strings.Contains(view, "q: stop runner") {
-		t.Fatalf("expected quit hint in view, got %q", view)
 	}
 
 	// Test with progress
@@ -453,24 +439,12 @@ func TestModelStatusBarAlwaysAtBottom(t *testing.T) {
 	view := strings.TrimSpace(m.View())
 	lines := strings.Split(view, "\n")
 
-	// The last non-empty line should be the quit hint
-	// The line before that should be the statusbar
-	quitHintFound := false
-	for i := len(lines) - 1; i >= 0; i-- {
-		if strings.Contains(lines[i], "q: stop runner") {
-			quitHintFound = true
-			// Statusbar should be before quit hint
-			if i > 0 && strings.Contains(lines[i-1], "task-1") {
-				return
-			}
-			break
-		}
+	// The last non-empty line should be the statusbar
+	lastLine := lines[len(lines)-1]
+	if strings.Contains(lastLine, "task-1") {
+		return
 	}
-
-	if !quitHintFound {
-		t.Fatalf("expected quit hint to be at bottom, got view: %q", view)
-	}
-	t.Fatalf("expected statusbar to be positioned before quit hint at bottom, got view: %q", view)
+	t.Fatalf("expected statusbar to be positioned at bottom, got view: %q", view)
 }
 
 func TestModelViewportAboveStatusBar(t *testing.T) {
@@ -504,10 +478,10 @@ func TestModelViewportAboveStatusBar(t *testing.T) {
 	}
 
 	// Verify viewport is scrollable by checking it's rendered
-	// Layout structure has: title -> viewport -> statusbar -> quit hint
+	// Layout structure has: viewport -> statusbar
 	// (exact string position check is unreliable due to viewport padding)
-	if !strings.Contains(view, "q: stop runner") {
-		t.Fatalf("expected quit hint at bottom")
+	if !strings.Contains(view, "task-1") {
+		t.Fatalf("expected statusbar at bottom")
 	}
 }
 
@@ -551,8 +525,8 @@ func TestModelResizesCorrectly(t *testing.T) {
 		t.Fatalf("expected viewport width to be 120 after resize, got %d", m.viewport.Width)
 	}
 
-	if m.viewport.Height != 37 { // Height - 3 for title line, statusbar and quit hint
-		t.Fatalf("expected viewport height to be 38 after resize, got %d", m.viewport.Height)
+	if m.viewport.Height != 39 { // Height - 1 for statusbar
+		t.Fatalf("expected viewport height to be 39 after resize, got %d", m.viewport.Height)
 	}
 }
 
@@ -581,7 +555,7 @@ func TestModelUsesLipglossForLayout(t *testing.T) {
 	}
 
 	// View should contain expected components
-	expectedComponents := []string{"task-1", "getting task info", "q: stop runner"}
+	expectedComponents := []string{"task-1", "getting task info"}
 	for _, comp := range expectedComponents {
 		if !strings.Contains(view, comp) {
 			t.Fatalf("expected view to contain %q, got: %q", comp, view)
@@ -649,20 +623,10 @@ func TestModelUsesStatusBarComponent(t *testing.T) {
 		t.Fatal("expected multiple lines in view")
 	}
 
-	// Statusbar should be near the bottom (before quit hint)
-	statusBarFound := false
-	for i := len(lines) - 1; i >= 0; i-- {
-		if strings.Contains(lines[i], "q: stop runner") {
-			// Statusbar should be before quit hint
-			if i > 0 && strings.Contains(lines[i-1], "task-1") {
-				statusBarFound = true
-			}
-			break
-		}
-	}
-
-	if !statusBarFound {
-		t.Fatalf("expected statusbar to be positioned before quit hint at bottom, got view: %q", view)
+	// Statusbar should be the bottom line
+	lastLine := lines[len(lines)-1]
+	if !strings.Contains(lastLine, "task-1") {
+		t.Fatalf("expected statusbar to be positioned at bottom, got view: %q", view)
 	}
 }
 

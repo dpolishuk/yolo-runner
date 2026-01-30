@@ -12,7 +12,7 @@ import (
 )
 
 // TestModelViewportHeightIsCalculatedCorrectly verifies that the viewport height
-// is calculated as window height - 3 (for title, statusbar, and quit hint)
+// is calculated as window height - 1 (statusbar only)
 func TestModelViewportHeightIsCalculatedCorrectly(t *testing.T) {
 	fixedNow := time.Date(2026, 1, 19, 12, 0, 10, 0, time.UTC)
 	m := NewModel(func() time.Time { return fixedNow })
@@ -33,8 +33,8 @@ func TestModelViewportHeightIsCalculatedCorrectly(t *testing.T) {
 	})
 	m = updated.(Model)
 
-	// Viewport height should be: total height - 3 (title + statusbar + quit hint)
-	expectedViewportHeight := 24 - 3 // 24 - 3 = 21
+	// Viewport height should be: total height - 1 (statusbar only)
+	expectedViewportHeight := 24 - 1 // 24 - 1 = 23
 	if m.viewport.Height != expectedViewportHeight {
 		t.Fatalf("expected viewport height to be %d (fills available space), got %d", expectedViewportHeight, m.viewport.Height)
 	}
@@ -67,36 +67,25 @@ func TestModelViewportRenderedHeightMatchesExpected(t *testing.T) {
 	lines := strings.Split(view, "\n")
 
 	// Expected layout:
-	// Line 0: Title (task-1 - Example Task)
-	// Line 1-7: Viewport (should be 7 lines = 10 - 3)
-	// Line 8: Statusbar
-	// Line 9: Quit hint
+	// Line 0-8: Viewport (should be 9 lines = 10 - 1)
+	// Line 9: Statusbar
 	expectedTotalLines := 10
-	expectedViewportLines := 7 // height - 3
+	expectedViewportLines := 9 // height - 1
 
 	if len(lines) != expectedTotalLines {
 		t.Fatalf("expected view to have %d lines total (height), got %d lines: %q", expectedTotalLines, len(lines), view)
 	}
 
 	// Verify viewport lines count
-	// Viewport lines should be between title and statusbar
+	// Viewport lines should be above statusbar
 	viewportLineCount := 0
-	titleFound := false
 	statusbarFound := false
-	quitHintFound := false
 
 	for i, line := range lines {
-		if strings.Contains(line, "task-1 - Example Task") {
-			titleFound = true
-		} else if strings.Contains(line, "getting task info") && strings.Contains(line, "task-1") {
+		if strings.Contains(line, "getting task info") && strings.Contains(line, "task-1") {
 			statusbarFound = true
-			if i != expectedTotalLines-2 {
-				t.Fatalf("expected statusbar at line %d (second to last), found at line %d", expectedTotalLines-2, i)
-			}
-		} else if strings.Contains(line, "q: stop runner") {
-			quitHintFound = true
 			if i != expectedTotalLines-1 {
-				t.Fatalf("expected quit hint at line %d (last), found at line %d", expectedTotalLines-1, i)
+				t.Fatalf("expected statusbar at line %d (last), found at line %d", expectedTotalLines-1, i)
 			}
 		} else {
 			// This should be viewport content
@@ -104,18 +93,15 @@ func TestModelViewportRenderedHeightMatchesExpected(t *testing.T) {
 		}
 	}
 
-	if !titleFound {
-		t.Fatalf("expected title line not found")
-	}
 	if !statusbarFound {
 		t.Fatalf("expected statusbar line not found")
-	}
-	if !quitHintFound {
-		t.Fatalf("expected quit hint line not found")
 	}
 
 	if viewportLineCount != expectedViewportLines {
 		t.Fatalf("expected viewport to occupy %d lines in rendered view, got %d lines. View: %q", expectedViewportLines, viewportLineCount, view)
+	}
+	if strings.Contains(view, "q: stop runner") {
+		t.Fatalf("expected quit hint to be removed from view, got: %q", view)
 	}
 }
 
@@ -151,7 +137,7 @@ func TestModelStatusBarIsExactlyOneLine(t *testing.T) {
 }
 
 // TestModelStatusBarPinnedToBottom verifies that the statusbar is always at the bottom
-// of the view, just above the quit hint
+// of the view
 func TestModelStatusBarPinnedToBottom(t *testing.T) {
 	fixedNow := time.Date(2026, 1, 19, 12, 0, 10, 0, time.UTC)
 	m := NewModel(func() time.Time { return fixedNow })
@@ -176,29 +162,19 @@ func TestModelStatusBarPinnedToBottom(t *testing.T) {
 	view := strings.TrimSpace(m.View())
 	lines := strings.Split(view, "\n")
 
-	// The last line should be the quit hint
+	// The last line should be the statusbar
 	lastLine := lines[len(lines)-1]
-	if !strings.Contains(lastLine, "q: stop runner") {
-		t.Fatalf("expected last line to be quit hint, got: %q", lastLine)
+	if !strings.Contains(lastLine, "task-1") {
+		t.Fatalf("expected last line to be statusbar (containing task-1), got: %q", lastLine)
 	}
 
-	// The line before the last should be the statusbar
-	secondToLastLine := lines[len(lines)-2]
-	if !strings.Contains(secondToLastLine, "task-1") {
-		t.Fatalf("expected line before quit hint to be statusbar (containing task-1), got: %q", secondToLastLine)
-	}
-
-	// Verify statusbar is always at position len(lines)-2 regardless of content
+	// Verify statusbar is always at position len(lines)-1 regardless of content
 	// by checking that the viewport content comes before it
-	for i := 0; i < len(lines)-2; i++ {
+	for i := 0; i < len(lines)-1; i++ {
 		line := lines[i]
-		// Skip the title line which contains task ID
-		if strings.Contains(line, "task-1 - Example Task") {
-			continue
-		}
-		// No other line before position len(lines)-2 should contain statusbar content
+		// No other line before position len(lines)-1 should contain statusbar content
 		if strings.Contains(line, "getting task info") {
-			t.Fatalf("expected statusbar content to only be at line %d, found at line %d: %q", len(lines)-2, i, line)
+			t.Fatalf("expected statusbar content to only be at line %d, found at line %d: %q", len(lines)-1, i, line)
 		}
 	}
 }
@@ -237,17 +213,10 @@ func TestModelViewportPositionedAboveStatusBar(t *testing.T) {
 	statusbarFound := false
 
 	for i, line := range lines {
-		// Check for quit hint (last line)
-		if strings.Contains(line, "q: stop runner") {
-			statusbarFound = true
-			// Viewport content should be before this line
-			continue
-		}
-
 		// Check for statusbar line (contains task ID and phase)
 		if strings.Contains(line, "task-1") && strings.Contains(line, "getting task info") {
-			// Statusbar should be before quit hint
-			if i < len(lines)-1 {
+			// Statusbar should be the last line
+			if i == len(lines)-1 {
 				statusbarFound = true
 			}
 			continue
@@ -307,8 +276,8 @@ func TestModelLayoutWithDifferentWindowSizes(t *testing.T) {
 			})
 			m = updated.(Model)
 
-			// Viewport height should be: total height - 3
-			expectedViewportHeight := tc.height - 3
+			// Viewport height should be: total height - 1
+			expectedViewportHeight := tc.height - 1
 			if m.viewport.Height != expectedViewportHeight {
 				t.Fatalf("expected viewport height to be %d for window size %dx%d, got %d",
 					expectedViewportHeight, tc.width, tc.height, m.viewport.Height)
@@ -318,20 +287,10 @@ func TestModelLayoutWithDifferentWindowSizes(t *testing.T) {
 			view := strings.TrimSpace(m.View())
 			lines := strings.Split(view, "\n")
 
-			// Last line should be quit hint
+			// Last line should be statusbar
 			lastLine := lines[len(lines)-1]
-			if !strings.Contains(lastLine, "q: stop runner") {
-				t.Fatalf("expected last line to be quit hint for size %dx%d, got: %q", tc.width, tc.height, lastLine)
-			}
-
-			// Line before last should be statusbar
-			if len(lines) < 2 {
-				t.Fatalf("expected at least 2 lines in view for size %dx%d", tc.width, tc.height)
-			}
-
-			secondToLastLine := lines[len(lines)-2]
-			if !strings.Contains(secondToLastLine, "task-1") {
-				t.Fatalf("expected line before quit hint to be statusbar for size %dx%d, got: %q", tc.width, tc.height, secondToLastLine)
+			if !strings.Contains(lastLine, "task-1") {
+				t.Fatalf("expected last line to be statusbar for size %dx%d, got: %q", tc.width, tc.height, lastLine)
 			}
 		})
 	}
@@ -401,8 +360,8 @@ func TestModelLayoutWithSmallWindowSize(t *testing.T) {
 	})
 	m = updated.(Model)
 
-	// Viewport height should be: 5 - 3 = 2 lines
-	expectedViewportHeight := 2
+	// Viewport height should be: 5 - 1 = 4 lines
+	expectedViewportHeight := 4
 	if m.viewport.Height != expectedViewportHeight {
 		t.Fatalf("expected viewport height to be %d for small window, got %d", expectedViewportHeight, m.viewport.Height)
 	}
@@ -416,15 +375,9 @@ func TestModelLayoutWithSmallWindowSize(t *testing.T) {
 		t.Fatalf("expected view to have %d lines for window height 5, got %d lines", 5, len(lines))
 	}
 
-	// Last line should be quit hint
+	// Last line should be statusbar
 	lastLine := lines[len(lines)-1]
-	if !strings.Contains(lastLine, "q: stop runner") {
-		t.Fatalf("expected last line to be quit hint for small window, got: %q", lastLine)
-	}
-
-	// Line before last should be statusbar
-	secondToLastLine := lines[len(lines)-2]
-	if !strings.Contains(secondToLastLine, "task-1") {
-		t.Fatalf("expected line before quit hint to be statusbar for small window, got: %q", secondToLastLine)
+	if !strings.Contains(lastLine, "task-1") {
+		t.Fatalf("expected last line to be statusbar for small window, got: %q", lastLine)
 	}
 }

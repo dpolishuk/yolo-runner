@@ -121,7 +121,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = typed.Width
 		m.height = typed.Height
 		m.viewport.Width = typed.Width
-		m.viewport.Height = typed.Height - 3
+		m.viewport.Height = typed.Height - 1
+		if m.viewport.Height < 0 {
+			m.viewport.Height = 0
+		}
 	case tickMsg:
 		// On tick, update statusbar with new age if we have task info
 		if m.taskID != "" {
@@ -224,39 +227,18 @@ func getEventTypeForPhase(phase string) runner.EventType {
 }
 
 func (m Model) View() string {
-	spinnerChar := m.spinner.View()
-
-	// Task title line (for backward compatibility with existing tests)
-	var parts []string
-	if m.taskID != "" || m.taskTitle != "" {
-		parts = append(parts, fmt.Sprintf("%s %s - %s", spinnerChar, m.taskID, m.taskTitle))
-	}
-
-	// Quit hint
-	quitHint := "q: stop runner"
-
 	// Get viewport content (for scrollable logs)
 	// Use lipgloss to style viewport as scrollable component
 	viewportContent := m.viewport.View()
-	viewportStyle := lipgloss.NewStyle().Height(m.height - 3)
+	viewportStyle := lipgloss.NewStyle().Height(m.height - 1)
 	styledViewport := viewportStyle.Render(viewportContent)
 
 	// Build final view with proper layout:
-	// 1. Task title line (for test compatibility)
-	// 2. Viewport (scrollable logs) - takes available space
-	// 3. Statusbar (pinned to bottom, using teacup-style component)
-	// 4. Quit hint
+	// 1. Viewport (scrollable logs) - takes available space
+	// 2. Statusbar (pinned to bottom, using teacup-style component)
 	//
 	// This satisfies: viewport above statusbar, statusbar at bottom, uses lipgloss
-	if len(parts) > 0 {
-		parts = append(parts, styledViewport)
-	} else {
-		parts = []string{styledViewport}
-	}
-	parts = append(parts, m.statusbar.View())
-	parts = append(parts, quitHint)
-
-	content := lipgloss.JoinVertical(lipgloss.Top, parts...)
+	content := lipgloss.JoinVertical(lipgloss.Top, styledViewport, m.statusbar.View())
 
 	return content + "\n"
 }
