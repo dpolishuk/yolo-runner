@@ -29,6 +29,15 @@ type Event struct {
 	EmittedAt         time.Time `json:"emitted_at"`
 }
 
+// RunnerEventType exposes the event type as a string for UI adapters.
+func (e Event) RunnerEventType() string { return string(e.Type) }
+
+// RunnerEventTitle exposes the event title for UI adapters.
+func (e Event) RunnerEventTitle() string { return e.Title }
+
+// RunnerEventThought exposes the event thought for UI adapters.
+func (e Event) RunnerEventThought() string { return e.Thought }
+
 type EventEmitter interface {
 	Emit(event Event)
 }

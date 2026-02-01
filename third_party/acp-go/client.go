@@ -293,3 +293,11 @@ func (c *ClientSideConnection) handleIncomingMethod(method string, params json.R
 func (c *ClientSideConnection) Start(ctx context.Context) error {
 	return c.conn.Start(ctx)
 }
+
+// Close closes the underlying JSON-RPC connection.
+func (c *ClientSideConnection) Close() error {
+	if c == nil || c.conn == nil {
+		return nil
+	}
+	return c.conn.Close()
+}

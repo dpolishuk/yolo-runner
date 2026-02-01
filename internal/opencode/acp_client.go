@@ -117,9 +117,19 @@ func RunACPClient(
 
 	runPrompt := func(sessionId acp.SessionId, text string) (string, error) {
 		client.startCapture()
-		if err := promptFn(sessionId)(text); err != nil {
+		_, err := connection.Prompt(ctx, &acp.PromptRequest{
+			SessionId: sessionId,
+			Prompt: []acp.ContentBlock{
+				acp.NewContentBlockText(text),
+			},
+		})
+		if err != nil {
 			return "", err
 		}
+		// Prompt completed - signal completion to stop waiting immediately
+		// This handles cases where OpenCode exits the prompt loop and marks
+		// session as idle (not just EndTurn but any completion)
+		client.signalPromptCompleted()
 		client.waitForCaptureIdle(ctx, verificationIdleDelay)
 		response := client.stopCapture()
 		if err := sendQuestionResponses(ctx, promptFn(sessionId), client.drainQuestionResponses()); err != nil {
@@ -239,6 +249,7 @@ type acpClient struct {
 	captureEnabled          bool
 	captureStartedAt        time.Time
 	captureLastUpdate       time.Time
+	promptCompleted         chan struct{}
 }
 
 func (c *acpClient) SessionUpdate(ctx context.Context, params *acp.SessionNotification) error {
@@ -313,6 +324,7 @@ func (c *acpClient) startCapture() {
 	c.captureEnabled = true
 	c.captureStartedAt = time.Now()
 	c.captureLastUpdate = time.Time{}
+	c.promptCompleted = make(chan struct{}, 1)
 }
 
 func (c *acpClient) stopCapture() string {
@@ -358,25 +370,44 @@ func (c *acpClient) waitForCaptureIdle(ctx context.Context, idle time.Duration) 
 	start := time.Now()
 	ticker := time.NewTicker(20 * time.Millisecond)
 	defer ticker.Stop()
+	promptDone := false
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-c.promptCompleted:
+			// Prompt completed signal received, but we still need to wait
+			// for any final messages to arrive. Switch to idle detection mode.
+			promptDone = true
 		case <-ticker.C:
 			c.captureMu.Lock()
 			last := c.captureLastUpdate
 			started := c.captureStartedAt
 			c.captureMu.Unlock()
 			if !last.IsZero() {
-				if time.Since(last) >= idle {
+				// If prompt is done and we've been idle long enough, return
+				if promptDone && time.Since(last) >= idle {
 					return
 				}
+				// Otherwise continue waiting
 				continue
 			}
+			// No messages yet, check if we've been waiting long enough
 			if time.Since(started) >= idle && time.Since(start) >= idle {
 				return
 			}
 		}
+	}
+}
+
+func (c *acpClient) signalPromptCompleted() {
+	if c == nil || c.promptCompleted == nil {
+		return
+	}
+	select {
+	case c.promptCompleted <- struct{}{}:
+	default:
+		// Channel already has a signal or is full, ignore
 	}
 }
 

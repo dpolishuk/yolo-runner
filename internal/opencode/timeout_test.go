@@ -290,7 +290,7 @@ func TestTimeoutBehaviorVerification(t *testing.T) {
 				// Process never responds
 			},
 			acpClient:     &mockACPClient{}, // Blocks until context is canceled
-			expectedError: "stall",
+			expectedError: "context deadline exceeded",
 		},
 		{
 			name:      "completes_before_timeout",

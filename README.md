@@ -23,6 +23,7 @@ Runs OpenCode in YOLO mode against a single bead task at a time. The runner owns
 - `git` installed and repo cloned.
 - `uv` installed for the Python runner (bootstrap only).
 - Go 1.21+ for building the runner.
+- `gopls` available on `PATH` (required by Serena/OpenCode for Go language services).
 
 ## Build
 
@@ -97,6 +98,13 @@ $ ./bin/yolo-runner --repo . --root algi-8bt --max 1
 
 - Tail the OpenCode log: `tail -f runner-logs/opencode/opencode.log`
 - Identify the current task: run `bd show <issue-id>` from the last "selected bead" line in the output
+
+If OpenCode/Serena fails during startup you may see errors like "gopls is not installed" and the run can end up idle.
+Install `gopls` via Go and ensure it is on `PATH`:
+
+```
+GOBIN=~/.local/bin go install golang.org/x/tools/gopls@latest
+```
 
 ## OpenCode Config Isolation
 

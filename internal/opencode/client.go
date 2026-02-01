@@ -70,6 +70,18 @@ func BuildEnv(baseEnv map[string]string, configRoot string, configDir string, mo
 	env["OPENCODE_DISABLE_CLAUDE_CODE_PROMPT"] = "true"
 	env["OPENCODE_DISABLE_DEFAULT_PLUGINS"] = "true"
 	env["CI"] = "true"
+	// Ensure OpenCode never blocks on permission prompts.
+	permission := map[string]string{
+		"*":                  "allow",
+		"doom_loop":          "allow",
+		"external_directory": "allow",
+		"question":           "allow",
+		"plan_enter":         "allow",
+		"plan_exit":          "allow",
+	}
+	if payload, err := json.Marshal(permission); err == nil {
+		env["OPENCODE_PERMISSION"] = string(payload)
+	}
 
 	if configRoot != "" {
 		_ = os.MkdirAll(configRoot, 0o755)
@@ -142,7 +154,6 @@ func RunWithACP(ctx context.Context, issueID string, repoRoot string, prompt str
 	if err != nil {
 		return err
 	}
-	process = newWaitOnceProcess(process)
 
 	if acpClient == nil {
 		type stdioProcess interface {
@@ -170,12 +181,23 @@ func RunWithACP(ctx context.Context, issueID string, repoRoot string, prompt str
 					return
 				}
 				if line := aggregator.ProcessUpdate(&note.Update); line != "" {
-					writeConsoleLine(os.Stderr, fmt.Sprintf("ACP[%s] %s", issueID, line))
+					// Skip writing tool calls directly to console - they should go to log bubble instead
+					// Only write non-tool-call messages to console
+					if !strings.HasPrefix(line, "⏳") && !strings.HasPrefix(line, "🔄") && !strings.HasPrefix(line, "✅") && !strings.HasPrefix(line, "❌") && !strings.HasPrefix(line, "⚪") {
+						writeConsoleLine(os.Stderr, fmt.Sprintf("ACP[%s] %s", issueID, line))
+					}
+					_ = logging.AppendACPRequest(logPath, logging.ACPRequestEntry{
+						IssueID:     issueID,
+						RequestType: "update",
+						Decision:    "allow",
+						Message:     line,
+					})
 				}
 			}
 			return RunACPClient(ctx, stdio.Stdin(), stdio.Stdout(), repoRoot, prompt, handler, onUpdate)
 		})
 	}
+	process = newWaitOnceProcess(process)
 
 	// Add timeout mechanism for detecting stuck OpenCode processes and initialization failures
 	initTimeout := 30 * time.Second
@@ -202,26 +224,6 @@ func RunWithACP(ctx context.Context, issueID string, repoRoot string, prompt str
 		go monitorInitFailures(initCtx, stderrPath, serenaErrCh, serenaSince)
 	}
 
-	// Set up watchdog to detect stuck processes
-	watchdogConfig := WatchdogConfig{
-		LogPath:         logPath,
-		Timeout:         initTimeout,
-		Interval:        1 * time.Second,
-		CompletionGrace: 100 * time.Millisecond,
-		TailLines:       10,
-		Now:             time.Now,
-		After:           time.After,
-		NewTicker: func(d time.Duration) WatchdogTicker {
-			return realWatchdogTicker{ticker: time.NewTicker(d)}
-		},
-	}
-	watchdog := NewWatchdog(watchdogConfig)
-
-	watchdogCh := make(chan error, 1)
-	go func() {
-		watchdogCh <- watchdog.Monitor(process)
-	}()
-
 	// Run ACP client in goroutine to avoid blocking
 	acpErrCh := make(chan error, 1)
 	go func() {
@@ -236,73 +238,81 @@ func RunWithACP(ctx context.Context, issueID string, repoRoot string, prompt str
 	var killErr error
 	var waitErr error
 	var runErr error
-	timeout := time.NewTimer(acpShutdownGrace)
-	defer timeout.Stop()
-	select {
-	case waitErr = <-waitCh:
-		if !timeout.Stop() {
-			<-timeout.C
-		}
-		if line, ok := findSerenaInitErrorSince(stderrPath, serenaSince); ok {
-			serenaErr := fmt.Errorf("serena initialization failed: %s", line)
-			writeConsoleLine(os.Stderr, serenaErr.Error())
-			return errors.Join(serenaErr, waitErr)
-		}
-	case acpErr := <-acpErrCh:
-		// ACP client completed (or failed)
-		runErr = acpErr
-		if !timeout.Stop() {
-			<-timeout.C
-		}
-	case serenaErr := <-serenaErrCh:
-		killErr = process.Kill()
-		waitErr = <-waitCh
-		return errors.Join(serenaErr, killErr, waitErr)
-	case <-ctx.Done():
-		killErr = process.Kill()
-		waitErr = <-waitCh
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			lastOutput := time.Now()
-			if modTime, err := fileModTime(watchdogConfig.LogPath); err == nil {
-				lastOutput = modTime
-			}
-			stall := classifyStall(watchdogConfig, time.Now(), lastOutput)
-			return errors.Join(stall, killErr, waitErr)
-		}
-	case watchdogErr := <-watchdogCh:
-		// Watchdog detected a stall or timeout
-		writeConsoleLine(os.Stderr, fmt.Sprintf("OpenCode stall detected: %v", watchdogErr))
-		killErr = process.Kill()
-		waitErr = <-waitCh
-		// Return watchdog error as primary error
-		return watchdogErr
-	case <-timeout.C:
-		killErr = process.Kill()
-		waitErr = <-waitCh
-	}
+	forcedKillAfterACP := false
 
-	// Wait for remaining operations to complete
-	if runErr == nil {
+	acpCh := acpErrCh
+	wCh := waitCh
+
+	for acpCh != nil || wCh != nil {
 		select {
-		case acpErr := <-acpErrCh:
-			runErr = acpErr
-		case waitErr = <-waitCh:
-			// Process completed
+		case serenaErr := <-serenaErrCh:
+			killErr = process.Kill()
+			if wCh != nil {
+				waitErr = <-wCh
+				wCh = nil
+			}
+			return errors.Join(serenaErr, killErr, waitErr)
+		case <-ctx.Done():
+			killErr = process.Kill()
+			if wCh != nil {
+				waitErr = <-wCh
+				wCh = nil
+			}
+			return errors.Join(ctx.Err(), killErr, waitErr)
+		case runErr = <-acpCh:
+			// ACP finished. Do not wait indefinitely for the opencode process to exit.
+			acpCh = nil
+			if wCh == nil {
+				continue
+			}
+			t := time.NewTimer(acpShutdownGrace)
+			select {
+			case waitErr = <-wCh:
+				wCh = nil
+				if !t.Stop() {
+					<-t.C
+				}
+			case <-t.C:
+				forcedKillAfterACP = true
+				killErr = process.Kill()
+				waitErr = <-wCh
+				wCh = nil
+			}
+		case waitErr = <-wCh:
+			wCh = nil
+			if acpCh == nil {
+				continue
+			}
+			// Process exited before ACP finished; give ACP a short grace window to drain.
+			t := time.NewTimer(acpShutdownGrace)
+			select {
+			case runErr = <-acpCh:
+				acpCh = nil
+				if !t.Stop() {
+					<-t.C
+				}
+			case <-t.C:
+				acpCh = nil
+				runErr = fmt.Errorf("acp client did not finish after opencode exit")
+			}
 		}
-	} else {
-		// Wait for process to complete
-		waitErr = <-waitCh
 	}
 
 	if line, ok := findSerenaInitErrorSince(stderrPath, serenaSince); ok {
 		serenaErr := fmt.Errorf("serena initialization failed: %s", line)
 		writeConsoleLine(os.Stderr, serenaErr.Error())
-		return errors.Join(serenaErr, killErr, waitErr)
+		return errors.Join(serenaErr, killErr, waitErr, runErr)
 	}
 
 	shutdownErr := errors.Join(killErr, waitErr)
 	if runErr != nil {
 		return errors.Join(runErr, shutdownErr)
+	}
+	if forcedKillAfterACP && shutdownErr != nil {
+		// ACP completed successfully, but opencode didn't exit on its own.
+		// Treat as success to avoid hanging the runner.
+		writeConsoleLine(os.Stderr, fmt.Sprintf("opencode did not exit cleanly after ACP completion: %v", shutdownErr))
+		return nil
 	}
 	return shutdownErr
 }

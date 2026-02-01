@@ -331,8 +331,8 @@ func TestEventRouter_MaintainsOrderingAcrossUpdates(t *testing.T) {
 	if !containsString(bubbles[0], "tool-1") {
 		t.Errorf("expected first bubble to still be tool-1, got: %s", bubbles[0])
 	}
-	if !containsString(bubbles[1], "tool-2") {
-		t.Errorf("expected second bubble to still be tool-2, got: %s", bubbles[1])
+	if !containsString(bubbles[1], "Second Tool") {
+		t.Errorf("expected second bubble to still refer to Second Tool, got: %s", bubbles[1])
 	}
 	if !containsString(bubbles[2], "tool-3") {
 		t.Errorf("expected third bubble to still be tool-3, got: %s", bubbles[2])

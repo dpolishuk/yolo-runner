@@ -74,13 +74,16 @@ func (s *LogBubbleStore) UpsertToolCallUpdate(toolUpdate *acp.ToolCallUpdate) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Format the tool call update for display
-	content := formatToolCall("tool_call_update", toolUpdate.ToolCallId, toolUpdate.Title, toolUpdate.Kind, toolUpdate.Status)
-
 	// Check if a bubble with this ToolCallId already exists
 	id := string(toolUpdate.ToolCallId)
 	for i := range s.bubbles {
 		if s.bubbles[i].isTool && s.bubbles[i].id == id {
+			title := toolUpdate.Title
+			if title == "" && s.bubbles[i].toolCall != nil && s.bubbles[i].toolCall.Title != "" {
+				title = s.bubbles[i].toolCall.Title
+			}
+			// Format the tool call update for display
+			content := formatToolCall("tool_call_update", toolUpdate.ToolCallId, title, toolUpdate.Kind, toolUpdate.Status)
 			// Update existing bubble in place
 			s.bubbles[i].content = content
 			// Note: ToolCallUpdate doesn't have the full ToolCall data,
@@ -88,6 +91,9 @@ func (s *LogBubbleStore) UpsertToolCallUpdate(toolUpdate *acp.ToolCallUpdate) {
 			return
 		}
 	}
+
+	// Format the tool call update for display
+	content := formatToolCall("tool_call_update", toolUpdate.ToolCallId, toolUpdate.Title, toolUpdate.Kind, toolUpdate.Status)
 
 	// Add new bubble (toolUpdate doesn't have full ToolCall, so toolCall is nil)
 	s.bubbles = append(s.bubbles, logBubble{

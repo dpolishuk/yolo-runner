@@ -25,9 +25,8 @@ func TestBeadsCommandsRouteOutputToLogFiles(t *testing.T) {
 
 	// Test various bd commands that should route output to logs
 	testCases := []struct {
-		name        string
-		testFunc    func() error
-		expectError bool
+		name     string
+		testFunc func() error
 	}{
 		{
 			name: "Ready command",
@@ -35,7 +34,6 @@ func TestBeadsCommandsRouteOutputToLogFiles(t *testing.T) {
 				_, err := adapter.Ready("root")
 				return err
 			},
-			expectError: true, // bd command will fail without proper setup
 		},
 		{
 			name: "Show command",
@@ -43,28 +41,24 @@ func TestBeadsCommandsRouteOutputToLogFiles(t *testing.T) {
 				_, err := adapter.Show("task-1")
 				return err
 			},
-			expectError: true,
 		},
 		{
 			name: "UpdateStatus command",
 			testFunc: func() error {
 				return adapter.UpdateStatus("task-1", "in_progress")
 			},
-			expectError: true,
 		},
 		{
 			name: "Close command",
 			testFunc: func() error {
 				return adapter.Close("task-1")
 			},
-			expectError: true,
 		},
 		{
 			name: "Sync command",
 			testFunc: func() error {
 				return adapter.Sync()
 			},
-			expectError: false, // sync may not error, just no output
 		},
 	}
 
@@ -79,11 +73,8 @@ func TestBeadsCommandsRouteOutputToLogFiles(t *testing.T) {
 			// Execute the command
 			err = tc.testFunc()
 
-			// We expect an error since bd commands won't actually work
-			// without a proper beads setup, but we're testing logging behavior
-			if tc.expectError && err == nil {
-				t.Fatalf("expected error but got none")
-			}
+			// Commands may succeed or fail depending on environment; we only
+			// verify that command logging works.
 
 			// Count log files after execution
 			logFilesAfter, err := os.ReadDir(logDir)
