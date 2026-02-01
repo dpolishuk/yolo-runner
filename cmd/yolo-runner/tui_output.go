@@ -24,7 +24,7 @@ func (w *tuiLogWriter) Write(p []byte) (int, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.buffer.Write(p)
-	buffered := w.buffer.String()
+	buffered := normalizeLineBreaks(w.buffer.String())
 	lines := strings.Split(buffered, "\n")
 	for i := 0; i < len(lines)-1; i++ {
 		w.emit(strings.TrimRight(lines[i], "\r"))
@@ -43,12 +43,18 @@ func (w *tuiLogWriter) Flush() {
 	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	remaining := strings.TrimRight(w.buffer.String(), "\r")
+	remaining := normalizeLineBreaks(w.buffer.String())
 	w.buffer.Reset()
 	if remaining == "" {
 		return
 	}
-	w.emit(remaining)
+	lines := strings.Split(remaining, "\n")
+	for i, line := range lines {
+		if i == len(lines)-1 && line == "" {
+			continue
+		}
+		w.emit(strings.TrimRight(line, "\r"))
+	}
 }
 
 func (w *tuiLogWriter) emit(line string) {
@@ -56,4 +62,10 @@ func (w *tuiLogWriter) emit(line string) {
 		return
 	}
 	w.program.SendInput(tui.AppendLogMsg{Line: line})
+}
+
+func normalizeLineBreaks(text string) string {
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	text = strings.ReplaceAll(text, "\r", "\n")
+	return text
 }
