@@ -383,6 +383,11 @@ func writeAgentFile(t *testing.T, repoRoot string, payload string) {
 	if err := os.WriteFile(agentPath, []byte(payload), 0o644); err != nil {
 		t.Fatalf("write agent file: %v", err)
 	}
+	// Create beads directory so task tracker detection works
+	beadsDir := filepath.Join(repoRoot, ".beads")
+	if err := os.MkdirAll(beadsDir, 0o755); err != nil {
+		t.Fatalf("mkdir beads dir: %v", err)
+	}
 }
 
 func writeRootYoloFile(t *testing.T, repoRoot string, payload string) {
@@ -390,6 +395,11 @@ func writeRootYoloFile(t *testing.T, repoRoot string, payload string) {
 	agentPath := filepath.Join(repoRoot, "yolo.md")
 	if err := os.WriteFile(agentPath, []byte(payload), 0o644); err != nil {
 		t.Fatalf("write yolo.md: %v", err)
+	}
+	// Create beads directory so task tracker detection works
+	beadsDir := filepath.Join(repoRoot, ".beads")
+	if err := os.MkdirAll(beadsDir, 0o755); err != nil {
+		t.Fatalf("mkdir beads dir: %v", err)
 	}
 }
 
@@ -447,6 +457,11 @@ func TestRunOnceMainTuiRoutesOutputToProgram(t *testing.T) {
 
 	tempDir := t.TempDir()
 	writeAgentFile(t, tempDir, "---\npermission: allow\n---\n")
+	
+	// Set up mock beads environment for testing
+	os.Setenv("YOLO_RUNNER_TASK_TRACKER", "beads")
+	t.Cleanup(func() { os.Unsetenv("YOLO_RUNNER_TASK_TRACKER") })
+	
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
 
@@ -491,6 +506,11 @@ func TestRunOnceMainWiresStopCleanupHooks(t *testing.T) {
 
 	tempDir := t.TempDir()
 	writeAgentFile(t, tempDir, "---\npermission: allow\n---\n")
+	
+	// Set up mock beads environment for testing
+	os.Setenv("YOLO_RUNNER_TASK_TRACKER", "beads")
+	t.Cleanup(func() { os.Unsetenv("YOLO_RUNNER_TASK_TRACKER") })
+	
 	runOnce := &fakeRunOnce{result: "no_tasks"}
 	exit := &fakeExit{}
 	out := &bytes.Buffer{}
@@ -607,6 +627,10 @@ func TestRunOnceMainInitCreatesAgentDir(t *testing.T) {
 func TestRunOnceMainRunModePassesAfterInit(t *testing.T) {
 	tempDir := t.TempDir()
 	writeRootYoloFile(t, tempDir, "---\npermission: allow\n---\n")
+
+	// Set up mock beads environment for testing
+	os.Setenv("YOLO_RUNNER_TASK_TRACKER", "beads")
+	t.Cleanup(func() { os.Unsetenv("YOLO_RUNNER_TASK_TRACKER") })
 
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}

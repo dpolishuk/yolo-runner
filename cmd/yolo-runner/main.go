@@ -9,7 +9,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	osexec "os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/anomalyco/yolo-runner/internal/beads"
 	"github.com/anomalyco/yolo-runner/internal/exec"
@@ -17,6 +19,7 @@ import (
 	"github.com/anomalyco/yolo-runner/internal/opencode"
 	"github.com/anomalyco/yolo-runner/internal/prompt"
 	"github.com/anomalyco/yolo-runner/internal/runner"
+	"github.com/anomalyco/yolo-runner/internal/tk"
 	"github.com/anomalyco/yolo-runner/internal/ui/tui"
 	gitadapter "github.com/anomalyco/yolo-runner/internal/vcs/git"
 
@@ -187,13 +190,34 @@ func RunOnceMain(args []string, runOnce runOnceFunc, exit exitFunc, stdout io.Wr
 		gitRunner = adapterGitRunner{runner: gitCommandAdapter}
 	}
 
-	beadsAdapter := beads.New(beadsRunner)
+	// Detect which task tracker to use: tk first, then beads
+	var taskTrackerAdapter runner.BeadsClient
+	var trackerType string
+	
+	// Allow override via environment variable for testing
+	if os.Getenv("YOLO_RUNNER_TASK_TRACKER") == "beads" {
+		taskTrackerAdapter = beads.New(beadsRunner)
+		trackerType = "beads"
+	} else if tk.IsAvailable() {
+		taskTrackerAdapter = tk.New(beadsRunner)
+		trackerType = "tk"
+	} else if beads.IsAvailable(*repoRoot) {
+		taskTrackerAdapter = beads.New(beadsRunner)
+		trackerType = "beads"
+	} else {
+		fmt.Fprintln(stderr, "Error: no task tracker found. Install tk (preferred) or initialize beads.")
+		if exit != nil {
+			exit(1)
+		}
+		return 1
+	}
+	
 	gitAdapter := gitadapter.New(gitRunner)
 	openCodeAdapter := openCodeAdapter{runner: defaultOpenCodeRunner{}}
 
 	resolvedRootID := *rootID
 	if resolvedRootID == "" {
-		inferredRootID, err := inferDefaultRootID(*repoRoot)
+		inferredRootID, err := inferDefaultRootID(*repoRoot, trackerType)
 		if err != nil {
 			fmt.Fprintln(stderr, err)
 			if exit != nil {
@@ -205,7 +229,7 @@ func RunOnceMain(args []string, runOnce runOnceFunc, exit exitFunc, stdout io.Wr
 	}
 
 	deps := runner.RunOnceDeps{
-		Beads:    beadsAdapter,
+		Beads:    taskTrackerAdapter,
 		Prompt:   promptBuilder{},
 		OpenCode: openCodeAdapter,
 		Git:      gitAdapter,
@@ -359,7 +383,14 @@ type roadmapCandidate struct {
 	Status string `json:"status"`
 }
 
-func inferDefaultRootID(repoRoot string) (string, error) {
+func inferDefaultRootID(repoRoot string, trackerType string) (string, error) {
+	if trackerType == "tk" {
+		return inferRootIDFromTK(repoRoot)
+	}
+	return inferRootIDFromBeads(repoRoot)
+}
+
+func inferRootIDFromBeads(repoRoot string) (string, error) {
 	issuesPath := filepath.Join(repoRoot, ".beads", "issues.jsonl")
 	file, err := os.Open(issuesPath)
 	if err != nil {
@@ -393,4 +424,31 @@ func inferDefaultRootID(repoRoot string) (string, error) {
 		return match.ID, nil
 	}
 	return "", errors.New("missing --root and no unique Roadmap epic found; pass --root explicitly")
+}
+
+func inferRootIDFromTK(repoRoot string) (string, error) {
+	// For TK, we look for a ticket with "Roadmap" in the title
+	// This is a simplified approach - in practice, you might want to use tags
+	cmd := osexec.Command("tk", "list", "--status=open")
+	cmd.Dir = repoRoot
+	output, err := cmd.Output()
+	if err != nil {
+		return "", errors.New("missing --root and unable to list tk tickets; pass --root explicitly")
+	}
+	
+	lines := strings.Split(string(output), "\n")
+	var candidates []string
+	for _, line := range lines {
+		if strings.Contains(line, "Roadmap") || strings.Contains(line, "roadmap") {
+			fields := strings.Fields(line)
+			if len(fields) > 0 {
+				candidates = append(candidates, fields[0])
+			}
+		}
+	}
+	
+	if len(candidates) == 1 {
+		return candidates[0], nil
+	}
+	return "", errors.New("missing --root and no unique Roadmap ticket found in tk; pass --root explicitly")
 }
