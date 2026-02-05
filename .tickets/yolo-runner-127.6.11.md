@@ -1,6 +1,6 @@
 ---
 id: yolo-runner-127.6.11
-status: in_progress
+status: closed
 deps: []
 links: []
 created: 2026-01-20T15:18:49.75778+03:00

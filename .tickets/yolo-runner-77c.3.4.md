@@ -1,6 +1,6 @@
 ---
 id: yolo-runner-77c.3.4
-status: in_progress
+status: closed
 deps: [yolo-runner-77c.3.3]
 links: []
 created: 2026-01-28T01:03:30.213911+03:00

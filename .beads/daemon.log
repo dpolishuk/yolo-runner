@@ -1,0 +1,640 @@
+time=2026-01-29T14:51:51.971Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-01-29T14:51:51.972Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-01-29T14:51:52.042Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-01-29T14:51:52.042Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-01-29T14:51:52.042Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-01-29T14:51:52.042Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-01-29T14:58:12.676Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-01-29T14:58:12.676Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-01-29T14:58:12.756Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-01-29T14:58:12.756Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-01-29T14:58:12.756Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-01-29T14:58:12.757Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-01-29T15:01:24.890Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-01-29T15:01:24.891Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-01-29T15:01:24.960Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-01-29T15:01:24.960Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-01-29T15:01:24.960Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-01-29T15:01:24.961Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-01-29T15:01:37.450Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-01-29T15:01:37.451Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-01-29T15:01:37.538Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-01-29T15:01:37.538Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-01-29T15:01:37.538Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-01-29T15:01:37.538Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-01-29T15:31:03.017Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-01-29T15:31:03.017Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-01-29T15:31:03.093Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-01-29T15:31:03.093Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-01-29T15:31:03.093Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-01-29T15:31:03.093Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-01-29T15:37:59.505Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-01-29T15:37:59.506Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-01-29T15:37:59.607Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-01-29T15:37:59.607Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-01-29T15:37:59.608Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-01-29T15:37:59.608Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-01-29T15:41:45.230Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-01-29T15:41:45.230Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-01-29T15:41:45.316Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-01-29T15:41:45.316Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-01-29T15:41:45.316Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-01-29T15:41:45.316Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-01-29T15:42:09.994Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-01-29T15:42:09.994Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-01-29T15:42:10.074Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-01-29T15:42:10.074Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-01-29T15:42:10.074Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-01-29T15:42:10.074Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-01-29T16:45:21.063Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-01-29T16:45:21.064Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-01-29T16:45:21.143Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-01-29T16:45:21.143Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-01-29T16:45:21.143Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-01-29T16:45:21.144Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-01-30T17:00:43.822Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-01-30T17:00:43.822Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-01-30T17:00:43.832Z level=INFO msg="daemon already running (lock held), exiting"
+time=2026-01-30T17:00:43.956Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-01-30T17:00:43.956Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-01-30T17:00:43.956Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-01-30T17:00:43.956Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-01-30T17:00:49.014Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-01-30T17:00:49.014Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-01-30T17:00:49.096Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-01-30T17:00:49.096Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-01-30T17:00:49.096Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-01-30T17:00:49.097Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-01-30T17:00:54.207Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-01-30T17:00:54.207Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-01-30T17:00:54.284Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-01-30T17:00:54.284Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-01-30T17:00:54.284Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-01-30T17:00:54.284Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-01-30T17:00:59.382Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-01-30T17:00:59.382Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-01-30T17:00:59.458Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-01-30T17:00:59.458Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-01-30T17:00:59.458Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-01-30T17:00:59.458Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-01-30T17:01:04.621Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-01-30T17:01:04.621Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-01-30T17:01:04.630Z level=INFO msg="daemon already running (lock held), exiting"
+time=2026-01-30T17:01:04.706Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-01-30T17:01:04.706Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-01-30T17:01:04.706Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-01-30T17:01:04.706Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-01-30T17:01:09.893Z level=INFO msg="daemon already running (lock held), exiting"
+time=2026-01-30T17:01:09.895Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-01-30T17:01:09.895Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-01-30T17:01:09.981Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-01-30T17:01:09.981Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-01-30T17:01:09.981Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-01-30T17:01:09.982Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-01-30T17:51:09.888Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-01-30T17:51:09.889Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-01-30T17:51:09.907Z level=INFO msg="daemon already running (lock held), exiting"
+time=2026-01-30T17:51:09.981Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-01-30T17:51:09.981Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-01-30T17:51:09.981Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-01-30T17:51:09.981Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-01-30T17:51:15.147Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-01-30T17:51:15.147Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-01-30T17:51:15.249Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-01-30T17:51:15.249Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-01-30T17:51:15.249Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-01-30T17:51:15.249Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-01-30T17:51:20.327Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-01-30T17:51:20.327Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-01-30T17:51:20.410Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-01-30T17:51:20.410Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-01-30T17:51:20.410Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-01-30T17:51:20.410Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-01-30T17:51:25.512Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-01-30T17:51:25.512Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-01-30T17:51:25.595Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-01-30T17:51:25.595Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-01-30T17:51:25.595Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-01-30T17:51:25.596Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-01-30T17:51:30.757Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-01-30T17:51:30.758Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-01-30T17:51:30.844Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-01-30T17:51:30.844Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-01-30T17:51:30.844Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-01-30T17:51:30.844Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-01-30T17:51:35.968Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-01-30T17:51:35.969Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-01-30T17:51:36.048Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-01-30T17:51:36.049Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-01-30T17:51:36.049Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-01-30T17:51:36.049Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-01-30T18:06:51.097Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-01-30T18:06:51.098Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-01-30T18:06:51.201Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-01-30T18:06:51.201Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-01-30T18:06:51.201Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-01-30T18:06:51.202Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-01-30T18:06:56.309Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-01-30T18:06:56.310Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-01-30T18:06:56.395Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-01-30T18:06:56.395Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-01-30T18:06:56.395Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-01-30T18:06:56.395Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-01-30T18:07:01.520Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-01-30T18:07:01.520Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-01-30T18:07:01.599Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-01-30T18:07:01.599Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-01-30T18:07:01.599Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-01-30T18:07:01.599Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-01-30T18:07:06.704Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-01-30T18:07:06.704Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-01-30T18:07:06.781Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-01-30T18:07:06.781Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-01-30T18:07:06.781Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-01-30T18:07:06.781Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-01-30T18:07:11.906Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-01-30T18:07:11.906Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-01-30T18:07:11.992Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-01-30T18:07:11.992Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-01-30T18:07:11.992Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-01-30T18:07:11.992Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-01-30T18:07:17.108Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-01-30T18:07:17.109Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-01-30T18:07:17.188Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-01-30T18:07:17.188Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-01-30T18:07:17.188Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-01-30T18:07:17.188Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-01-30T18:10:02.970Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-01-30T18:10:02.971Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-01-30T18:10:02.983Z level=INFO msg="daemon already running (lock held), exiting"
+time=2026-01-30T18:10:03.064Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-01-30T18:10:03.064Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-01-30T18:10:03.064Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-01-30T18:10:03.065Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-01-30T18:10:08.173Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-01-30T18:10:08.173Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-01-30T18:10:08.254Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-01-30T18:10:08.254Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-01-30T18:10:08.254Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-01-30T18:10:08.254Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-01-30T18:10:13.365Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-01-30T18:10:13.365Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-01-30T18:10:13.446Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-01-30T18:10:13.446Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-01-30T18:10:13.447Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-01-30T18:10:13.447Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-01-30T18:10:18.599Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-01-30T18:10:18.600Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-01-30T18:10:18.611Z level=INFO msg="daemon already running (lock held), exiting"
+time=2026-01-30T18:10:18.681Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-01-30T18:10:18.681Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-01-30T18:10:18.681Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-01-30T18:10:18.681Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-01-30T18:10:23.812Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-01-30T18:10:23.812Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-01-30T18:10:23.845Z level=INFO msg="daemon already running (lock held), exiting"
+time=2026-01-30T18:10:23.895Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-01-30T18:10:23.896Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-01-30T18:10:23.896Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-01-30T18:10:23.896Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-01-30T18:10:29.086Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-01-30T18:10:29.087Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-01-30T18:10:29.119Z level=INFO msg="daemon already running (lock held), exiting"
+time=2026-01-30T18:10:29.174Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-01-30T18:10:29.174Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-01-30T18:10:29.174Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-01-30T18:10:29.174Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-01-30T18:19:44.479Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-01-30T18:19:44.479Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-01-30T18:19:44.502Z level=INFO msg="daemon already running (lock held), exiting"
+time=2026-01-30T18:19:44.570Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-01-30T18:19:44.570Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-01-30T18:19:44.570Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-01-30T18:19:44.570Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-01-30T18:19:49.680Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-01-30T18:19:49.681Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-01-30T18:19:49.804Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-01-30T18:19:49.804Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-01-30T18:19:49.804Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-01-30T18:19:49.804Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-01-30T18:19:54.869Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-01-30T18:19:54.869Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-01-30T18:19:54.895Z level=INFO msg="daemon already running (lock held), exiting"
+time=2026-01-30T18:19:54.945Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-01-30T18:19:54.945Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-01-30T18:19:54.945Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-01-30T18:19:54.945Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-01-30T18:20:00.102Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-01-30T18:20:00.103Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-01-30T18:20:00.104Z level=INFO msg="daemon already running (lock held), exiting"
+time=2026-01-30T18:20:00.182Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-01-30T18:20:00.182Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-01-30T18:20:00.182Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-01-30T18:20:00.183Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-01-30T18:20:05.307Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-01-30T18:20:05.308Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-01-30T18:20:05.341Z level=INFO msg="daemon already running (lock held), exiting"
+time=2026-01-30T18:20:05.398Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-01-30T18:20:05.398Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-01-30T18:20:05.398Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-01-30T18:20:05.398Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-01-30T18:20:10.588Z level=INFO msg="daemon already running (lock held), exiting"
+time=2026-01-30T18:20:10.589Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-01-30T18:20:10.589Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-01-30T18:20:10.692Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-01-30T18:20:10.692Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-01-30T18:20:10.692Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-01-30T18:20:10.693Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-01-30T18:45:29.102Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-01-30T18:45:29.102Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-01-30T18:45:29.137Z level=INFO msg="daemon already running (lock held), exiting"
+time=2026-01-30T18:45:29.196Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-01-30T18:45:29.196Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-01-30T18:45:29.196Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-01-30T18:45:29.196Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-01-30T18:45:34.299Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-01-30T18:45:34.299Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-01-30T18:45:34.386Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-01-30T18:45:34.386Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-01-30T18:45:34.386Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-01-30T18:45:34.386Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-01-30T18:45:34.453Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-01-30T18:45:34.454Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-01-30T18:45:34.528Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-01-30T18:45:34.528Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-01-30T18:45:34.528Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-01-30T18:45:34.528Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-01-30T18:45:39.490Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-01-30T18:45:39.490Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-01-30T18:45:39.575Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-01-30T18:45:39.575Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-01-30T18:45:39.576Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-01-30T18:45:39.576Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-01-30T18:45:44.690Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-01-30T18:45:44.690Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-01-30T18:45:44.768Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-01-30T18:45:44.768Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-01-30T18:45:44.768Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-01-30T18:45:44.768Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-01-30T18:45:49.879Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-01-30T18:45:49.879Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-01-30T18:45:49.962Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-01-30T18:45:49.962Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-01-30T18:45:49.962Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-01-30T18:45:49.962Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-01-30T18:45:55.085Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-01-30T18:45:55.086Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-01-30T18:45:55.161Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-01-30T18:45:55.161Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-01-30T18:45:55.161Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-01-30T18:45:55.161Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-02-01T12:23:59.651Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-02-01T12:23:59.651Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-02-01T12:23:59.680Z level=INFO msg="daemon already running (lock held), exiting"
+time=2026-02-01T12:23:59.753Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-02-01T12:23:59.753Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-02-01T12:23:59.753Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-02-01T12:23:59.753Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-02-01T12:24:04.868Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-02-01T12:24:04.869Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-02-01T12:24:04.954Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-02-01T12:24:04.954Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-02-01T12:24:04.954Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-02-01T12:24:04.954Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-02-01T12:24:10.092Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-02-01T12:24:10.092Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-02-01T12:24:10.174Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-02-01T12:24:10.174Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-02-01T12:24:10.174Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-02-01T12:24:10.174Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-02-01T12:24:15.256Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-02-01T12:24:15.257Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-02-01T12:24:15.348Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-02-01T12:24:15.348Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-02-01T12:24:15.348Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-02-01T12:24:15.348Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-02-01T12:24:20.464Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-02-01T12:24:20.465Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-02-01T12:24:20.539Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-02-01T12:24:20.539Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-02-01T12:24:20.539Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-02-01T12:24:20.539Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-02-01T12:24:25.719Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-02-01T12:24:25.720Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-02-01T12:24:25.767Z level=INFO msg="daemon already running (lock held), exiting"
+time=2026-02-01T12:24:25.799Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-02-01T12:24:25.799Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-02-01T12:24:25.799Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-02-01T12:24:25.799Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-02-01T12:25:23.165Z level=INFO msg="daemon already running (lock held), exiting"
+time=2026-02-01T12:25:23.166Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-02-01T12:25:23.166Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-02-01T12:25:23.247Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-02-01T12:25:23.247Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-02-01T12:25:23.247Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-02-01T12:25:23.248Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-02-01T12:25:28.450Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-02-01T12:25:28.450Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-02-01T12:25:28.540Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-02-01T12:25:28.541Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-02-01T12:25:28.541Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-02-01T12:25:28.541Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-02-01T12:25:28.592Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-02-01T12:25:28.592Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-02-01T12:25:28.683Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-02-01T12:25:28.684Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-02-01T12:25:28.684Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-02-01T12:25:28.684Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-02-01T12:25:33.629Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-02-01T12:25:33.629Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-02-01T12:25:33.715Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-02-01T12:25:33.715Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-02-01T12:25:33.715Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-02-01T12:25:33.715Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-02-01T12:25:33.799Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-02-01T12:25:33.799Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-02-01T12:25:33.892Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-02-01T12:25:33.892Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-02-01T12:25:33.892Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-02-01T12:25:33.892Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-02-01T12:25:38.820Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-02-01T12:25:38.821Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-02-01T12:25:38.906Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-02-01T12:25:38.906Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-02-01T12:25:38.906Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-02-01T12:25:38.907Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-02-01T12:25:38.978Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-02-01T12:25:38.979Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-02-01T12:25:39.060Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-02-01T12:25:39.060Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-02-01T12:25:39.060Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-02-01T12:25:39.060Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-02-01T12:25:44.013Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-02-01T12:25:44.013Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-02-01T12:25:44.099Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-02-01T12:25:44.099Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-02-01T12:25:44.099Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-02-01T12:25:44.099Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-02-01T12:25:44.157Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-02-01T12:25:44.158Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-02-01T12:25:44.242Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-02-01T12:25:44.242Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-02-01T12:25:44.242Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-02-01T12:25:44.242Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-02-01T12:25:49.229Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-02-01T12:25:49.229Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-02-01T12:25:49.317Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-02-01T12:25:49.317Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-02-01T12:25:49.317Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-02-01T12:25:49.317Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-02-01T13:15:22.953Z level=INFO msg="daemon already running (lock held), exiting"
+time=2026-02-01T13:15:22.957Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-02-01T13:15:22.957Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-02-01T13:15:23.041Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-02-01T13:15:23.042Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-02-01T13:15:23.042Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-02-01T13:15:23.042Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-02-01T13:15:28.177Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-02-01T13:15:28.177Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-02-01T13:15:28.226Z level=INFO msg="daemon already running (lock held), exiting"
+time=2026-02-01T13:15:28.297Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-02-01T13:15:28.297Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-02-01T13:15:28.297Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-02-01T13:15:28.297Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-02-01T13:15:33.410Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-02-01T13:15:33.411Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-02-01T13:15:33.419Z level=INFO msg="daemon already running (lock held), exiting"
+time=2026-02-01T13:15:33.493Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-02-01T13:15:33.493Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-02-01T13:15:33.493Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-02-01T13:15:33.493Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-02-01T13:15:38.632Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-02-01T13:15:38.633Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-02-01T13:15:38.642Z level=INFO msg="daemon already running (lock held), exiting"
+time=2026-02-01T13:15:38.746Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-02-01T13:15:38.746Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-02-01T13:15:38.746Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-02-01T13:15:38.746Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-02-01T13:15:43.887Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-02-01T13:15:43.888Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-02-01T13:15:43.888Z level=INFO msg="daemon already running (lock held), exiting"
+time=2026-02-01T13:15:43.965Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-02-01T13:15:43.965Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-02-01T13:15:43.965Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-02-01T13:15:43.965Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-02-01T13:15:49.156Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-02-01T13:15:49.157Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-02-01T13:15:49.167Z level=INFO msg="daemon already running (lock held), exiting"
+time=2026-02-01T13:15:49.258Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-02-01T13:15:49.258Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-02-01T13:15:49.258Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-02-01T13:15:49.258Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-02-01T14:41:17.371Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-02-01T14:41:17.372Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-02-01T14:41:17.458Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-02-01T14:41:17.458Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-02-01T14:41:17.458Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-02-01T14:41:17.459Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-02-01T14:41:22.608Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-02-01T14:41:22.609Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-02-01T14:41:22.704Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-02-01T14:41:22.704Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-02-01T14:41:22.704Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-02-01T14:41:22.704Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-02-01T14:41:27.797Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-02-01T14:41:27.797Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-02-01T14:41:27.875Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-02-01T14:41:27.875Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-02-01T14:41:27.875Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-02-01T14:41:27.875Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-02-01T14:41:32.988Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-02-01T14:41:32.989Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-02-01T14:41:33.070Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-02-01T14:41:33.070Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-02-01T14:41:33.070Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-02-01T14:41:33.070Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-02-01T14:41:38.192Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-02-01T14:41:38.192Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-02-01T14:41:38.294Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-02-01T14:41:38.294Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-02-01T14:41:38.294Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-02-01T14:41:38.294Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-02-01T14:41:43.401Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-02-01T14:41:43.401Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-02-01T14:41:43.479Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-02-01T14:41:43.479Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-02-01T14:41:43.479Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-02-01T14:41:43.479Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-02-01T15:53:09.178Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-02-01T15:53:09.179Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-02-01T15:53:09.279Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-02-01T15:53:09.279Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-02-01T15:53:09.279Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-02-01T15:53:09.280Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-02-01T15:53:28.315Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-02-01T15:53:28.315Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-02-01T15:53:28.432Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-02-01T15:53:28.432Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-02-01T15:53:28.432Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-02-01T15:53:28.432Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-02-01T15:53:39.146Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-02-01T15:53:39.146Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-02-01T15:53:39.231Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-02-01T15:53:39.231Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-02-01T15:53:39.231Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-02-01T15:53:39.232Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-02-01T15:56:14.335Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-02-01T15:56:14.335Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-02-01T15:56:14.438Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-02-01T15:56:14.438Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-02-01T15:56:14.438Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-02-01T15:56:14.439Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-02-01T17:09:36.388Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-02-01T17:09:36.388Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-02-01T17:09:36.470Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-02-01T17:09:36.471Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-02-01T17:09:36.471Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-02-01T17:09:36.471Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-02-01T17:10:05.077Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-02-01T17:10:05.078Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-02-01T17:10:05.188Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-02-01T17:10:05.188Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-02-01T17:10:05.188Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-02-01T17:10:05.188Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-02-01T17:10:50.174Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-02-01T17:10:50.174Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-02-01T17:10:50.261Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-02-01T17:10:50.261Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-02-01T17:10:50.261Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-02-01T17:10:50.261Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-02-01T17:21:59.664Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-02-01T17:21:59.665Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-02-01T17:21:59.747Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-02-01T17:21:59.747Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-02-01T17:21:59.747Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-02-01T17:21:59.747Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-02-01T17:22:04.885Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-02-01T17:22:04.885Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-02-01T17:22:04.960Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-02-01T17:22:04.960Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-02-01T17:22:04.960Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-02-01T17:22:04.961Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-02-01T17:22:10.089Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-02-01T17:22:10.090Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-02-01T17:22:10.182Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-02-01T17:22:10.182Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-02-01T17:22:10.182Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-02-01T17:22:10.182Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-02-01T17:22:15.260Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-02-01T17:22:15.260Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-02-01T17:22:15.360Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-02-01T17:22:15.360Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-02-01T17:22:15.360Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-02-01T17:22:15.360Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-02-01T17:22:20.478Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-02-01T17:22:20.479Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-02-01T17:22:20.565Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-02-01T17:22:20.565Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-02-01T17:22:20.565Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-02-01T17:22:20.565Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-02-01T17:22:25.681Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-02-01T17:22:25.682Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-02-01T17:22:25.768Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-02-01T17:22:25.768Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-02-01T17:22:25.769Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-02-01T17:22:25.769Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-02-01T17:38:47.936Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-02-01T17:38:47.936Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-02-01T17:38:48.026Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-02-01T17:38:48.026Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-02-01T17:38:48.026Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-02-01T17:38:48.026Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-02-01T17:38:57.093Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-02-01T17:38:57.093Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-02-01T17:38:57.215Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-02-01T17:38:57.215Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-02-01T17:38:57.216Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-02-01T17:38:57.216Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-02-01T17:39:27.303Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-02-01T17:39:27.304Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-02-01T17:39:27.402Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-02-01T17:39:27.402Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-02-01T17:39:27.402Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-02-01T17:39:27.402Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-02-01T17:39:37.182Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-02-01T17:39:37.183Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-02-01T17:39:37.269Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-02-01T17:39:37.269Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-02-01T17:39:37.269Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-02-01T17:39:37.269Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-02-01T17:41:06.173Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-02-01T17:41:06.173Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-02-01T17:41:06.253Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-02-01T17:41:06.253Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-02-01T17:41:06.253Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-02-01T17:41:06.253Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-02-01T17:41:29.098Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-02-01T17:41:29.098Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-02-01T17:41:29.174Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-02-01T17:41:29.174Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-02-01T17:41:29.174Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-02-01T17:41:29.175Z level=ERROR msg="repository fingerprint validation failed" error="\nLEGACY DATABASE DETECTED!\n\nThis database was created before version 0.17.5 and lacks a repository fingerprint.\nTo continue using this database, you must explicitly set its repository ID:\n\n  bd migrate --update-repo-id\n\nThis ensures the database is bound to this repository and prevents accidental\ndatabase sharing between different repositories.\n\nIf this is a fresh clone, run:\n  rm -rf .beads && bd init\n\nNote: Auto-claiming legacy databases is intentionally disabled to prevent\nsilent corruption when databases are copied between repositories.\n"
+time=2026-02-01T17:41:53.466Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-02-01T17:41:53.466Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-02-01T17:41:53.566Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-02-01T17:41:53.566Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-02-01T17:41:53.566Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-02-01T17:41:53.569Z level=INFO msg="Repository fingerprint validated: %s" !BADKEY=1f435dc5
+time=2026-02-01T17:41:53.569Z level=WARN msg="database missing version metadata" setting_to=0.49.1
+time=2026-02-01T17:41:53.569Z level=INFO msg="starting RPC server" socket=/home/egv/dev/yolo-runner/.beads/bd.sock
+time=2026-02-01T17:41:53.570Z level=INFO msg="RPC server ready (socket listening)"
+time=2026-02-01T17:41:53.572Z level=INFO msg="registered in global registry"
+time=2026-02-01T17:41:53.572Z level=INFO msg="Starting %s..." !BADKEY="sync cycle"
+time=2026-02-01T17:41:53.628Z level=INFO msg="Exported to JSONL"
+time=2026-02-01T17:41:55.001Z level=INFO msg="Pulled from remote"
+time=2026-02-01T17:41:55.041Z level=INFO msg="Imported from JSONL"
+time=2026-02-01T17:41:55.058Z level=INFO msg="Sync cycle complete"
+time=2026-02-01T17:41:55.058Z level=INFO msg="monitoring parent process" pid=0
+time=2026-02-01T17:41:55.058Z level=INFO msg="using event-driven mode"
+time=2026-02-01T17:41:55.058Z level=INFO msg="Auto-pull disabled: use 'git pull' manually to sync remote changes"
+time=2026-02-01T17:50:46.481Z level=INFO msg="JSONL file created: %s" !BADKEY=/home/egv/dev/yolo-runner/.beads/issues.jsonl
+time=2026-02-01T17:50:46.482Z level=INFO msg="File change detected: %s" !BADKEY=/home/egv/dev/yolo-runner/.beads/issues.jsonl
+time=2026-02-01T17:50:47.483Z level=INFO msg="Import triggered by file change"
+time=2026-02-01T17:50:47.484Z level=INFO msg="Starting %s..." !BADKEY=auto-import
+time=2026-02-01T17:50:47.485Z level=INFO msg="Skipping %s: JSONL content unchanged" !BADKEY=auto-import
+time=2026-02-01T18:00:28.441Z level=INFO msg="Received reload signal, ignoring"
+time=2026-02-01T18:00:28.441Z level=INFO msg="Context canceled, shutting down"
+time=2026-02-04T17:54:34.481Z level=INFO msg="Daemon started (interval: %v, auto-commit: %v, auto-push: %v)" !BADKEY=5s !BADKEY=false !BADKEY=false
+time=2026-02-04T17:54:34.481Z level=INFO msg="using database" path=/home/egv/dev/yolo-runner/.beads/beads.db
+time=2026-02-04T17:54:34.488Z level=INFO msg="daemon already running (lock held), exiting"
+time=2026-02-04T17:54:34.607Z level=INFO msg="database opened" path=/home/egv/dev/yolo-runner/.beads/beads.db backend=sqlite freshness_checking=true
+time=2026-02-04T17:54:34.607Z level=INFO msg="upgrading .beads/.gitignore"
+time=2026-02-04T17:54:34.607Z level=WARN msg="failed to upgrade .gitignore" error="open .beads/.gitignore: no such file or directory"
+time=2026-02-04T17:54:34.610Z level=INFO msg="Repository fingerprint validated: %s" !BADKEY=1f435dc5
+time=2026-02-04T17:54:34.611Z level=INFO msg="starting RPC server" socket=/home/egv/dev/yolo-runner/.beads/bd.sock
+time=2026-02-04T17:54:34.611Z level=INFO msg="RPC server ready (socket listening)"
+time=2026-02-04T17:54:34.614Z level=INFO msg="registered in global registry"
+time=2026-02-04T17:54:34.614Z level=INFO msg="Starting %s..." !BADKEY="sync cycle"
+time=2026-02-04T17:54:34.673Z level=INFO msg="Exported to JSONL"
+time=2026-02-04T17:54:36.184Z level=INFO msg="Pulled from remote"
+time=2026-02-04T17:54:36.240Z level=INFO msg="Imported from JSONL"
+time=2026-02-04T17:54:36.259Z level=INFO msg="Sync cycle complete"
+time=2026-02-04T17:54:36.259Z level=INFO msg="monitoring parent process" pid=0
+time=2026-02-04T17:54:36.259Z level=INFO msg="using event-driven mode"
+time=2026-02-04T17:54:36.259Z level=INFO msg="Auto-pull disabled: use 'git pull' manually to sync remote changes"
+time=2026-02-05T13:38:05.862Z level=INFO msg="JSONL file created: %s" !BADKEY=/home/egv/dev/yolo-runner/.beads/issues.jsonl
+time=2026-02-05T13:38:05.862Z level=INFO msg="File change detected: %s" !BADKEY=/home/egv/dev/yolo-runner/.beads/issues.jsonl
+time=2026-02-05T13:38:06.864Z level=INFO msg="Import triggered by file change"
+time=2026-02-05T13:38:06.864Z level=INFO msg="Starting %s..." !BADKEY=auto-import
+time=2026-02-05T13:38:06.865Z level=INFO msg="Skipping %s: JSONL content unchanged" !BADKEY=auto-import
+time=2026-02-05T13:38:21.677Z level=INFO msg="Git ref change detected: %s" !BADKEY=/home/egv/dev/yolo-runner/.git/refs/heads/main.lock
+time=2026-02-05T13:38:22.163Z level=INFO msg="JSONL file created: %s" !BADKEY=/home/egv/dev/yolo-runner/.beads/issues.jsonl
+time=2026-02-05T13:38:22.163Z level=INFO msg="File change detected: %s" !BADKEY=/home/egv/dev/yolo-runner/.beads/issues.jsonl
+time=2026-02-05T13:38:23.165Z level=INFO msg="Import triggered by file change"
+time=2026-02-05T13:38:23.166Z level=INFO msg="Starting %s..." !BADKEY=auto-import
+time=2026-02-05T13:38:23.167Z level=INFO msg="Skipping %s: JSONL content unchanged" !BADKEY=auto-import
+time=2026-02-05T13:39:11.222Z level=INFO msg="JSONL file created: %s" !BADKEY=/home/egv/dev/yolo-runner/.beads/issues.jsonl
+time=2026-02-05T13:39:11.222Z level=INFO msg="File change detected: %s" !BADKEY=/home/egv/dev/yolo-runner/.beads/issues.jsonl
+time=2026-02-05T13:39:12.223Z level=INFO msg="Import triggered by file change"
+time=2026-02-05T13:39:12.224Z level=INFO msg="Starting %s..." !BADKEY=auto-import
+time=2026-02-05T13:39:12.225Z level=INFO msg="Skipping %s: JSONL content unchanged" !BADKEY=auto-import

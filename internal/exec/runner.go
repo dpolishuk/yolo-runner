@@ -31,7 +31,15 @@ func (cr *CommandRunner) Run(args ...string) (string, error) {
 	var stdout, stderr strings.Builder
 	cmd := exec.Command(args[0], args[1:]...)
 
-	if shouldLog {
+	// Disable pager for commands that might use one (e.g., tk show)
+	cmd.Env = append(cmd.Environ(), "PAGER=cat")
+
+	// For tk commands, capture output silently (don't print to terminal)
+	// For other commands, both capture and print
+	if len(args) > 0 && args[0] == "tk" {
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+	} else if shouldLog {
 		cmd.Stdout = &stdout
 		cmd.Stderr = &stderr
 	} else {

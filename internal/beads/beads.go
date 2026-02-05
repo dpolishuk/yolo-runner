@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/anomalyco/yolo-runner/internal/runner"
@@ -223,4 +224,11 @@ func (a *Adapter) CloseEligible() error {
 func (a *Adapter) Sync() error {
 	_, err := a.runner.Run("bd", "sync")
 	return err
+}
+
+// IsAvailable checks if beads is available in the repository
+func IsAvailable(repoRoot string) bool {
+	beadsDir := filepath.Join(repoRoot, ".beads")
+	_, err := os.Stat(beadsDir)
+	return err == nil
 }
