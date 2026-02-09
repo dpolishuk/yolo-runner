@@ -479,6 +479,44 @@ func TestLoopHonorsConcurrencyLimit(t *testing.T) {
 	}
 }
 
+func TestLoopSkipsExecutionWhenTaskLockDenied(t *testing.T) {
+	mgr := newFakeTaskManager(contracts.Task{ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen})
+	run := &fakeRunner{results: []contracts.RunnerResult{{Status: contracts.RunnerResultCompleted}}}
+	loop := NewLoop(mgr, run, nil, LoopOptions{ParentID: "root"})
+	loop.taskLock = &denyTaskLock{}
+
+	summary, err := loop.Run(context.Background())
+	if err != nil {
+		t.Fatalf("loop failed: %v", err)
+	}
+	if summary.TotalProcessed() != 0 {
+		t.Fatalf("expected no processed tasks, got %#v", summary)
+	}
+	if len(run.requests) != 0 {
+		t.Fatalf("runner should not be called when task lock is denied")
+	}
+}
+
+func TestLoopUsesLandingLockAroundMergeAndPush(t *testing.T) {
+	mgr := newFakeTaskManager(contracts.Task{ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen})
+	run := &fakeRunner{results: []contracts.RunnerResult{{Status: contracts.RunnerResultCompleted}}}
+	vcs := &fakeVCS{}
+	landing := &recordingLandingLock{}
+	loop := NewLoop(mgr, run, nil, LoopOptions{ParentID: "root", VCS: vcs, MergeOnSuccess: true})
+	loop.landingLock = landing
+
+	summary, err := loop.Run(context.Background())
+	if err != nil {
+		t.Fatalf("loop failed: %v", err)
+	}
+	if summary.Completed != 1 {
+		t.Fatalf("expected one completed task, got %#v", summary)
+	}
+	if landing.lockCalls != 1 || landing.unlockCalls != 1 {
+		t.Fatalf("expected one lock/unlock pair, got lock=%d unlock=%d", landing.lockCalls, landing.unlockCalls)
+	}
+}
+
 func hasEventType(events []contracts.Event, eventType contracts.EventType) bool {
 	for _, event := range events {
 		if event.Type == eventType {
@@ -499,6 +537,25 @@ type blockingRunner struct {
 	release   chan struct{}
 	active    int32
 	maxActive int32
+}
+
+type denyTaskLock struct{}
+
+func (denyTaskLock) TryLock(string) bool { return false }
+
+func (denyTaskLock) Unlock(string) {}
+
+type recordingLandingLock struct {
+	lockCalls   int
+	unlockCalls int
+}
+
+func (l *recordingLandingLock) Lock() {
+	l.lockCalls++
+}
+
+func (l *recordingLandingLock) Unlock() {
+	l.unlockCalls++
 }
 
 func (b *blockingRunner) Run(_ context.Context, _ contracts.RunnerRequest) (contracts.RunnerResult, error) {

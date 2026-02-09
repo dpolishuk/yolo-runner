@@ -7,7 +7,18 @@ import (
 	"time"
 
 	"github.com/anomalyco/yolo-runner/internal/contracts"
+	"github.com/anomalyco/yolo-runner/internal/scheduler"
 )
+
+type taskLock interface {
+	TryLock(taskID string) bool
+	Unlock(taskID string)
+}
+
+type landingLock interface {
+	Lock()
+	Unlock()
+}
 
 type LoopOptions struct {
 	ParentID       string
@@ -25,14 +36,23 @@ type LoopOptions struct {
 }
 
 type Loop struct {
-	tasks   contracts.TaskManager
-	runner  contracts.AgentRunner
-	events  contracts.EventSink
-	options LoopOptions
+	tasks       contracts.TaskManager
+	runner      contracts.AgentRunner
+	events      contracts.EventSink
+	options     LoopOptions
+	taskLock    taskLock
+	landingLock landingLock
 }
 
 func NewLoop(tasks contracts.TaskManager, runner contracts.AgentRunner, events contracts.EventSink, options LoopOptions) *Loop {
-	return &Loop{tasks: tasks, runner: runner, events: events, options: options}
+	return &Loop{
+		tasks:       tasks,
+		runner:      runner,
+		events:      events,
+		options:     options,
+		taskLock:    scheduler.NewTaskLock(),
+		landingLock: scheduler.NewLandingLock(),
+	}
 }
 
 func (l *Loop) Run(ctx context.Context) (contracts.LoopSummary, error) {
@@ -91,6 +111,9 @@ func (l *Loop) Run(ctx context.Context) (contracts.LoopSummary, error) {
 			taskID := ""
 			for _, candidate := range next {
 				if _, running := inFlight[candidate.ID]; !running {
+					if l.taskLock != nil && !l.taskLock.TryLock(candidate.ID) {
+						continue
+					}
 					taskID = candidate.ID
 					break
 				}
@@ -101,6 +124,11 @@ func (l *Loop) Run(ctx context.Context) (contracts.LoopSummary, error) {
 
 			inFlight[taskID] = struct{}{}
 			go func(id string) {
+				defer func() {
+					if l.taskLock != nil {
+						l.taskLock.Unlock(id)
+					}
+				}()
 				resultSummary, taskErr := l.runTask(ctx, id)
 				results <- taskResult{taskID: id, summary: resultSummary, err: taskErr}
 			}(taskID)
@@ -190,6 +218,10 @@ func (l *Loop) runTask(ctx context.Context, taskID string) (contracts.LoopSummar
 		switch result.Status {
 		case contracts.RunnerResultCompleted:
 			if l.options.MergeOnSuccess && l.options.VCS != nil && taskBranch != "" {
+				if l.landingLock != nil {
+					l.landingLock.Lock()
+					defer l.landingLock.Unlock()
+				}
 				if err := l.options.VCS.MergeToMain(ctx, taskBranch); err != nil {
 					return summary, err
 				}

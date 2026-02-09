@@ -67,6 +67,22 @@ func TestShowUsesTkShowAndQuery(t *testing.T) {
 	}
 }
 
+func TestShowFallsBackToTitleFromTkShowOutput(t *testing.T) {
+	r := &fakeRunner{responses: map[string]string{
+		"tk query":       `{"id":"root.1","description":"Task description","status":"open","type":"task","priority":2}`,
+		"tk show root.1": "---\nid: root.1\n---\n# Task title from show\n",
+	}}
+	a := New(r)
+
+	bead, err := a.Show("root.1")
+	if err != nil {
+		t.Fatalf("show failed: %v", err)
+	}
+	if bead.ID != "root.1" || bead.Title != "Task title from show" {
+		t.Fatalf("unexpected bead: %#v", bead)
+	}
+}
+
 type fakeRunner struct {
 	responses map[string]string
 	calls     []string
