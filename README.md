@@ -77,6 +77,20 @@ Common options:
 - `--dry-run` print the task prompt without running OpenCode
 - `--headless` disable the TUI (useful for CI or non-TTY runs)
 
+### `--runner-timeout` profiles (`yolo-agent`)
+
+Use `--runner-timeout` to cap each task execution. Start with these defaults and tune for your repo/task size.
+
+- Local profile: `--runner-timeout 10m` keeps hangs bounded while still allowing normal coding loops.
+- CI profile: `--runner-timeout 20m` allows slower shared runners and heavier validation steps.
+
+Examples:
+
+```
+./bin/yolo-agent --repo . --root <root-id> --model openai/gpt-5.3-codex --runner-timeout 10m
+./bin/yolo-agent --repo . --root <root-id> --model openai/gpt-5.3-codex --runner-timeout 20m
+```
+
 ## Task Prompt
 
 The prompt includes:
