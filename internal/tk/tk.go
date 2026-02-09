@@ -112,9 +112,11 @@ func (a *Adapter) Tree(rootID string) (runner.Issue, error) {
 
 func (a *Adapter) Show(id string) (runner.Bead, error) {
 	// Keep an explicit tk show call for detail retrieval flow and parity with CLI behavior.
-	if _, err := a.runner.Run("tk", "show", id); err != nil {
+	showOutput, err := a.runner.Run("tk", "show", id)
+	if err != nil {
 		return runner.Bead{}, err
 	}
+	titleFromShow := parseTitleFromShowOutput(showOutput)
 
 	tickets, err := a.queryTickets()
 	if err != nil {
@@ -122,9 +124,13 @@ func (a *Adapter) Show(id string) (runner.Bead, error) {
 	}
 	for _, t := range tickets {
 		if t.ID == id {
+			title := t.Title
+			if strings.TrimSpace(title) == "" {
+				title = titleFromShow
+			}
 			return runner.Bead{
 				ID:                 t.ID,
-				Title:              t.Title,
+				Title:              title,
 				Description:        t.Description,
 				AcceptanceCriteria: "",
 				Status:             t.Status,
@@ -133,6 +139,16 @@ func (a *Adapter) Show(id string) (runner.Bead, error) {
 	}
 
 	return runner.Bead{}, nil
+}
+
+func parseTitleFromShowOutput(output string) string {
+	for _, line := range strings.Split(output, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "# ") {
+			return strings.TrimSpace(strings.TrimPrefix(trimmed, "# "))
+		}
+	}
+	return ""
 }
 
 func (a *Adapter) UpdateStatus(id string, status string) error {

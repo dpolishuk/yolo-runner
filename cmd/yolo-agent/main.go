@@ -21,6 +21,7 @@ type runConfig struct {
 	rootID        string
 	model         string
 	maxTasks      int
+	concurrency   int
 	dryRun        bool
 	runnerTimeout time.Duration
 	eventsPath    string
@@ -32,6 +33,7 @@ func RunMain(args []string, run func(context.Context, runConfig) error) int {
 	root := fs.String("root", "", "Root task ID")
 	model := fs.String("model", "", "Model for CLI agent")
 	max := fs.Int("max", 0, "Maximum tasks to execute")
+	concurrency := fs.Int("concurrency", 1, "Maximum number of active task workers")
 	dryRun := fs.Bool("dry-run", false, "Dry run task loop")
 	runnerTimeout := fs.Duration("runner-timeout", 0, "Per runner execution timeout")
 	events := fs.String("events", "", "Path to JSONL events log")
@@ -40,6 +42,10 @@ func RunMain(args []string, run func(context.Context, runConfig) error) int {
 	}
 	if *root == "" {
 		fmt.Fprintln(os.Stderr, "--root is required")
+		return 1
+	}
+	if *concurrency <= 0 {
+		fmt.Fprintln(os.Stderr, "--concurrency must be greater than 0")
 		return 1
 	}
 
@@ -52,6 +58,7 @@ func RunMain(args []string, run func(context.Context, runConfig) error) int {
 		rootID:        *root,
 		model:         *model,
 		maxTasks:      *max,
+		concurrency:   *concurrency,
 		dryRun:        *dryRun,
 		runnerTimeout: *runnerTimeout,
 		eventsPath:    *events,
@@ -89,6 +96,7 @@ func runWithComponents(ctx context.Context, cfg runConfig, taskManager contracts
 	loop := agent.NewLoop(taskManager, runner, eventSink, agent.LoopOptions{
 		ParentID:       cfg.rootID,
 		MaxTasks:       cfg.maxTasks,
+		Concurrency:    cfg.concurrency,
 		DryRun:         cfg.dryRun,
 		RepoRoot:       cfg.repoRoot,
 		Model:          cfg.model,
