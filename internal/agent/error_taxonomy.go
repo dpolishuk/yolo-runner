@@ -26,9 +26,33 @@ func FormatActionableError(err error) string {
 	if err == nil {
 		return ""
 	}
-	cause := err.Error()
+	cause := trimGenericExitStatus(err.Error())
 	class := classifyError(cause)
 	return "Category: " + class.category + "\nCause: " + cause + "\nNext step: " + class.remediation
+}
+
+func trimGenericExitStatus(cause string) string {
+	trimmed := strings.TrimSpace(cause)
+	lower := strings.ToLower(trimmed)
+	const suffix = ": exit status "
+
+	idx := strings.LastIndex(lower, suffix)
+	if idx == -1 {
+		return trimmed
+	}
+	statusPart := strings.TrimSpace(trimmed[idx+len(suffix):])
+	if statusPart == "" {
+		return trimmed
+	}
+	for _, r := range statusPart {
+		if r < '0' || r > '9' {
+			return trimmed
+		}
+	}
+	if idx == 0 {
+		return trimmed
+	}
+	return strings.TrimSpace(trimmed[:idx])
 }
 
 func classifyError(cause string) errorClass {

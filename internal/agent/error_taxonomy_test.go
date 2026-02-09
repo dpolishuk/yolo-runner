@@ -54,3 +54,15 @@ func TestFormatActionableErrorFallsBackToUnknownCategory(t *testing.T) {
 		t.Fatalf("expected next step in message, got %q", message)
 	}
 }
+
+func TestFormatActionableErrorDropsGenericExitStatusWhenDetailedCauseExists(t *testing.T) {
+	err := errors.New("git checkout main failed: error: Your local changes to the following files would be overwritten by checkout: exit status 1")
+	message := FormatActionableError(err)
+
+	if strings.Contains(message, "exit status 1") {
+		t.Fatalf("expected actionable message to omit generic exit status, got %q", message)
+	}
+	if !strings.Contains(message, "Cause: git checkout main failed: error: Your local changes") {
+		t.Fatalf("expected detailed checkout cause in message, got %q", message)
+	}
+}
