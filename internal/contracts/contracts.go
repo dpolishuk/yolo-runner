@@ -120,6 +120,7 @@ const (
 type Event struct {
 	Type      EventType
 	TaskID    string
+	TaskTitle string
 	Message   string
 	Metadata  map[string]string
 	Timestamp time.Time
@@ -127,17 +128,19 @@ type Event struct {
 
 func MarshalEventJSONL(event Event) (string, error) {
 	payload := struct {
-		Type     EventType         `json:"type"`
-		TaskID   string            `json:"task_id"`
-		Message  string            `json:"message,omitempty"`
-		Metadata map[string]string `json:"metadata,omitempty"`
-		TS       string            `json:"ts"`
+		Type      EventType         `json:"type"`
+		TaskID    string            `json:"task_id"`
+		TaskTitle string            `json:"task_title,omitempty"`
+		Message   string            `json:"message,omitempty"`
+		Metadata  map[string]string `json:"metadata,omitempty"`
+		TS        string            `json:"ts"`
 	}{
-		Type:     event.Type,
-		TaskID:   event.TaskID,
-		Message:  event.Message,
-		Metadata: event.Metadata,
-		TS:       event.Timestamp.UTC().Format(time.RFC3339),
+		Type:      event.Type,
+		TaskID:    event.TaskID,
+		TaskTitle: event.TaskTitle,
+		Message:   event.Message,
+		Metadata:  event.Metadata,
+		TS:        event.Timestamp.UTC().Format(time.RFC3339),
 	}
 
 	data, err := json.Marshal(payload)

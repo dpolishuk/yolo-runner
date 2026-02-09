@@ -11,14 +11,15 @@ func TestModelTracksCurrentTaskPhaseAgeAndHistory(t *testing.T) {
 	now := time.Date(2026, 2, 10, 12, 0, 10, 0, time.UTC)
 	model := NewModel(func() time.Time { return now })
 
-	model.Apply(contracts.Event{Type: contracts.EventTypeTaskStarted, TaskID: "task-1", Message: "started", Timestamp: now.Add(-5 * time.Second)})
+	model.Apply(contracts.Event{Type: contracts.EventTypeTaskStarted, TaskID: "task-1", TaskTitle: "Readable task", Message: "started", Timestamp: now.Add(-5 * time.Second)})
 	model.Apply(contracts.Event{Type: contracts.EventTypeRunnerStarted, TaskID: "task-1", Message: "runner started", Timestamp: now.Add(-3 * time.Second)})
 	model.Apply(contracts.Event{Type: contracts.EventTypeRunnerFinished, TaskID: "task-1", Message: "runner finished", Timestamp: now.Add(-1 * time.Second)})
 
 	view := model.View()
-	assertContains(t, view, "Current Task: task-1")
+	assertContains(t, view, "Current Task: task-1 - Readable task")
 	assertContains(t, view, "Phase: runner_finished")
 	assertContains(t, view, "Last Output Age: 1s")
+	assertContains(t, view, "task-1 - Readable task")
 	assertContains(t, view, "runner started")
 	assertContains(t, view, "runner finished")
 }

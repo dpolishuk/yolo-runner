@@ -12,6 +12,7 @@ import (
 type Model struct {
 	now          func() time.Time
 	currentTask  string
+	currentTitle string
 	phase        string
 	lastOutputAt time.Time
 	history      []string
@@ -27,6 +28,9 @@ func NewModel(now func() time.Time) *Model {
 func (m *Model) Apply(event contracts.Event) {
 	if event.TaskID != "" {
 		m.currentTask = event.TaskID
+	}
+	if event.TaskTitle != "" {
+		m.currentTitle = event.TaskTitle
 	}
 	if event.Type != "" {
 		m.phase = string(event.Type)
@@ -52,7 +56,7 @@ func (m *Model) View() string {
 		age = fmt.Sprintf("%ds", seconds)
 	}
 	lines := []string{
-		"Current Task: " + emptyAsNA(m.currentTask),
+		"Current Task: " + renderCurrentTask(m.currentTask, m.currentTitle),
 		"Phase: " + emptyAsNA(m.phase),
 		"Last Output Age: " + age,
 		"History:",
@@ -68,6 +72,18 @@ func emptyAsNA(value string) string {
 	return value
 }
 
+func renderCurrentTask(id string, title string) string {
+	id = strings.TrimSpace(id)
+	title = strings.TrimSpace(title)
+	if id == "" {
+		return "n/a"
+	}
+	if title == "" {
+		return id
+	}
+	return id + " - " + title
+}
+
 func renderHistoryLine(event contracts.Event) string {
 	parts := []string{}
 	if !event.Timestamp.IsZero() {
@@ -77,7 +93,7 @@ func renderHistoryLine(event contracts.Event) string {
 		parts = append(parts, string(event.Type))
 	}
 	if event.TaskID != "" {
-		parts = append(parts, event.TaskID)
+		parts = append(parts, renderCurrentTask(event.TaskID, event.TaskTitle))
 	}
 	if event.Message != "" {
 		parts = append(parts, event.Message)

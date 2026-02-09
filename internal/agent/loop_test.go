@@ -403,6 +403,9 @@ func TestLoopEmitsLifecycleEvents(t *testing.T) {
 	if sink.events[0].Type != contracts.EventTypeTaskStarted {
 		t.Fatalf("expected first event task_started, got %s", sink.events[0].Type)
 	}
+	if sink.events[0].TaskTitle != "Task 1" {
+		t.Fatalf("expected task title in event, got %q", sink.events[0].TaskTitle)
+	}
 	if !hasEventType(sink.events, contracts.EventTypeRunnerStarted) {
 		t.Fatalf("expected runner_started event")
 	}

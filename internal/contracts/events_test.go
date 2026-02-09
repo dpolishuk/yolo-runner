@@ -35,3 +35,21 @@ func TestMarshalEventJSONLAlwaysEndsWithNewline(t *testing.T) {
 		t.Fatalf("expected JSONL output to end with newline")
 	}
 }
+
+func TestMarshalEventJSONLIncludesTaskTitleWhenPresent(t *testing.T) {
+	e := Event{
+		Type:      EventTypeTaskStarted,
+		TaskID:    "task-7",
+		TaskTitle: "Improve readability",
+		Timestamp: time.Date(2026, 2, 10, 13, 0, 0, 0, time.UTC),
+	}
+
+	line, err := MarshalEventJSONL(e)
+	if err != nil {
+		t.Fatalf("marshal failed: %v", err)
+	}
+	expected := `{"type":"task_started","task_id":"task-7","task_title":"Improve readability","ts":"2026-02-10T13:00:00Z"}`
+	if strings.TrimSpace(line) != expected {
+		t.Fatalf("unexpected json line\nexpected: %s\nactual:   %s", expected, strings.TrimSpace(line))
+	}
+}
