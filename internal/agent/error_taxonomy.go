@@ -19,16 +19,40 @@ var errorTaxonomy = []struct {
 	{match: containsAny("chdir", "no such file", "repository does not exist", "clone"), class: errorClass{category: "filesystem_clone", remediation: "Confirm repository path exists, clone/fetch repository data, and retry from repo root."}},
 	{match: containsAny("task lock", "already locked", "resource busy", "lock held"), class: errorClass{category: "lock_contention", remediation: "Wait for other workers to finish or release stale lock, then retry."}},
 	{match: containsAny("tk ", "ticket", "task tracker", ".tickets"), class: errorClass{category: "tracker", remediation: "Verify tk CLI availability and task metadata, then rerun task selection."}},
-	{match: containsAny("git", "checkout", "branch", "rebase", "not a git repository"), class: errorClass{category: "git/vcs", remediation: "Fix repository state (clean worktree, valid branch, fetch updates) and rerun."}},
+	{match: containsAny("git", "checkout", "branch", "rebase", "not a git repository", "worktree", "dirty", "local changes", "would be overwritten by checkout"), class: errorClass{category: "git/vcs", remediation: "Fix repository state (clean worktree, valid branch, fetch updates) and rerun."}},
 }
 
 func FormatActionableError(err error) string {
 	if err == nil {
 		return ""
 	}
-	cause := err.Error()
+	cause := trimGenericExitStatus(err.Error())
 	class := classifyError(cause)
 	return "Category: " + class.category + "\nCause: " + cause + "\nNext step: " + class.remediation
+}
+
+func trimGenericExitStatus(cause string) string {
+	trimmed := strings.TrimSpace(cause)
+	lower := strings.ToLower(trimmed)
+	const suffix = ": exit status "
+
+	idx := strings.LastIndex(lower, suffix)
+	if idx == -1 {
+		return trimmed
+	}
+	statusPart := strings.TrimSpace(trimmed[idx+len(suffix):])
+	if statusPart == "" {
+		return trimmed
+	}
+	for _, r := range statusPart {
+		if r < '0' || r > '9' {
+			return trimmed
+		}
+	}
+	if idx == 0 {
+		return trimmed
+	}
+	return strings.TrimSpace(trimmed[:idx])
 }
 
 func classifyError(cause string) errorClass {

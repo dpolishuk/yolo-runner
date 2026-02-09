@@ -21,6 +21,7 @@ func TestFormatActionableErrorIncludesCategoryCauseAndNextStep(t *testing.T) {
 		{name: "auth profile config", err: errors.New("auth token missing for profile default"), category: "auth_profile_config"},
 		{name: "filesystem clone", err: errors.New("chdir /missing/repo: no such file or directory"), category: "filesystem_clone"},
 		{name: "lock contention", err: errors.New("task lock already held by another worker"), category: "lock_contention"},
+		{name: "dirty worktree", err: errors.New("worktree is dirty: commit or stash changes"), category: "git/vcs"},
 	}
 
 	for _, tc := range tests {
@@ -51,5 +52,17 @@ func TestFormatActionableErrorFallsBackToUnknownCategory(t *testing.T) {
 	}
 	if !strings.Contains(message, "Next step:") {
 		t.Fatalf("expected next step in message, got %q", message)
+	}
+}
+
+func TestFormatActionableErrorDropsGenericExitStatusWhenDetailedCauseExists(t *testing.T) {
+	err := errors.New("git checkout main failed: error: Your local changes to the following files would be overwritten by checkout: exit status 1")
+	message := FormatActionableError(err)
+
+	if strings.Contains(message, "exit status 1") {
+		t.Fatalf("expected actionable message to omit generic exit status, got %q", message)
+	}
+	if !strings.Contains(message, "Cause: git checkout main failed: error: Your local changes") {
+		t.Fatalf("expected detailed checkout cause in message, got %q", message)
 	}
 }
