@@ -36,12 +36,13 @@ type LoopOptions struct {
 }
 
 type Loop struct {
-	tasks       contracts.TaskManager
-	runner      contracts.AgentRunner
-	events      contracts.EventSink
-	options     LoopOptions
-	taskLock    taskLock
-	landingLock landingLock
+	tasks           contracts.TaskManager
+	runner          contracts.AgentRunner
+	events          contracts.EventSink
+	options         LoopOptions
+	taskLock        taskLock
+	landingLock     landingLock
+	workerStartHook func(workerID int)
 }
 
 func NewLoop(tasks contracts.TaskManager, runner contracts.AgentRunner, events contracts.EventSink, options LoopOptions) *Loop {
@@ -85,7 +86,29 @@ func (l *Loop) Run(ctx context.Context) (contracts.LoopSummary, error) {
 	}
 
 	results := make(chan taskResult, l.options.Concurrency)
+	tasksCh := make(chan string)
 	inFlight := map[string]struct{}{}
+
+	for workerID := 0; workerID < l.options.Concurrency; workerID++ {
+		id := workerID
+		go func() {
+			if l.workerStartHook != nil {
+				l.workerStartHook(id)
+			}
+			for taskID := range tasksCh {
+				func(id string) {
+					defer func() {
+						if l.taskLock != nil {
+							l.taskLock.Unlock(id)
+						}
+					}()
+					resultSummary, taskErr := l.runTask(ctx, id)
+					results <- taskResult{taskID: id, summary: resultSummary, err: taskErr}
+				}(taskID)
+			}
+		}()
+	}
+	defer close(tasksCh)
 
 	for {
 		if l.stopRequested() && len(inFlight) == 0 {
@@ -123,15 +146,7 @@ func (l *Loop) Run(ctx context.Context) (contracts.LoopSummary, error) {
 			}
 
 			inFlight[taskID] = struct{}{}
-			go func(id string) {
-				defer func() {
-					if l.taskLock != nil {
-						l.taskLock.Unlock(id)
-					}
-				}()
-				resultSummary, taskErr := l.runTask(ctx, id)
-				results <- taskResult{taskID: id, summary: resultSummary, err: taskErr}
-			}(taskID)
+			tasksCh <- taskID
 		}
 
 		if len(inFlight) == 0 {

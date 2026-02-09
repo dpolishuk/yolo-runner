@@ -517,6 +517,50 @@ func TestLoopUsesLandingLockAroundMergeAndPush(t *testing.T) {
 	}
 }
 
+func TestLoopStartsFixedWorkerPool(t *testing.T) {
+	mgr := newFakeTaskManager(
+		contracts.Task{ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen},
+		contracts.Task{ID: "t-2", Title: "Task 2", Status: contracts.TaskStatusOpen},
+		contracts.Task{ID: "t-3", Title: "Task 3", Status: contracts.TaskStatusOpen},
+		contracts.Task{ID: "t-4", Title: "Task 4", Status: contracts.TaskStatusOpen},
+	)
+	run := &blockingRunner{release: make(chan struct{})}
+	loop := NewLoop(mgr, run, nil, LoopOptions{ParentID: "root", Concurrency: 3})
+
+	startedWorkers := make(chan int, 4)
+	loop.workerStartHook = func(workerID int) {
+		startedWorkers <- workerID
+	}
+
+	resultCh := make(chan error, 1)
+	go func() {
+		_, err := loop.Run(context.Background())
+		resultCh <- err
+	}()
+
+	gotWorkers := map[int]struct{}{}
+	deadline := time.After(2 * time.Second)
+	for len(gotWorkers) < 3 {
+		select {
+		case workerID := <-startedWorkers:
+			gotWorkers[workerID] = struct{}{}
+		case <-deadline:
+			t.Fatalf("expected 3 workers to start, got %d", len(gotWorkers))
+		}
+	}
+
+	select {
+	case workerID := <-startedWorkers:
+		t.Fatalf("expected fixed worker pool size 3, saw extra worker %d", workerID)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(run.release)
+	if err := <-resultCh; err != nil {
+		t.Fatalf("loop failed: %v", err)
+	}
+}
+
 func hasEventType(events []contracts.Event, eventType contracts.EventType) bool {
 	for _, event := range events {
 		if event.Type == eventType {
