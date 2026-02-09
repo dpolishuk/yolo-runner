@@ -1,0 +1,166 @@
+package contracts
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"time"
+)
+
+type TaskStatus string
+
+const (
+	TaskStatusOpen       TaskStatus = "open"
+	TaskStatusInProgress TaskStatus = "in_progress"
+	TaskStatusBlocked    TaskStatus = "blocked"
+	TaskStatusClosed     TaskStatus = "closed"
+	TaskStatusFailed     TaskStatus = "failed"
+)
+
+type TaskSummary struct {
+	ID       string
+	Title    string
+	Priority *int
+}
+
+type Task struct {
+	ID          string
+	Title       string
+	Description string
+	Status      TaskStatus
+	ParentID    string
+	Metadata    map[string]string
+}
+
+type TaskManager interface {
+	NextTasks(ctx context.Context, parentID string) ([]TaskSummary, error)
+	GetTask(ctx context.Context, taskID string) (Task, error)
+	SetTaskStatus(ctx context.Context, taskID string, status TaskStatus) error
+	SetTaskData(ctx context.Context, taskID string, data map[string]string) error
+}
+
+type RunnerMode string
+
+const (
+	RunnerModeImplement RunnerMode = "implement"
+	RunnerModeReview    RunnerMode = "review"
+)
+
+type RunnerRequest struct {
+	TaskID   string
+	ParentID string
+	Prompt   string
+	Mode     RunnerMode
+	Model    string
+	RepoRoot string
+	Timeout  time.Duration
+	Metadata map[string]string
+}
+
+type RunnerResultStatus string
+
+const (
+	RunnerResultCompleted RunnerResultStatus = "completed"
+	RunnerResultBlocked   RunnerResultStatus = "blocked"
+	RunnerResultFailed    RunnerResultStatus = "failed"
+)
+
+var ErrInvalidRunnerResultStatus = errors.New("invalid runner result status")
+
+type RunnerResult struct {
+	Status      RunnerResultStatus
+	Reason      string
+	LogPath     string
+	Artifacts   map[string]string
+	StartedAt   time.Time
+	FinishedAt  time.Time
+	ReviewReady bool
+}
+
+func (r RunnerResult) Validate() error {
+	switch r.Status {
+	case RunnerResultCompleted, RunnerResultBlocked, RunnerResultFailed:
+		return nil
+	default:
+		return ErrInvalidRunnerResultStatus
+	}
+}
+
+type AgentRunner interface {
+	Run(ctx context.Context, request RunnerRequest) (RunnerResult, error)
+}
+
+type LoopSummary struct {
+	Completed int
+	Blocked   int
+	Failed    int
+	Skipped   int
+}
+
+func (s LoopSummary) TotalProcessed() int {
+	return s.Completed + s.Blocked + s.Failed + s.Skipped
+}
+
+type EventType string
+
+const (
+	EventTypeTaskStarted     EventType = "task_started"
+	EventTypeTaskFinished    EventType = "task_finished"
+	EventTypeRunnerStarted   EventType = "runner_started"
+	EventTypeRunnerFinished  EventType = "runner_finished"
+	EventTypeReviewStarted   EventType = "review_started"
+	EventTypeReviewFinished  EventType = "review_finished"
+	EventTypeBranchCreated   EventType = "branch_created"
+	EventTypeMergeCompleted  EventType = "merge_completed"
+	EventTypePushCompleted   EventType = "push_completed"
+	EventTypeTaskStatusSet   EventType = "task_status_set"
+	EventTypeTaskDataUpdated EventType = "task_data_updated"
+)
+
+type Event struct {
+	Type      EventType
+	TaskID    string
+	Message   string
+	Metadata  map[string]string
+	Timestamp time.Time
+}
+
+func MarshalEventJSONL(event Event) (string, error) {
+	payload := struct {
+		Type     EventType         `json:"type"`
+		TaskID   string            `json:"task_id"`
+		Message  string            `json:"message,omitempty"`
+		Metadata map[string]string `json:"metadata,omitempty"`
+		TS       string            `json:"ts"`
+	}{
+		Type:     event.Type,
+		TaskID:   event.TaskID,
+		Message:  event.Message,
+		Metadata: event.Metadata,
+		TS:       event.Timestamp.UTC().Format(time.RFC3339),
+	}
+
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return "", err
+	}
+	return string(data) + "\n", nil
+}
+
+type EventSink interface {
+	Emit(ctx context.Context, event Event) error
+}
+
+type AgentLoop interface {
+	Run(ctx context.Context, parentID string) (LoopSummary, error)
+}
+
+type VCS interface {
+	EnsureMain(ctx context.Context) error
+	CreateTaskBranch(ctx context.Context, taskID string) (string, error)
+	Checkout(ctx context.Context, ref string) error
+	CommitAll(ctx context.Context, message string) (string, error)
+	MergeToMain(ctx context.Context, sourceBranch string) error
+	PushBranch(ctx context.Context, branch string) error
+	PushMain(ctx context.Context) error
+}

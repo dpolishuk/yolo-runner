@@ -2,30 +2,12 @@ package tk
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
 	"os/exec"
-	"regexp"
 	"strings"
 
 	"github.com/anomalyco/yolo-runner/internal/runner"
 )
-
-func traceJSONParse(operation string, data []byte, target interface{}) error {
-	if err := json.Unmarshal(data, target); err != nil {
-		fmt.Fprintf(os.Stderr, "JSON parse error in %s: %v\n", operation, err)
-		fmt.Fprintf(os.Stderr, "First 200 bytes: %q\n", string(data[:min(200, len(data))]))
-		return err
-	}
-	return nil
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
 
 type Runner interface {
 	Run(args ...string) (string, error)
@@ -39,158 +21,133 @@ func New(runner Runner) *Adapter {
 	return &Adapter{runner: runner}
 }
 
-// ticket represents a tk ticket for JSON parsing
 type ticket struct {
-	ID          string   `json:"id"`
-	Title       string   `json:"title"`
-	Description string   `json:"description"`
-	Status      string   `json:"status"`
-	Type        string   `json:"type"`
-	Priority    int      `json:"priority"`
-	Parent      string   `json:"parent"`
-	Deps        []string `json:"deps"`
-	Tags        []string `json:"tags"`
+	ID          string `json:"id"`
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	Status      string `json:"status"`
+	Type        string `json:"type"`
+	Priority    any    `json:"priority"`
+	Parent      string `json:"parent"`
 }
 
 func (a *Adapter) Ready(rootID string) (runner.Issue, error) {
-	// Get all open tickets
-	output, err := a.runner.Run("tk", "list", "--status=open")
+	tickets, err := a.queryTickets()
 	if err != nil {
 		return runner.Issue{}, err
 	}
 
-	tickets, err := parseTicketList(output)
+	readyOutput, err := a.runner.Run("tk", "ready")
 	if err != nil {
 		return runner.Issue{}, err
 	}
+	readyIDs := parseReadyIDs(readyOutput)
 
-	// Filter to find tickets that are ready (no unresolved deps) AND are children of rootID
-	var ready []runner.Issue
-	for _, t := range tickets {
-		isTicketReady := isReady(t, tickets)
-		// Check if ticket is the root itself or a child (by parent field or ID prefix)
-		isChildOrRoot := t.ID == rootID || t.Parent == rootID || strings.HasPrefix(t.ID, rootID+".")
-		if isTicketReady && isChildOrRoot {
-			ready = append(ready, ticketToIssue(t))
+	blockedIDs := map[string]struct{}{}
+	blockedOutput, err := a.runner.Run("tk", "blocked")
+	if err == nil {
+		for _, id := range parseReadyIDs(blockedOutput) {
+			blockedIDs[id] = struct{}{}
 		}
 	}
 
-	if len(ready) == 0 {
-		return a.readyFallback(rootID)
+	lookup := map[string]ticket{}
+	for _, t := range tickets {
+		lookup[t.ID] = t
 	}
 
+	var ready []runner.Issue
+	for _, id := range readyIDs {
+		if _, blocked := blockedIDs[id]; blocked {
+			continue
+		}
+		t, ok := lookup[id]
+		if !ok {
+			continue
+		}
+		if t.Type == "epic" || t.Type == "molecule" {
+			continue
+		}
+		if !isDescendantOrSelf(id, rootID, lookup) {
+			continue
+		}
+		ready = append(ready, ticketToIssue(t))
+	}
+
+	if len(ready) == 0 {
+		return a.readyFallback(rootID, lookup)
+	}
 	if len(ready) == 1 {
 		return ready[0], nil
 	}
 
-	return runner.Issue{
-		ID:        rootID,
-		IssueType: "epic",
-		Status:    "open",
-		Children:  ready,
-	}, nil
-}
-
-func isReady(t ticket, allTickets []ticket) bool {
-	if t.Status != "open" {
-		return false
-	}
-
-	// Check if all dependencies are resolved (closed)
-	for _, depID := range t.Deps {
-		for _, other := range allTickets {
-			if other.ID == depID && other.Status != "closed" {
-				return false
-			}
-		}
-	}
-
-	return true
+	return runner.Issue{ID: rootID, IssueType: "epic", Status: "open", Children: ready}, nil
 }
 
 func (a *Adapter) Tree(rootID string) (runner.Issue, error) {
-	// Get the root ticket first
-	root, err := a.showAsIssue(rootID)
+	tickets, err := a.queryTickets()
 	if err != nil {
 		return runner.Issue{}, err
 	}
 
-	// Find all children with this parent
-	children, err := a.findChildren(rootID)
-	if err == nil && len(children) > 0 {
-		root.Children = children
-	}
-
-	return root, nil
-}
-
-func (a *Adapter) findChildren(parentID string) ([]runner.Issue, error) {
-	// List all tickets and find those with this parent
-	output, err := a.runner.Run("tk", "list", "--status=open")
-	if err != nil {
-		return nil, err
-	}
-
-	tickets, err := parseTicketList(output)
-	if err != nil {
-		return nil, err
-	}
-
-	var children []runner.Issue
+	lookup := map[string]ticket{}
 	for _, t := range tickets {
-		if t.Parent == parentID {
-			children = append(children, ticketToIssue(t))
+		lookup[t.ID] = t
+	}
+
+	root, ok := lookup[rootID]
+	if !ok {
+		return runner.Issue{}, nil
+	}
+
+	issue := ticketToIssue(root)
+	for _, t := range tickets {
+		if t.Parent == rootID {
+			issue.Children = append(issue.Children, ticketToIssue(t))
 		}
 	}
 
-	return children, nil
-}
-
-func (a *Adapter) showAsIssue(id string) (runner.Issue, error) {
-	output, err := a.runner.Run("tk", "show", id)
-	if err != nil {
-		return runner.Issue{}, err
-	}
-
-	ticket, err := parseTicket(output)
-	if err != nil {
-		return runner.Issue{}, err
-	}
-
-	return ticketToIssue(ticket), nil
-}
-
-func (a *Adapter) readyFallback(rootID string) (runner.Issue, error) {
-	// If no ready tickets, try to show the root ticket itself
-	issue, err := a.showAsIssue(rootID)
-	if err != nil {
-		return runner.Issue{}, nil
-	}
 	return issue, nil
 }
 
 func (a *Adapter) Show(id string) (runner.Bead, error) {
-	output, err := a.runner.Run("tk", "show", id)
-	if err != nil {
+	// Keep an explicit tk show call for detail retrieval flow and parity with CLI behavior.
+	if _, err := a.runner.Run("tk", "show", id); err != nil {
 		return runner.Bead{}, err
 	}
 
-	ticket, err := parseTicket(output)
+	tickets, err := a.queryTickets()
 	if err != nil {
 		return runner.Bead{}, err
 	}
+	for _, t := range tickets {
+		if t.ID == id {
+			return runner.Bead{
+				ID:                 t.ID,
+				Title:              t.Title,
+				Description:        t.Description,
+				AcceptanceCriteria: "",
+				Status:             t.Status,
+			}, nil
+		}
+	}
 
-	return runner.Bead{
-		ID:                 ticket.ID,
-		Title:              ticket.Title,
-		Description:        ticket.Description,
-		AcceptanceCriteria: "", // TK doesn't have explicit acceptance criteria field
-		Status:             ticket.Status,
-	}, nil
+	return runner.Bead{}, nil
 }
 
 func (a *Adapter) UpdateStatus(id string, status string) error {
-	_, err := a.runner.Run("tk", "status", id, status)
+	cmd := []string{"tk", "status", id, status}
+	switch status {
+	case "closed":
+		cmd = []string{"tk", "close", id}
+	case "open":
+		cmd = []string{"tk", "reopen", id}
+	case "in_progress":
+		cmd = []string{"tk", "start", id}
+	case "blocked", "failed":
+		cmd = []string{"tk", "status", id, "open"}
+	}
+	_, err := a.runner.Run(cmd...)
 	return err
 }
 
@@ -203,10 +160,132 @@ func (a *Adapter) UpdateStatusWithReason(id string, status string, reason string
 	if sanitized == "" {
 		return nil
 	}
+	if status == "blocked" || status == "failed" {
+		sanitized = status + ": " + sanitized
+	}
 
-	// TK doesn't have notes, so we append to description
-	_, err := a.runner.Run("tk", "show", id)
+	_, err := a.runner.Run("tk", "add-note", id, sanitized)
 	return err
+}
+
+func (a *Adapter) Close(id string) error {
+	_, err := a.runner.Run("tk", "close", id)
+	return err
+}
+
+func (a *Adapter) CloseEligible() error {
+	return nil
+}
+
+func (a *Adapter) Sync() error {
+	return nil
+}
+
+func (a *Adapter) queryTickets() ([]ticket, error) {
+	output, err := a.runner.Run("tk", "query")
+	if err != nil {
+		return nil, err
+	}
+
+	return parseTicketQuery(output)
+}
+
+func parseTicketQuery(output string) ([]ticket, error) {
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	result := make([]ticket, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var t ticket
+		if err := json.Unmarshal([]byte(line), &t); err != nil {
+			return nil, err
+		}
+		result = append(result, t)
+	}
+	return result, nil
+}
+
+func parseReadyIDs(output string) []string {
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	ids := make([]string, 0, len(lines))
+	for _, line := range lines {
+		fields := strings.Fields(strings.TrimSpace(line))
+		if len(fields) == 0 {
+			continue
+		}
+		ids = append(ids, fields[0])
+	}
+	return ids
+}
+
+func isDescendantOrSelf(id string, rootID string, lookup map[string]ticket) bool {
+	if id == rootID {
+		return true
+	}
+	current, ok := lookup[id]
+	if !ok {
+		return false
+	}
+	parent := current.Parent
+	for parent != "" {
+		if parent == rootID {
+			return true
+		}
+		next, exists := lookup[parent]
+		if !exists {
+			break
+		}
+		parent = next.Parent
+	}
+	return false
+}
+
+func (a *Adapter) readyFallback(rootID string, lookup map[string]ticket) (runner.Issue, error) {
+	t, ok := lookup[rootID]
+	if !ok {
+		return runner.Issue{}, nil
+	}
+	issue := ticketToIssue(t)
+	if issue.Status != "open" {
+		return runner.Issue{}, nil
+	}
+	if issue.IssueType == "epic" || issue.IssueType == "molecule" {
+		return runner.Issue{}, nil
+	}
+	return issue, nil
+}
+
+func ticketToIssue(t ticket) runner.Issue {
+	priority := ticketPriority(t.Priority)
+	return runner.Issue{
+		ID:        t.ID,
+		IssueType: t.Type,
+		Status:    t.Status,
+		Priority:  &priority,
+	}
+}
+
+func ticketPriority(raw any) int {
+	switch value := raw.(type) {
+	case float64:
+		return int(value)
+	case string:
+		if value == "" {
+			return 0
+		}
+		result := 0
+		for _, ch := range value {
+			if ch < '0' || ch > '9' {
+				return result
+			}
+			result = result*10 + int(ch-'0')
+		}
+		return result
+	default:
+		return 0
+	}
 }
 
 func sanitizeReason(reason string) string {
@@ -238,122 +317,10 @@ func truncateRunes(input string, maxRunes int) string {
 	return input
 }
 
-func (a *Adapter) Close(id string) error {
-	_, err := a.runner.Run("tk", "close", id)
-	return err
-}
-
-func (a *Adapter) CloseEligible() error {
-	// TK doesn't have an explicit close-eligible command
-	// This is a no-op for now
-	return nil
-}
-
-func (a *Adapter) Sync() error {
-	// TK is local-only, no sync needed
-	return nil
-}
-
-// Helper functions
-
-func ticketToIssue(t ticket) runner.Issue {
-	priority := t.Priority
-	return runner.Issue{
-		ID:        t.ID,
-		IssueType: t.Type,
-		Status:    t.Status,
-		Priority:  &priority,
-	}
-}
-
-func parseTicketList(output string) ([]ticket, error) {
-	lines := strings.Split(strings.TrimSpace(output), "\n")
-	var tickets []ticket
-
-	for _, line := range lines {
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
-
-		// Try to parse as JSON
-		var t ticket
-		if err := json.Unmarshal([]byte(line), &t); err == nil {
-			tickets = append(tickets, t)
-			continue
-		}
-
-		// Parse tk list format: "ID [status] - Title"
-		// Example: yolo-runner-127.3.6 [open] - Remove direct tool call echoing...
-		re := regexp.MustCompile(`^(\S+)\s+\[(\w+)\]\s+-\s+(.*)$`)
-		matches := re.FindStringSubmatch(line)
-		if len(matches) >= 3 {
-			t := ticket{
-				ID:     matches[1],
-				Status: matches[2],
-				Type:   "task", // Default to task since tk list doesn't show type
-			}
-			if len(matches) > 3 {
-				t.Title = matches[3]
-			}
-			tickets = append(tickets, t)
-			continue
-		}
-
-		// Fallback: parse simple format "ID Title"
-		parts := strings.SplitN(line, " ", 2)
-		if len(parts) >= 1 {
-			t := ticket{
-				ID: parts[0],
-			}
-			if len(parts) > 1 {
-				t.Title = parts[1]
-			}
-			tickets = append(tickets, t)
-		}
-	}
-
-	return tickets, nil
-}
-
-func parseTicket(output string) (ticket, error) {
-	// Try JSON first
-	var t ticket
-	if err := json.Unmarshal([]byte(output), &t); err == nil {
-		return t, nil
-	}
-
-	// Fallback: parse text format
-	t = ticket{}
-	lines := strings.Split(output, "\n")
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "ID: ") {
-			t.ID = strings.TrimPrefix(line, "ID: ")
-		} else if strings.HasPrefix(line, "Title: ") {
-			t.Title = strings.TrimPrefix(line, "Title: ")
-		} else if strings.HasPrefix(line, "Status: ") {
-			t.Status = strings.TrimPrefix(line, "Status: ")
-		} else if strings.HasPrefix(line, "Type: ") {
-			t.Type = strings.TrimPrefix(line, "Type: ")
-		}
-	}
-
-	return t, nil
-}
-
-// IsAvailable checks if tk is available in the system
 func IsAvailable() bool {
-	// Check for .tickets directory (where tk stores tickets)
-	_, err := os.Stat(".tickets")
-	if err == nil {
+	if _, err := os.Stat(".tickets"); err == nil {
 		return true
 	}
-
-	// Also check if tk command exists in PATH
-	_, err = exec.LookPath("tk")
-	if err == nil {
-		return true
-	}
-
-	return false
+	_, err := exec.LookPath("tk")
+	return err == nil
 }

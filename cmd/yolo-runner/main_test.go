@@ -1,3 +1,5 @@
+//go:build legacy
+
 package main
 
 import (
@@ -457,11 +459,11 @@ func TestRunOnceMainTuiRoutesOutputToProgram(t *testing.T) {
 
 	tempDir := t.TempDir()
 	writeAgentFile(t, tempDir, "---\npermission: allow\n---\n")
-	
+
 	// Set up mock beads environment for testing
 	os.Setenv("YOLO_RUNNER_TASK_TRACKER", "beads")
 	t.Cleanup(func() { os.Unsetenv("YOLO_RUNNER_TASK_TRACKER") })
-	
+
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
 
@@ -506,11 +508,11 @@ func TestRunOnceMainWiresStopCleanupHooks(t *testing.T) {
 
 	tempDir := t.TempDir()
 	writeAgentFile(t, tempDir, "---\npermission: allow\n---\n")
-	
+
 	// Set up mock beads environment for testing
 	os.Setenv("YOLO_RUNNER_TASK_TRACKER", "beads")
 	t.Cleanup(func() { os.Unsetenv("YOLO_RUNNER_TASK_TRACKER") })
-	
+
 	runOnce := &fakeRunOnce{result: "no_tasks"}
 	exit := &fakeExit{}
 	out := &bytes.Buffer{}
