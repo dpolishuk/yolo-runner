@@ -1,0 +1,25 @@
+# v2 CLI Migration
+
+`yolo-runner` remains available in compatibility mode, but new workflows should use the split v2 CLIs:
+
+- `yolo-agent`: orchestrates task loop execution
+- `yolo-task`: task-tracker facade operations
+- `yolo-tui`: read-only event monitor for agent/runner logs
+
+## Command Mapping
+
+- Old: `yolo-runner --repo . --root <id> --model <model>`
+- New: `yolo-agent --repo . --root <id> --model <model>`
+
+- Old task-state operations via embedded behavior
+- New explicit tracker facade:
+  - `yolo-task next --root <id>`
+  - `yolo-task status --id <task> --status <open|in_progress|blocked|closed|failed>`
+  - `yolo-task data --id <task> --set key=value`
+
+- Old TUI behavior in `yolo-runner`
+- New read-only monitor: `yolo-tui --events runner-logs/agent.events.jsonl`
+
+## Compatibility Behavior
+
+Invoking `yolo-runner` prints a compatibility notice and continues to run, so existing scripts are preserved while migration proceeds.

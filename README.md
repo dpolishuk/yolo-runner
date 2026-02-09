@@ -2,6 +2,16 @@
 
 Runs OpenCode in YOLO mode against a single bead task at a time. The runner owns task selection, status updates, and logging; the agent only executes the task it is given.
 
+## v2 Migration
+
+The repo now supports split v2 CLIs:
+
+- `yolo-agent` for orchestration
+- `yolo-task` for task manager operations
+- `yolo-tui` for read-only event monitoring
+
+See `MIGRATION.md` for command mapping and compatibility details.
+
 ## Location
 
 - Canonical script: `tools/yolo-runner/beads_yolo_runner.py`

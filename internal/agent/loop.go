@@ -57,6 +57,7 @@ func (l *Loop) Run(ctx context.Context) (contracts.LoopSummary, error) {
 		if err != nil {
 			return summary, err
 		}
+		_ = l.emit(ctx, contracts.Event{Type: contracts.EventTypeTaskStarted, TaskID: task.ID, Message: task.Title, Timestamp: time.Now().UTC()})
 
 		if l.options.DryRun {
 			summary.Skipped++
@@ -84,6 +85,7 @@ func (l *Loop) Run(ctx context.Context) (contracts.LoopSummary, error) {
 				return summary, err
 			}
 
+			_ = l.emit(ctx, contracts.Event{Type: contracts.EventTypeRunnerStarted, TaskID: task.ID, Message: string(contracts.RunnerModeImplement), Timestamp: time.Now().UTC()})
 			result, err := l.runner.Run(ctx, contracts.RunnerRequest{
 				TaskID:   task.ID,
 				ParentID: l.options.ParentID,
@@ -96,8 +98,10 @@ func (l *Loop) Run(ctx context.Context) (contracts.LoopSummary, error) {
 			if err != nil {
 				return summary, err
 			}
+			_ = l.emit(ctx, contracts.Event{Type: contracts.EventTypeRunnerFinished, TaskID: task.ID, Message: string(result.Status), Timestamp: time.Now().UTC()})
 
 			if result.Status == contracts.RunnerResultCompleted && l.options.RequireReview {
+				_ = l.emit(ctx, contracts.Event{Type: contracts.EventTypeReviewStarted, TaskID: task.ID, Timestamp: time.Now().UTC()})
 				reviewResult, reviewErr := l.runner.Run(ctx, contracts.RunnerRequest{
 					TaskID:   task.ID,
 					ParentID: l.options.ParentID,
@@ -110,6 +114,7 @@ func (l *Loop) Run(ctx context.Context) (contracts.LoopSummary, error) {
 				if reviewErr != nil {
 					return summary, reviewErr
 				}
+				_ = l.emit(ctx, contracts.Event{Type: contracts.EventTypeReviewFinished, TaskID: task.ID, Message: string(reviewResult.Status), Timestamp: time.Now().UTC()})
 				if reviewResult.Status != contracts.RunnerResultCompleted {
 					result = reviewResult
 				}
@@ -128,11 +133,13 @@ func (l *Loop) Run(ctx context.Context) (contracts.LoopSummary, error) {
 				if err := l.tasks.SetTaskStatus(ctx, task.ID, contracts.TaskStatusClosed); err != nil {
 					return summary, err
 				}
+				_ = l.emit(ctx, contracts.Event{Type: contracts.EventTypeTaskFinished, TaskID: task.ID, Message: string(contracts.TaskStatusClosed), Timestamp: time.Now().UTC()})
 				summary.Completed++
 			case contracts.RunnerResultBlocked:
 				if err := l.tasks.SetTaskStatus(ctx, task.ID, contracts.TaskStatusBlocked); err != nil {
 					return summary, err
 				}
+				_ = l.emit(ctx, contracts.Event{Type: contracts.EventTypeTaskFinished, TaskID: task.ID, Message: string(contracts.TaskStatusBlocked), Timestamp: time.Now().UTC()})
 				if result.Reason != "" {
 					if err := l.tasks.SetTaskData(ctx, task.ID, map[string]string{"blocked_reason": result.Reason}); err != nil {
 						return summary, err
@@ -153,16 +160,25 @@ func (l *Loop) Run(ctx context.Context) (contracts.LoopSummary, error) {
 				if err := l.tasks.SetTaskStatus(ctx, task.ID, contracts.TaskStatusFailed); err != nil {
 					return summary, err
 				}
+				_ = l.emit(ctx, contracts.Event{Type: contracts.EventTypeTaskFinished, TaskID: task.ID, Message: string(contracts.TaskStatusFailed), Timestamp: time.Now().UTC()})
 				summary.Failed++
 			default:
 				if err := l.tasks.SetTaskStatus(ctx, task.ID, contracts.TaskStatusFailed); err != nil {
 					return summary, err
 				}
+				_ = l.emit(ctx, contracts.Event{Type: contracts.EventTypeTaskFinished, TaskID: task.ID, Message: string(contracts.TaskStatusFailed), Timestamp: time.Now().UTC()})
 				summary.Failed++
 			}
 			break
 		}
 	}
+}
+
+func (l *Loop) emit(ctx context.Context, event contracts.Event) error {
+	if l.events == nil {
+		return nil
+	}
+	return l.events.Emit(ctx, event)
 }
 
 func buildPrompt(task contracts.Task, mode contracts.RunnerMode) string {

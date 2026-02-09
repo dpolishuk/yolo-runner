@@ -1,0 +1,99 @@
+package monitor
+
+import (
+	"fmt"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/anomalyco/yolo-runner/internal/contracts"
+)
+
+type Model struct {
+	now          func() time.Time
+	currentTask  string
+	phase        string
+	lastOutputAt time.Time
+	history      []string
+}
+
+func NewModel(now func() time.Time) *Model {
+	if now == nil {
+		now = time.Now
+	}
+	return &Model{now: now, history: []string{}}
+}
+
+func (m *Model) Apply(event contracts.Event) {
+	if event.TaskID != "" {
+		m.currentTask = event.TaskID
+	}
+	if event.Type != "" {
+		m.phase = string(event.Type)
+	}
+	if !event.Timestamp.IsZero() {
+		m.lastOutputAt = event.Timestamp
+	} else {
+		m.lastOutputAt = m.now()
+	}
+	line := renderHistoryLine(event)
+	if line != "" {
+		m.history = append(m.history, line)
+	}
+}
+
+func (m *Model) View() string {
+	age := "n/a"
+	if !m.lastOutputAt.IsZero() {
+		seconds := int(m.now().Sub(m.lastOutputAt).Round(time.Second).Seconds())
+		if seconds < 0 {
+			seconds = 0
+		}
+		age = fmt.Sprintf("%ds", seconds)
+	}
+	lines := []string{
+		"Current Task: " + emptyAsNA(m.currentTask),
+		"Phase: " + emptyAsNA(m.phase),
+		"Last Output Age: " + age,
+		"History:",
+	}
+	lines = append(lines, m.history...)
+	return strings.Join(lines, "\n") + "\n"
+}
+
+func emptyAsNA(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return "n/a"
+	}
+	return value
+}
+
+func renderHistoryLine(event contracts.Event) string {
+	parts := []string{}
+	if !event.Timestamp.IsZero() {
+		parts = append(parts, event.Timestamp.UTC().Format(time.RFC3339))
+	}
+	if event.Type != "" {
+		parts = append(parts, string(event.Type))
+	}
+	if event.TaskID != "" {
+		parts = append(parts, event.TaskID)
+	}
+	if event.Message != "" {
+		parts = append(parts, event.Message)
+	}
+	if len(event.Metadata) > 0 {
+		keys := make([]string, 0, len(event.Metadata))
+		for key := range event.Metadata {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			parts = append(parts, key+"="+event.Metadata[key])
+		}
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "- " + strings.Join(parts, " | ")
+}

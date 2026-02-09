@@ -1,6 +1,6 @@
 ---
 id: yr-pny8
-status: open
+status: closed
 deps: [yr-smft, yr-8btw]
 links: []
 created: 2026-02-09T21:10:21Z

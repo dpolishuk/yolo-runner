@@ -377,3 +377,46 @@ func TestLoopBuildsRunnerRequestWithRepoAndModel(t *testing.T) {
 		t.Fatalf("expected timeout=3, got %s", req.Timeout)
 	}
 }
+
+func TestLoopEmitsLifecycleEvents(t *testing.T) {
+	mgr := newFakeTaskManager(contracts.Task{ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen})
+	run := &fakeRunner{results: []contracts.RunnerResult{{Status: contracts.RunnerResultCompleted}}}
+	sink := &recordingSink{}
+	loop := NewLoop(mgr, run, sink, LoopOptions{ParentID: "root"})
+
+	_, err := loop.Run(context.Background())
+	if err != nil {
+		t.Fatalf("loop failed: %v", err)
+	}
+	if len(sink.events) == 0 {
+		t.Fatalf("expected emitted events")
+	}
+	if sink.events[0].Type != contracts.EventTypeTaskStarted {
+		t.Fatalf("expected first event task_started, got %s", sink.events[0].Type)
+	}
+	if !hasEventType(sink.events, contracts.EventTypeRunnerStarted) {
+		t.Fatalf("expected runner_started event")
+	}
+	if !hasEventType(sink.events, contracts.EventTypeRunnerFinished) {
+		t.Fatalf("expected runner_finished event")
+	}
+	if !hasEventType(sink.events, contracts.EventTypeTaskFinished) {
+		t.Fatalf("expected task_finished event")
+	}
+}
+
+func hasEventType(events []contracts.Event, eventType contracts.EventType) bool {
+	for _, event := range events {
+		if event.Type == eventType {
+			return true
+		}
+	}
+	return false
+}
+
+type recordingSink struct{ events []contracts.Event }
+
+func (r *recordingSink) Emit(_ context.Context, event contracts.Event) error {
+	r.events = append(r.events, event)
+	return nil
+}

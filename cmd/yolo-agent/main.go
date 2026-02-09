@@ -23,6 +23,7 @@ type runConfig struct {
 	maxTasks      int
 	dryRun        bool
 	runnerTimeout time.Duration
+	eventsPath    string
 }
 
 func RunMain(args []string, run func(context.Context, runConfig) error) int {
@@ -33,6 +34,7 @@ func RunMain(args []string, run func(context.Context, runConfig) error) int {
 	max := fs.Int("max", 0, "Maximum tasks to execute")
 	dryRun := fs.Bool("dry-run", false, "Dry run task loop")
 	runnerTimeout := fs.Duration("runner-timeout", 0, "Per runner execution timeout")
+	events := fs.String("events", "", "Path to JSONL events log")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -52,6 +54,7 @@ func RunMain(args []string, run func(context.Context, runConfig) error) int {
 		maxTasks:      *max,
 		dryRun:        *dryRun,
 		runnerTimeout: *runnerTimeout,
+		eventsPath:    *events,
 	}); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
@@ -67,6 +70,9 @@ func defaultRun(ctx context.Context, cfg runConfig) error {
 	if err := os.Chdir(cfg.repoRoot); err != nil {
 		return err
 	}
+	if cfg.eventsPath == "" {
+		cfg.eventsPath = filepath.Join(cfg.repoRoot, "runner-logs", "agent.events.jsonl")
+	}
 
 	tkRunner := localRunner{dir: cfg.repoRoot}
 	taskManager := tk.NewTaskManager(tkRunner)
@@ -76,7 +82,11 @@ func defaultRun(ctx context.Context, cfg runConfig) error {
 }
 
 func runWithComponents(ctx context.Context, cfg runConfig, taskManager contracts.TaskManager, runner contracts.AgentRunner, vcs contracts.VCS) error {
-	loop := agent.NewLoop(taskManager, runner, nil, agent.LoopOptions{
+	eventSink := contracts.EventSink(nil)
+	if cfg.eventsPath != "" {
+		eventSink = contracts.NewFileEventSink(cfg.eventsPath)
+	}
+	loop := agent.NewLoop(taskManager, runner, eventSink, agent.LoopOptions{
 		ParentID:       cfg.rootID,
 		MaxTasks:       cfg.maxTasks,
 		DryRun:         cfg.dryRun,

@@ -144,6 +144,9 @@ func (o openCodeAdapter) RunWithContext(ctx context.Context, issueID string, rep
 }
 
 func RunOnceMain(args []string, runOnce runOnceFunc, exit exitFunc, stdout io.Writer, stderr io.Writer, beadsRunner beadsRunner, gitRunner gitRunner) int {
+	if stderr != nil {
+		fmt.Fprintln(stderr, compatibilityNotice())
+	}
 	if len(args) > 0 && args[0] == "init" {
 		return InitMain(args[1:], exit, stderr)
 	}
@@ -324,6 +327,10 @@ func RunOnceMain(args []string, runOnce runOnceFunc, exit exitFunc, stdout io.Wr
 		exit(0)
 	}
 	return 0
+}
+
+func compatibilityNotice() string {
+	return "yolo-runner compatibility mode: prefer yolo-agent for orchestration, yolo-task for tracker actions, and yolo-tui for read-only monitoring"
 }
 
 func main() {
