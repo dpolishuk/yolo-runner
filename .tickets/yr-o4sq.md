@@ -1,6 +1,6 @@
 ---
 id: yr-o4sq
-status: in_progress
+status: closed
 deps: []
 links: []
 created: 2026-02-10T08:17:26Z
