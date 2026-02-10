@@ -13,7 +13,7 @@ import (
 	"github.com/anomalyco/yolo-runner/internal/contracts"
 )
 
-type runWithACPFunc func(ctx context.Context, issueID string, repoRoot string, prompt string, model string, configRoot string, configDir string, logPath string, runner Runner, acpClient ACPClient) error
+type runWithACPFunc func(ctx context.Context, issueID string, repoRoot string, prompt string, model string, configRoot string, configDir string, logPath string, runner Runner, acpClient ACPClient, onUpdate func(string)) error
 
 type CLIRunnerAdapter struct {
 	runner     Runner
@@ -31,7 +31,7 @@ func NewCLIRunnerAdapter(runner Runner, acpClient ACPClient, configRoot string, 
 		acpClient:  acpClient,
 		configRoot: configRoot,
 		configDir:  configDir,
-		runWithACP: RunWithACP,
+		runWithACP: RunWithACPAndUpdates,
 	}
 }
 
@@ -47,15 +47,21 @@ func (a *CLIRunnerAdapter) Run(ctx context.Context, request contracts.RunnerRequ
 
 	run := a.runWithACP
 	if run == nil {
-		run = RunWithACP
+		run = RunWithACPAndUpdates
 	}
+	progress := request.OnProgress
 	runCtx := ctx
 	var cancel context.CancelFunc
 	if request.Timeout > 0 {
 		runCtx, cancel = context.WithTimeout(ctx, request.Timeout)
 		defer cancel()
 	}
-	err := run(runCtx, request.TaskID, request.RepoRoot, request.Prompt, request.Model, a.configRoot, a.configDir, logPath, a.runner, a.acpClient)
+	err := run(runCtx, request.TaskID, request.RepoRoot, request.Prompt, request.Model, a.configRoot, a.configDir, logPath, a.runner, a.acpClient, func(line string) {
+		if progress == nil {
+			return
+		}
+		progress(contracts.RunnerProgress{Type: "acp_update", Message: line, Timestamp: time.Now().UTC()})
+	})
 
 	result := contracts.RunnerResult{
 		LogPath:    logPath,

@@ -47,14 +47,22 @@ const (
 )
 
 type RunnerRequest struct {
-	TaskID   string
-	ParentID string
-	Prompt   string
-	Mode     RunnerMode
-	Model    string
-	RepoRoot string
-	Timeout  time.Duration
-	Metadata map[string]string
+	TaskID     string
+	ParentID   string
+	Prompt     string
+	Mode       RunnerMode
+	Model      string
+	RepoRoot   string
+	Timeout    time.Duration
+	Metadata   map[string]string
+	OnProgress func(RunnerProgress)
+}
+
+type RunnerProgress struct {
+	Type      string
+	Message   string
+	Metadata  map[string]string
+	Timestamp time.Time
 }
 
 type RunnerResultStatus string
@@ -108,6 +116,7 @@ const (
 	EventTypeTaskFinished    EventType = "task_finished"
 	EventTypeRunnerStarted   EventType = "runner_started"
 	EventTypeRunnerFinished  EventType = "runner_finished"
+	EventTypeRunnerProgress  EventType = "runner_progress"
 	EventTypeReviewStarted   EventType = "review_started"
 	EventTypeReviewFinished  EventType = "review_finished"
 	EventTypeBranchCreated   EventType = "branch_created"

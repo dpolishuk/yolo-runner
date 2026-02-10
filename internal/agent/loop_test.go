@@ -203,15 +203,21 @@ func (f *fakeTaskManager) SetTaskData(_ context.Context, taskID string, data map
 }
 
 type fakeRunner struct {
-	results  []contracts.RunnerResult
-	idx      int
-	modes    []contracts.RunnerMode
-	requests []contracts.RunnerRequest
+	results          []contracts.RunnerResult
+	idx              int
+	modes            []contracts.RunnerMode
+	requests         []contracts.RunnerRequest
+	progressMessages []string
 }
 
 func (f *fakeRunner) Run(_ context.Context, request contracts.RunnerRequest) (contracts.RunnerResult, error) {
 	f.modes = append(f.modes, request.Mode)
 	f.requests = append(f.requests, request)
+	if request.OnProgress != nil {
+		for _, message := range f.progressMessages {
+			request.OnProgress(contracts.RunnerProgress{Type: "acp_update", Message: message, Timestamp: time.Now().UTC()})
+		}
+	}
 	if f.idx >= len(f.results) {
 		return contracts.RunnerResult{Status: contracts.RunnerResultFailed, Reason: "missing result"}, nil
 	}
@@ -499,6 +505,25 @@ func TestLoopEmitsParallelContextInRunnerStartedEvent(t *testing.T) {
 	}
 }
 
+func TestLoopEmitsRunnerProgressEventsFromRunnerCallback(t *testing.T) {
+	mgr := newFakeTaskManager(contracts.Task{ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen})
+	run := &fakeRunner{results: []contracts.RunnerResult{{Status: contracts.RunnerResultCompleted}}, progressMessages: []string{"tool started", "tool done"}}
+	sink := &recordingSink{}
+	loop := NewLoop(mgr, run, sink, LoopOptions{ParentID: "root"})
+
+	_, err := loop.Run(context.Background())
+	if err != nil {
+		t.Fatalf("loop failed: %v", err)
+	}
+	progressEvents := eventsByType(sink.events, contracts.EventTypeRunnerProgress)
+	if len(progressEvents) != 2 {
+		t.Fatalf("expected 2 runner progress events, got %d", len(progressEvents))
+	}
+	if progressEvents[0].Message != "tool started" || progressEvents[1].Message != "tool done" {
+		t.Fatalf("unexpected progress messages: %#v", progressEvents)
+	}
+}
+
 func TestLoopHonorsConcurrencyLimit(t *testing.T) {
 	mgr := newFakeTaskManager(
 		contracts.Task{ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen},
@@ -762,6 +787,16 @@ func findEventByType(events []contracts.Event, eventType contracts.EventType) (c
 		}
 	}
 	return contracts.Event{}, false
+}
+
+func eventsByType(events []contracts.Event, eventType contracts.EventType) []contracts.Event {
+	result := []contracts.Event{}
+	for _, event := range events {
+		if event.Type == eventType {
+			result = append(result, event)
+		}
+	}
+	return result
 }
 
 type recordingSink struct{ events []contracts.Event }

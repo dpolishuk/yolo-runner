@@ -17,7 +17,7 @@ func TestCLIRunnerAdapterImplementsContract(t *testing.T) {
 }
 
 func TestCLIRunnerAdapterMapsSuccessToCompleted(t *testing.T) {
-	adapter := &CLIRunnerAdapter{runWithACP: func(context.Context, string, string, string, string, string, string, string, Runner, ACPClient) error {
+	adapter := &CLIRunnerAdapter{runWithACP: func(context.Context, string, string, string, string, string, string, string, Runner, ACPClient, func(string)) error {
 		return nil
 	}}
 
@@ -31,7 +31,7 @@ func TestCLIRunnerAdapterMapsSuccessToCompleted(t *testing.T) {
 }
 
 func TestCLIRunnerAdapterMapsStallToBlocked(t *testing.T) {
-	adapter := &CLIRunnerAdapter{runWithACP: func(context.Context, string, string, string, string, string, string, string, Runner, ACPClient) error {
+	adapter := &CLIRunnerAdapter{runWithACP: func(context.Context, string, string, string, string, string, string, string, Runner, ACPClient, func(string)) error {
 		return &StallError{Category: "no_output"}
 	}}
 
@@ -45,7 +45,7 @@ func TestCLIRunnerAdapterMapsStallToBlocked(t *testing.T) {
 }
 
 func TestCLIRunnerAdapterMapsGenericErrorToFailed(t *testing.T) {
-	adapter := &CLIRunnerAdapter{runWithACP: func(context.Context, string, string, string, string, string, string, string, Runner, ACPClient) error {
+	adapter := &CLIRunnerAdapter{runWithACP: func(context.Context, string, string, string, string, string, string, string, Runner, ACPClient, func(string)) error {
 		return errors.New("boom")
 	}}
 
@@ -59,7 +59,7 @@ func TestCLIRunnerAdapterMapsGenericErrorToFailed(t *testing.T) {
 }
 
 func TestCLIRunnerAdapterAppliesRequestTimeoutToRunContext(t *testing.T) {
-	adapter := &CLIRunnerAdapter{runWithACP: func(ctx context.Context, issueID string, repoRoot string, prompt string, model string, configRoot string, configDir string, logPath string, _ Runner, _ ACPClient) error {
+	adapter := &CLIRunnerAdapter{runWithACP: func(ctx context.Context, issueID string, repoRoot string, prompt string, model string, configRoot string, configDir string, logPath string, _ Runner, _ ACPClient, _ func(string)) error {
 		deadline, ok := ctx.Deadline()
 		if !ok {
 			t.Fatalf("expected timeout deadline on context")
@@ -80,7 +80,7 @@ func TestCLIRunnerAdapterAppliesRequestTimeoutToRunContext(t *testing.T) {
 }
 
 func TestCLIRunnerAdapterMapsDeadlineExceededToBlockedTimeout(t *testing.T) {
-	adapter := &CLIRunnerAdapter{runWithACP: func(context.Context, string, string, string, string, string, string, string, Runner, ACPClient) error {
+	adapter := &CLIRunnerAdapter{runWithACP: func(context.Context, string, string, string, string, string, string, string, Runner, ACPClient, func(string)) error {
 		return context.DeadlineExceeded
 	}}
 
@@ -97,7 +97,7 @@ func TestCLIRunnerAdapterMapsDeadlineExceededToBlockedTimeout(t *testing.T) {
 }
 
 func TestCLIRunnerAdapterMapsInitFailureToFailed(t *testing.T) {
-	adapter := &CLIRunnerAdapter{runWithACP: func(context.Context, string, string, string, string, string, string, string, Runner, ACPClient) error {
+	adapter := &CLIRunnerAdapter{runWithACP: func(context.Context, string, string, string, string, string, string, string, Runner, ACPClient, func(string)) error {
 		return errors.New("serena initialization failed: missing config")
 	}}
 
@@ -116,7 +116,7 @@ func TestCLIRunnerAdapterMapsInitFailureToFailed(t *testing.T) {
 func TestCLIRunnerAdapterSetsReviewReadyFromStructuredPassVerdict(t *testing.T) {
 	tmp := t.TempDir()
 	logPath := filepath.Join(tmp, "review.jsonl")
-	adapter := &CLIRunnerAdapter{runWithACP: func(context.Context, string, string, string, string, string, string, string, Runner, ACPClient) error {
+	adapter := &CLIRunnerAdapter{runWithACP: func(context.Context, string, string, string, string, string, string, string, Runner, ACPClient, func(string)) error {
 		line := "{\"message\":\"agent_message \\\"REVIEW_VERDICT: pass\\\\n\\\"\"}\n"
 		return os.WriteFile(logPath, []byte(line), 0o644)
 	}}
@@ -136,7 +136,7 @@ func TestCLIRunnerAdapterSetsReviewReadyFromStructuredPassVerdict(t *testing.T) 
 func TestCLIRunnerAdapterLeavesReviewReadyFalseWhenVerdictMissing(t *testing.T) {
 	tmp := t.TempDir()
 	logPath := filepath.Join(tmp, "review.jsonl")
-	adapter := &CLIRunnerAdapter{runWithACP: func(context.Context, string, string, string, string, string, string, string, Runner, ACPClient) error {
+	adapter := &CLIRunnerAdapter{runWithACP: func(context.Context, string, string, string, string, string, string, string, Runner, ACPClient, func(string)) error {
 		line := "{\"message\":\"agent_message \\\"Looks good to me\\\\n\\\"\"}\n"
 		return os.WriteFile(logPath, []byte(line), 0o644)
 	}}
@@ -156,7 +156,7 @@ func TestCLIRunnerAdapterLeavesReviewReadyFalseWhenVerdictMissing(t *testing.T) 
 func TestCLIRunnerAdapterLeavesReviewReadyFalseWhenStructuredVerdictFails(t *testing.T) {
 	tmp := t.TempDir()
 	logPath := filepath.Join(tmp, "review.jsonl")
-	adapter := &CLIRunnerAdapter{runWithACP: func(context.Context, string, string, string, string, string, string, string, Runner, ACPClient) error {
+	adapter := &CLIRunnerAdapter{runWithACP: func(context.Context, string, string, string, string, string, string, string, Runner, ACPClient, func(string)) error {
 		line := "{\"message\":\"agent_message \\\"REVIEW_VERDICT: fail\\\\n\\\"\"}\n"
 		return os.WriteFile(logPath, []byte(line), 0o644)
 	}}
@@ -176,7 +176,7 @@ func TestCLIRunnerAdapterLeavesReviewReadyFalseWhenStructuredVerdictFails(t *tes
 func TestCLIRunnerAdapterLeavesReviewReadyFalseWhenOnlyPassFailTemplatePresent(t *testing.T) {
 	tmp := t.TempDir()
 	logPath := filepath.Join(tmp, "review.jsonl")
-	adapter := &CLIRunnerAdapter{runWithACP: func(context.Context, string, string, string, string, string, string, string, Runner, ACPClient) error {
+	adapter := &CLIRunnerAdapter{runWithACP: func(context.Context, string, string, string, string, string, string, string, Runner, ACPClient, func(string)) error {
 		line := "{\"message\":\"agent_message \\\"Respond with REVIEW_VERDICT: pass/fail and explain why\\\\n\\\"\"}\n"
 		return os.WriteFile(logPath, []byte(line), 0o644)
 	}}
@@ -190,5 +190,34 @@ func TestCLIRunnerAdapterLeavesReviewReadyFalseWhenOnlyPassFailTemplatePresent(t
 	}
 	if result.ReviewReady {
 		t.Fatalf("expected ReviewReady=false when only pass/fail template appears")
+	}
+}
+
+func TestCLIRunnerAdapterForwardsACPUpdatesToProgressCallback(t *testing.T) {
+	seen := []string{}
+	adapter := &CLIRunnerAdapter{runWithACP: func(ctx context.Context, issueID string, repoRoot string, prompt string, model string, configRoot string, configDir string, logPath string, runner Runner, acpClient ACPClient, onUpdate func(string)) error {
+		if onUpdate != nil {
+			onUpdate("tool call started")
+			onUpdate("tool call completed")
+		}
+		return nil
+	}}
+
+	result, err := adapter.Run(context.Background(), contracts.RunnerRequest{
+		TaskID:   "t-1",
+		RepoRoot: "/repo",
+		Prompt:   "do x",
+		OnProgress: func(progress contracts.RunnerProgress) {
+			seen = append(seen, progress.Message)
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Status != contracts.RunnerResultCompleted {
+		t.Fatalf("expected completed status, got %s", result.Status)
+	}
+	if len(seen) != 2 || seen[0] != "tool call started" || seen[1] != "tool call completed" {
+		t.Fatalf("unexpected forwarded updates: %#v", seen)
 	}
 }
