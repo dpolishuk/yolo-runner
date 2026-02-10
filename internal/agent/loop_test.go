@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -245,9 +246,11 @@ type noopSink struct{}
 func (noopSink) Emit(context.Context, contracts.Event) error { return nil }
 
 type fakeVCS struct {
-	calls    []string
-	mergeErr error
-	pushErr  error
+	calls      []string
+	mergeErr   error
+	mergeErrs  []error
+	mergeCalls int
+	pushErr    error
 }
 
 func (f *fakeVCS) EnsureMain(context.Context) error {
@@ -269,6 +272,12 @@ func (f *fakeVCS) CommitAll(context.Context, string) (string, error) { return ""
 
 func (f *fakeVCS) MergeToMain(_ context.Context, branch string) error {
 	f.calls = append(f.calls, "merge_to_main:"+branch)
+	f.mergeCalls++
+	if len(f.mergeErrs) > 0 {
+		err := f.mergeErrs[0]
+		f.mergeErrs = f.mergeErrs[1:]
+		return err
+	}
 	return f.mergeErr
 }
 
@@ -742,18 +751,65 @@ func TestLoopEmitsLandingQueueLifecycleEventsOnAutoLandSuccess(t *testing.T) {
 func TestLoopMarksLandingQueueBlockedOnMergeFailure(t *testing.T) {
 	mgr := newFakeTaskManager(contracts.Task{ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen})
 	run := &fakeRunner{results: []contracts.RunnerResult{{Status: contracts.RunnerResultCompleted}, {Status: contracts.RunnerResultCompleted, ReviewReady: true}}}
-	vcs := &fakeVCS{mergeErr: errors.New("merge conflict")}
+	vcs := &fakeVCS{mergeErrs: []error{errors.New("merge conflict first"), errors.New("merge conflict second")}}
 	sink := &recordingSink{}
 	loop := NewLoop(mgr, run, sink, LoopOptions{ParentID: "root", VCS: vcs, MergeOnSuccess: true, RequireReview: true})
 
-	_, err := loop.Run(context.Background())
-	if err == nil {
-		t.Fatalf("expected merge failure to bubble up")
+	summary, err := loop.Run(context.Background())
+	if err != nil {
+		t.Fatalf("expected merge conflict to block task without failing loop, got %v", err)
+	}
+	if summary.Blocked != 1 {
+		t.Fatalf("expected blocked summary count, got %#v", summary)
+	}
+	if vcs.mergeCalls != 2 {
+		t.Fatalf("expected one retry with two merge attempts, got %d", vcs.mergeCalls)
+	}
+	if mgr.statusByID["t-1"] != contracts.TaskStatusBlocked {
+		t.Fatalf("expected blocked task status, got %s", mgr.statusByID["t-1"])
+	}
+	if got := mgr.dataByID["t-1"]["triage_status"]; got != "blocked" {
+		t.Fatalf("expected triage_status=blocked, got %q", got)
+	}
+	if got := mgr.dataByID["t-1"]["triage_reason"]; !strings.Contains(got, "merge conflict second") {
+		t.Fatalf("expected triage reason with final conflict, got %q", got)
 	}
 
 	updates := eventsByType(sink.events, contracts.EventTypeTaskDataUpdated)
+	if !hasLandingStatus(updates, "retrying") {
+		t.Fatalf("expected retrying landing update, got %#v", updates)
+	}
 	if !hasLandingStatus(updates, "blocked") {
 		t.Fatalf("expected blocked landing update, got %#v", updates)
+	}
+}
+
+func TestLoopAutoLandRetriesOnceThenSucceeds(t *testing.T) {
+	mgr := newFakeTaskManager(contracts.Task{ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen})
+	run := &fakeRunner{results: []contracts.RunnerResult{{Status: contracts.RunnerResultCompleted}, {Status: contracts.RunnerResultCompleted, ReviewReady: true}}}
+	vcs := &fakeVCS{mergeErrs: []error{errors.New("merge conflict"), nil}}
+	sink := &recordingSink{}
+	loop := NewLoop(mgr, run, sink, LoopOptions{ParentID: "root", VCS: vcs, MergeOnSuccess: true, RequireReview: true})
+
+	summary, err := loop.Run(context.Background())
+	if err != nil {
+		t.Fatalf("loop failed: %v", err)
+	}
+	if summary.Completed != 1 {
+		t.Fatalf("expected completed summary after retry, got %#v", summary)
+	}
+	if vcs.mergeCalls != 2 {
+		t.Fatalf("expected one retry with two merge attempts, got %d", vcs.mergeCalls)
+	}
+	if mgr.statusByID["t-1"] != contracts.TaskStatusClosed {
+		t.Fatalf("expected closed task status, got %s", mgr.statusByID["t-1"])
+	}
+	updates := eventsByType(sink.events, contracts.EventTypeTaskDataUpdated)
+	if !hasLandingStatus(updates, "retrying") {
+		t.Fatalf("expected retrying landing update, got %#v", updates)
+	}
+	if !hasLandingStatus(updates, "landed") {
+		t.Fatalf("expected landed landing update, got %#v", updates)
 	}
 }
 
