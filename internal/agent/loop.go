@@ -248,7 +248,7 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 			Prompt:   buildPrompt(task, contracts.RunnerModeImplement),
 			OnProgress: func(progress contracts.RunnerProgress) {
 				_ = l.emit(ctx, contracts.Event{
-					Type:      contracts.EventTypeRunnerProgress,
+					Type:      eventTypeForRunnerProgress(progress.Type),
 					TaskID:    task.ID,
 					TaskTitle: task.Title,
 					WorkerID:  worker,
@@ -277,7 +277,7 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 				Prompt:   buildPrompt(task, contracts.RunnerModeReview),
 				OnProgress: func(progress contracts.RunnerProgress) {
 					_ = l.emit(ctx, contracts.Event{
-						Type:      contracts.EventTypeRunnerProgress,
+						Type:      eventTypeForRunnerProgress(progress.Type),
 						TaskID:    task.ID,
 						TaskTitle: task.Title,
 						WorkerID:  worker,
@@ -393,6 +393,21 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 			summary.Failed++
 			return summary, nil
 		}
+	}
+}
+
+func eventTypeForRunnerProgress(progressType string) contracts.EventType {
+	switch strings.TrimSpace(progressType) {
+	case "runner_cmd_started":
+		return contracts.EventTypeRunnerCommandStarted
+	case "runner_cmd_finished":
+		return contracts.EventTypeRunnerCommandFinished
+	case "runner_output":
+		return contracts.EventTypeRunnerOutput
+	case "runner_warning":
+		return contracts.EventTypeRunnerWarning
+	default:
+		return contracts.EventTypeRunnerProgress
 	}
 }
 

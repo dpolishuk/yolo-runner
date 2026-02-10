@@ -195,10 +195,12 @@ func TestCLIRunnerAdapterLeavesReviewReadyFalseWhenOnlyPassFailTemplatePresent(t
 
 func TestCLIRunnerAdapterForwardsACPUpdatesToProgressCallback(t *testing.T) {
 	seen := []string{}
+	seenTypes := []string{}
 	adapter := &CLIRunnerAdapter{runWithACP: func(ctx context.Context, issueID string, repoRoot string, prompt string, model string, configRoot string, configDir string, logPath string, runner Runner, acpClient ACPClient, onUpdate func(string)) error {
 		if onUpdate != nil {
-			onUpdate("tool call started")
-			onUpdate("tool call completed")
+			onUpdate("⏳ tool call started: read")
+			onUpdate("line output")
+			onUpdate("✅ tool call completed: read")
 		}
 		return nil
 	}}
@@ -209,6 +211,7 @@ func TestCLIRunnerAdapterForwardsACPUpdatesToProgressCallback(t *testing.T) {
 		Prompt:   "do x",
 		OnProgress: func(progress contracts.RunnerProgress) {
 			seen = append(seen, progress.Message)
+			seenTypes = append(seenTypes, progress.Type)
 		},
 	})
 	if err != nil {
@@ -217,7 +220,26 @@ func TestCLIRunnerAdapterForwardsACPUpdatesToProgressCallback(t *testing.T) {
 	if result.Status != contracts.RunnerResultCompleted {
 		t.Fatalf("expected completed status, got %s", result.Status)
 	}
-	if len(seen) != 2 || seen[0] != "tool call started" || seen[1] != "tool call completed" {
+	if len(seen) != 3 {
 		t.Fatalf("unexpected forwarded updates: %#v", seen)
+	}
+	if seenTypes[0] != "runner_cmd_started" || seenTypes[1] != "runner_output" || seenTypes[2] != "runner_cmd_finished" {
+		t.Fatalf("unexpected forwarded update types: %#v", seenTypes)
+	}
+}
+
+func TestNormalizeACPUpdateLineRedactsAndTruncates(t *testing.T) {
+	line := "output token sk-abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ more text"
+	normalized, updateType := normalizeACPUpdateLine(line)
+	if updateType != "runner_output" {
+		t.Fatalf("expected runner_output, got %q", updateType)
+	}
+	if strings.Contains(normalized, "sk-abcdefghijklmnopqrstuvwxyz") {
+		t.Fatalf("expected token to be redacted, got %q", normalized)
+	}
+	veryLong := strings.Repeat("x", 1500)
+	normalizedLong, _ := normalizeACPUpdateLine(veryLong)
+	if len(normalizedLong) > 520 {
+		t.Fatalf("expected bounded message length, got %d", len(normalizedLong))
 	}
 }

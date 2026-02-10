@@ -112,18 +112,22 @@ func (s LoopSummary) TotalProcessed() int {
 type EventType string
 
 const (
-	EventTypeTaskStarted     EventType = "task_started"
-	EventTypeTaskFinished    EventType = "task_finished"
-	EventTypeRunnerStarted   EventType = "runner_started"
-	EventTypeRunnerFinished  EventType = "runner_finished"
-	EventTypeRunnerProgress  EventType = "runner_progress"
-	EventTypeReviewStarted   EventType = "review_started"
-	EventTypeReviewFinished  EventType = "review_finished"
-	EventTypeBranchCreated   EventType = "branch_created"
-	EventTypeMergeCompleted  EventType = "merge_completed"
-	EventTypePushCompleted   EventType = "push_completed"
-	EventTypeTaskStatusSet   EventType = "task_status_set"
-	EventTypeTaskDataUpdated EventType = "task_data_updated"
+	EventTypeTaskStarted           EventType = "task_started"
+	EventTypeTaskFinished          EventType = "task_finished"
+	EventTypeRunnerStarted         EventType = "runner_started"
+	EventTypeRunnerFinished        EventType = "runner_finished"
+	EventTypeRunnerProgress        EventType = "runner_progress"
+	EventTypeRunnerCommandStarted  EventType = "runner_cmd_started"
+	EventTypeRunnerCommandFinished EventType = "runner_cmd_finished"
+	EventTypeRunnerOutput          EventType = "runner_output"
+	EventTypeRunnerWarning         EventType = "runner_warning"
+	EventTypeReviewStarted         EventType = "review_started"
+	EventTypeReviewFinished        EventType = "review_finished"
+	EventTypeBranchCreated         EventType = "branch_created"
+	EventTypeMergeCompleted        EventType = "merge_completed"
+	EventTypePushCompleted         EventType = "push_completed"
+	EventTypeTaskStatusSet         EventType = "task_status_set"
+	EventTypeTaskDataUpdated       EventType = "task_data_updated"
 )
 
 type Event struct {
