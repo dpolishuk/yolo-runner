@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/anomalyco/yolo-runner/internal/contracts"
@@ -26,20 +27,22 @@ type CloneManager interface {
 }
 
 type LoopOptions struct {
-	ParentID           string
-	MaxRetries         int
-	MaxTasks           int
-	Concurrency        int
-	SchedulerStatePath string
-	DryRun             bool
-	Stop               <-chan struct{}
-	RepoRoot           string
-	Model              string
-	RunnerTimeout      time.Duration
-	VCS                contracts.VCS
-	RequireReview      bool
-	MergeOnSuccess     bool
-	CloneManager       CloneManager
+	ParentID             string
+	MaxRetries           int
+	MaxTasks             int
+	Concurrency          int
+	SchedulerStatePath   string
+	DryRun               bool
+	Stop                 <-chan struct{}
+	RepoRoot             string
+	Model                string
+	RunnerTimeout        time.Duration
+	HeartbeatInterval    time.Duration
+	NoOutputWarningAfter time.Duration
+	VCS                  contracts.VCS
+	RequireReview        bool
+	MergeOnSuccess       bool
+	CloneManager         CloneManager
 }
 
 type Loop struct {
@@ -238,7 +241,7 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 		}
 
 		_ = l.emit(ctx, contracts.Event{Type: contracts.EventTypeRunnerStarted, TaskID: task.ID, TaskTitle: task.Title, WorkerID: worker, ClonePath: taskRepoRoot, QueuePos: queuePos, Message: string(contracts.RunnerModeImplement), Timestamp: time.Now().UTC()})
-		result, err := l.runner.Run(ctx, contracts.RunnerRequest{
+		result, err := l.runRunnerWithMonitoring(ctx, contracts.RunnerRequest{
 			TaskID:   task.ID,
 			ParentID: l.options.ParentID,
 			Mode:     contracts.RunnerModeImplement,
@@ -246,20 +249,7 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 			Model:    l.options.Model,
 			Timeout:  l.options.RunnerTimeout,
 			Prompt:   buildPrompt(task, contracts.RunnerModeImplement),
-			OnProgress: func(progress contracts.RunnerProgress) {
-				_ = l.emit(ctx, contracts.Event{
-					Type:      eventTypeForRunnerProgress(progress.Type),
-					TaskID:    task.ID,
-					TaskTitle: task.Title,
-					WorkerID:  worker,
-					ClonePath: taskRepoRoot,
-					QueuePos:  queuePos,
-					Message:   progress.Message,
-					Metadata:  progress.Metadata,
-					Timestamp: progress.Timestamp,
-				})
-			},
-		})
+		}, task.ID, task.Title, worker, taskRepoRoot, queuePos)
 		if err != nil {
 			return summary, err
 		}
@@ -267,7 +257,7 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 
 		if result.Status == contracts.RunnerResultCompleted && l.options.RequireReview {
 			_ = l.emit(ctx, contracts.Event{Type: contracts.EventTypeReviewStarted, TaskID: task.ID, TaskTitle: task.Title, WorkerID: worker, ClonePath: taskRepoRoot, QueuePos: queuePos, Timestamp: time.Now().UTC()})
-			reviewResult, reviewErr := l.runner.Run(ctx, contracts.RunnerRequest{
+			reviewResult, reviewErr := l.runRunnerWithMonitoring(ctx, contracts.RunnerRequest{
 				TaskID:   task.ID,
 				ParentID: l.options.ParentID,
 				Mode:     contracts.RunnerModeReview,
@@ -275,20 +265,7 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 				Model:    l.options.Model,
 				Timeout:  l.options.RunnerTimeout,
 				Prompt:   buildPrompt(task, contracts.RunnerModeReview),
-				OnProgress: func(progress contracts.RunnerProgress) {
-					_ = l.emit(ctx, contracts.Event{
-						Type:      eventTypeForRunnerProgress(progress.Type),
-						TaskID:    task.ID,
-						TaskTitle: task.Title,
-						WorkerID:  worker,
-						ClonePath: taskRepoRoot,
-						QueuePos:  queuePos,
-						Message:   progress.Message,
-						Metadata:  progress.Metadata,
-						Timestamp: progress.Timestamp,
-					})
-				},
-			})
+			}, task.ID, task.Title, worker, taskRepoRoot, queuePos)
 			if reviewErr != nil {
 				return summary, reviewErr
 			}
@@ -416,6 +393,94 @@ func (l *Loop) emit(ctx context.Context, event contracts.Event) error {
 		return nil
 	}
 	return l.events.Emit(ctx, event)
+}
+
+func (l *Loop) runRunnerWithMonitoring(ctx context.Context, request contracts.RunnerRequest, taskID string, taskTitle string, worker string, clonePath string, queuePos int) (contracts.RunnerResult, error) {
+	heartbeatInterval := l.options.HeartbeatInterval
+	if heartbeatInterval <= 0 {
+		heartbeatInterval = 5 * time.Second
+	}
+	warningAfter := l.options.NoOutputWarningAfter
+	if warningAfter <= 0 {
+		warningAfter = 30 * time.Second
+	}
+
+	lastOutputAt := time.Now().UTC()
+	warned := false
+	var progressMu sync.Mutex
+
+	request.OnProgress = func(progress contracts.RunnerProgress) {
+		eventTime := progress.Timestamp
+		if eventTime.IsZero() {
+			eventTime = time.Now().UTC()
+		}
+		progressMu.Lock()
+		lastOutputAt = eventTime
+		warned = false
+		progressMu.Unlock()
+		_ = l.emit(ctx, contracts.Event{
+			Type:      eventTypeForRunnerProgress(progress.Type),
+			TaskID:    taskID,
+			TaskTitle: taskTitle,
+			WorkerID:  worker,
+			ClonePath: clonePath,
+			QueuePos:  queuePos,
+			Message:   progress.Message,
+			Metadata:  progress.Metadata,
+			Timestamp: eventTime,
+		})
+	}
+
+	monitorCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	go func() {
+		ticker := time.NewTicker(heartbeatInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-monitorCtx.Done():
+				return
+			case now := <-ticker.C:
+				progressMu.Lock()
+				elapsed := now.Sub(lastOutputAt)
+				alreadyWarned := warned
+				if elapsed >= warningAfter {
+					warned = true
+				}
+				progressMu.Unlock()
+
+				_ = l.emit(ctx, contracts.Event{
+					Type:      contracts.EventTypeRunnerHeartbeat,
+					TaskID:    taskID,
+					TaskTitle: taskTitle,
+					WorkerID:  worker,
+					ClonePath: clonePath,
+					QueuePos:  queuePos,
+					Message:   "alive",
+					Metadata:  map[string]string{"last_output_age": elapsed.Round(time.Second).String()},
+					Timestamp: now.UTC(),
+				})
+
+				if elapsed >= warningAfter && !alreadyWarned {
+					_ = l.emit(ctx, contracts.Event{
+						Type:      contracts.EventTypeRunnerWarning,
+						TaskID:    taskID,
+						TaskTitle: taskTitle,
+						WorkerID:  worker,
+						ClonePath: clonePath,
+						QueuePos:  queuePos,
+						Message:   "no output threshold exceeded",
+						Metadata:  map[string]string{"last_output_age": elapsed.Round(time.Second).String()},
+						Timestamp: now.UTC(),
+					})
+				}
+			}
+		}
+	}()
+
+	result, err := l.runner.Run(ctx, request)
+	cancel()
+	return result, err
 }
 
 func buildPrompt(task contracts.Task, mode contracts.RunnerMode) string {

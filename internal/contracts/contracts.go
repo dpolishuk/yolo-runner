@@ -117,6 +117,7 @@ const (
 	EventTypeRunnerStarted         EventType = "runner_started"
 	EventTypeRunnerFinished        EventType = "runner_finished"
 	EventTypeRunnerProgress        EventType = "runner_progress"
+	EventTypeRunnerHeartbeat       EventType = "runner_heartbeat"
 	EventTypeRunnerCommandStarted  EventType = "runner_cmd_started"
 	EventTypeRunnerCommandFinished EventType = "runner_cmd_finished"
 	EventTypeRunnerOutput          EventType = "runner_output"
