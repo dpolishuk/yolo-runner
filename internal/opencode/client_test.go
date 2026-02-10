@@ -427,3 +427,16 @@ func TestRunWithACPNoModelWhenEmpty(t *testing.T) {
 		t.Fatalf("expected empty config content, got %q", capturedEnv["OPENCODE_CONFIG_CONTENT"])
 	}
 }
+
+func TestForwardACPRequestLineForUpdates(t *testing.T) {
+	seen := []string{}
+	line := forwardACPRequestLine("permission", "allow", "read /tmp/file.txt", func(update string) {
+		seen = append(seen, update)
+	})
+	if line != "request permission allow detail=\"read /tmp/file.txt\"" {
+		t.Fatalf("unexpected request line: %q", line)
+	}
+	if len(seen) != 1 || seen[0] != line {
+		t.Fatalf("expected permission request forwarded once, got %#v", seen)
+	}
+}

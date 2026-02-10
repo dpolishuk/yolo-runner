@@ -243,3 +243,13 @@ func TestNormalizeACPUpdateLineRedactsAndTruncates(t *testing.T) {
 		t.Fatalf("expected bounded message length, got %d", len(normalizedLong))
 	}
 }
+
+func TestNormalizeACPUpdateLineClassifiesPermissionRequestsAsWarnings(t *testing.T) {
+	normalized, updateType := normalizeACPUpdateLine("request permission allow")
+	if normalized != "request permission allow" {
+		t.Fatalf("unexpected normalized line %q", normalized)
+	}
+	if updateType != "runner_warning" {
+		t.Fatalf("expected runner_warning for permission request, got %q", updateType)
+	}
+}

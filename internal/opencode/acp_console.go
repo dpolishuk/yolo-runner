@@ -10,16 +10,38 @@ import (
 const acpConsoleSnippetLimit = 120
 
 func formatACPRequest(requestType string, decision string) string {
+	return formatACPRequestDetail(requestType, decision, "")
+}
+
+func formatACPRequestDetail(requestType string, decision string, detail string) string {
 	if requestType == "" && decision == "" {
 		return ""
 	}
+	detail = normalizeACPRequestDetail(detail)
+	detailText := ""
+	if detail != "" {
+		detailText = fmt.Sprintf(" detail=%q", detail)
+	}
 	if requestType == "" {
-		return fmt.Sprintf("request %s", decision)
+		return fmt.Sprintf("request %s%s", decision, detailText)
 	}
 	if decision == "" {
-		return fmt.Sprintf("request %s", requestType)
+		return fmt.Sprintf("request %s%s", requestType, detailText)
 	}
-	return fmt.Sprintf("request %s %s", requestType, decision)
+	return fmt.Sprintf("request %s %s%s", requestType, decision, detailText)
+}
+
+func normalizeACPRequestDetail(detail string) string {
+	trimmed := strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(detail, "\n", " "), "\r", " "))
+	if trimmed == "" {
+		return ""
+	}
+	normalized := strings.Join(strings.Fields(trimmed), " ")
+	const maxLen = 160
+	if len(normalized) > maxLen {
+		return normalized[:maxLen] + "..."
+	}
+	return normalized
 }
 
 func formatSessionUpdate(update *acp.SessionUpdate) string {

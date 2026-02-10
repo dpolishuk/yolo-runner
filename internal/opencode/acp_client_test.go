@@ -26,7 +26,7 @@ func TestACPHandlerAutoApprovesPermission(t *testing.T) {
 func TestACPClientCancelsQuestionPermission(t *testing.T) {
 	var gotKind string
 	var gotOutcome string
-	handler := NewACPHandler("issue-1", "log", func(_ string, _ string, kind string, outcome string) error {
+	handler := NewACPHandler("issue-1", "log", func(_ string, _ string, kind string, outcome string, _ string) error {
 		gotKind = kind
 		gotOutcome = outcome
 		return nil
