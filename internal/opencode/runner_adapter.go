@@ -24,6 +24,7 @@ type CLIRunnerAdapter struct {
 }
 
 var structuredReviewVerdictPattern = regexp.MustCompile(`(?i)\bREVIEW_VERDICT\s*:\s*(pass|fail)\b(?:\s|\\|$|[.,!?"'])`)
+var tokenRedactionPattern = regexp.MustCompile(`\bsk-[A-Za-z0-9_-]{12,}\b`)
 
 func NewCLIRunnerAdapter(runner Runner, acpClient ACPClient, configRoot string, configDir string) *CLIRunnerAdapter {
 	return &CLIRunnerAdapter{
@@ -60,7 +61,11 @@ func (a *CLIRunnerAdapter) Run(ctx context.Context, request contracts.RunnerRequ
 		if progress == nil {
 			return
 		}
-		progress(contracts.RunnerProgress{Type: "acp_update", Message: line, Timestamp: time.Now().UTC()})
+		normalized, progressType := normalizeACPUpdateLine(line)
+		if strings.TrimSpace(normalized) == "" {
+			return
+		}
+		progress(contracts.RunnerProgress{Type: progressType, Message: normalized, Timestamp: time.Now().UTC()})
 	})
 
 	result := contracts.RunnerResult{
@@ -112,4 +117,28 @@ func hasStructuredPassVerdict(logPath string) bool {
 		return false
 	}
 	return strings.EqualFold(last[1], "pass")
+}
+
+func normalizeACPUpdateLine(line string) (string, string) {
+	trimmed := strings.TrimSpace(line)
+	if trimmed == "" {
+		return "", "runner_output"
+	}
+	typeName := "runner_output"
+	switch {
+	case strings.HasPrefix(trimmed, "⏳"), strings.HasPrefix(trimmed, "🔄"):
+		typeName = "runner_cmd_started"
+	case strings.HasPrefix(trimmed, "✅"), strings.HasPrefix(trimmed, "❌"):
+		typeName = "runner_cmd_finished"
+	case strings.HasPrefix(trimmed, "⚪"):
+		typeName = "runner_warning"
+	}
+	trimmed = strings.ReplaceAll(trimmed, "\r", "")
+	trimmed = strings.ReplaceAll(trimmed, "\n", " ")
+	trimmed = tokenRedactionPattern.ReplaceAllString(trimmed, "<redacted-token>")
+	const maxLen = 500
+	if len(trimmed) > maxLen {
+		trimmed = trimmed[:maxLen] + "..."
+	}
+	return trimmed, typeName
 }

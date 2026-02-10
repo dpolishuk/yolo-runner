@@ -208,14 +208,24 @@ type fakeRunner struct {
 	modes            []contracts.RunnerMode
 	requests         []contracts.RunnerRequest
 	progressMessages []string
+	progressEvents   []contracts.RunnerProgress
 }
 
 func (f *fakeRunner) Run(_ context.Context, request contracts.RunnerRequest) (contracts.RunnerResult, error) {
 	f.modes = append(f.modes, request.Mode)
 	f.requests = append(f.requests, request)
 	if request.OnProgress != nil {
-		for _, message := range f.progressMessages {
-			request.OnProgress(contracts.RunnerProgress{Type: "acp_update", Message: message, Timestamp: time.Now().UTC()})
+		if len(f.progressEvents) > 0 {
+			for _, progress := range f.progressEvents {
+				if progress.Timestamp.IsZero() {
+					progress.Timestamp = time.Now().UTC()
+				}
+				request.OnProgress(progress)
+			}
+		} else {
+			for _, message := range f.progressMessages {
+				request.OnProgress(contracts.RunnerProgress{Type: "acp_update", Message: message, Timestamp: time.Now().UTC()})
+			}
 		}
 	}
 	if f.idx >= len(f.results) {
@@ -507,7 +517,7 @@ func TestLoopEmitsParallelContextInRunnerStartedEvent(t *testing.T) {
 
 func TestLoopEmitsRunnerProgressEventsFromRunnerCallback(t *testing.T) {
 	mgr := newFakeTaskManager(contracts.Task{ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen})
-	run := &fakeRunner{results: []contracts.RunnerResult{{Status: contracts.RunnerResultCompleted}}, progressMessages: []string{"tool started", "tool done"}}
+	run := &fakeRunner{results: []contracts.RunnerResult{{Status: contracts.RunnerResultCompleted}}, progressEvents: []contracts.RunnerProgress{{Type: "runner_cmd_started", Message: "cmd start"}, {Type: "runner_output", Message: "line output"}, {Type: "runner_cmd_finished", Message: "cmd finish"}, {Type: "runner_warning", Message: "stall warning"}}}
 	sink := &recordingSink{}
 	loop := NewLoop(mgr, run, sink, LoopOptions{ParentID: "root"})
 
@@ -515,12 +525,15 @@ func TestLoopEmitsRunnerProgressEventsFromRunnerCallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loop failed: %v", err)
 	}
-	progressEvents := eventsByType(sink.events, contracts.EventTypeRunnerProgress)
-	if len(progressEvents) != 2 {
-		t.Fatalf("expected 2 runner progress events, got %d", len(progressEvents))
+	startedEvents := eventsByType(sink.events, contracts.EventTypeRunnerCommandStarted)
+	outputEvents := eventsByType(sink.events, contracts.EventTypeRunnerOutput)
+	finishedEvents := eventsByType(sink.events, contracts.EventTypeRunnerCommandFinished)
+	warningEvents := eventsByType(sink.events, contracts.EventTypeRunnerWarning)
+	if len(startedEvents) != 1 || len(outputEvents) != 1 || len(finishedEvents) != 1 || len(warningEvents) != 1 {
+		t.Fatalf("expected one event for each progress category, got started=%d output=%d finished=%d warning=%d", len(startedEvents), len(outputEvents), len(finishedEvents), len(warningEvents))
 	}
-	if progressEvents[0].Message != "tool started" || progressEvents[1].Message != "tool done" {
-		t.Fatalf("unexpected progress messages: %#v", progressEvents)
+	if startedEvents[0].Message != "cmd start" || outputEvents[0].Message != "line output" || finishedEvents[0].Message != "cmd finish" || warningEvents[0].Message != "stall warning" {
+		t.Fatalf("unexpected progress message mapping")
 	}
 }
 
