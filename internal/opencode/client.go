@@ -169,14 +169,15 @@ func RunWithACPAndUpdates(ctx context.Context, issueID string, repoRoot string, 
 			return errors.New("opencode runner does not expose stdin/stdout for ACP")
 		}
 		acpClient = ACPClientFunc(func(ctx context.Context, issueID string, logPath string) error {
-			handler := NewACPHandler(issueID, logPath, func(logPath string, issueID string, requestType string, decision string) error {
-				if line := formatACPRequest(requestType, decision); line != "" {
+			handler := NewACPHandler(issueID, logPath, func(logPath string, issueID string, requestType string, decision string, detail string) error {
+				if line := forwardACPRequestLine(requestType, decision, detail, onLineUpdate); line != "" {
 					writeConsoleLine(os.Stderr, fmt.Sprintf("ACP[%s] %s", issueID, line))
 				}
 				return logging.AppendACPRequest(logPath, logging.ACPRequestEntry{
 					IssueID:     issueID,
 					RequestType: requestType,
 					Decision:    decision,
+					Message:     normalizeACPRequestDetail(detail),
 				})
 			})
 			aggregator := NewAgentMessageAggregator()
@@ -322,6 +323,14 @@ func RunWithACPAndUpdates(ctx context.Context, issueID string, repoRoot string, 
 		return nil
 	}
 	return shutdownErr
+}
+
+func forwardACPRequestLine(requestType string, decision string, detail string, onLineUpdate func(string)) string {
+	line := formatACPRequestDetail(requestType, decision, detail)
+	if line != "" && onLineUpdate != nil {
+		onLineUpdate(line)
+	}
+	return line
 }
 
 type waitOnceProcess struct {

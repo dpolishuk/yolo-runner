@@ -54,6 +54,14 @@ func TestFormatACPRequest(t *testing.T) {
 	}
 }
 
+func TestFormatACPRequestDetailIncludesNormalizedDetail(t *testing.T) {
+	got := formatACPRequestDetail("permission", "allow", "read   /tmp/file.txt\nwith context")
+	expected := "request permission allow detail=\"read /tmp/file.txt with context\""
+	if got != expected {
+		t.Fatalf("unexpected output: %q", got)
+	}
+}
+
 func TestFormatToolCallWithStatusBadges(t *testing.T) {
 	tests := []struct {
 		name     string

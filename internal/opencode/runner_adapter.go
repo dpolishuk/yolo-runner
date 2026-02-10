@@ -130,7 +130,7 @@ func normalizeACPUpdateLine(line string) (string, string) {
 		typeName = "runner_cmd_started"
 	case strings.HasPrefix(trimmed, "✅"), strings.HasPrefix(trimmed, "❌"):
 		typeName = "runner_cmd_finished"
-	case strings.HasPrefix(trimmed, "⚪"):
+	case strings.HasPrefix(trimmed, "⚪"), strings.HasPrefix(trimmed, "request permission"):
 		typeName = "runner_warning"
 	}
 	trimmed = strings.ReplaceAll(trimmed, "\r", "")

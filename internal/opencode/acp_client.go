@@ -26,23 +26,23 @@ const (
 type ACPHandler struct {
 	issueID string
 	logPath string
-	logger  func(string, string, string, string) error
+	logger  func(string, string, string, string, string) error
 }
 
-func NewACPHandler(issueID string, logPath string, logger func(string, string, string, string) error) *ACPHandler {
+func NewACPHandler(issueID string, logPath string, logger func(string, string, string, string, string) error) *ACPHandler {
 	return &ACPHandler{issueID: issueID, logPath: logPath, logger: logger}
 }
 
 func (h *ACPHandler) HandlePermission(ctx context.Context, requestID string, scope string) ACPDecision {
 	if h != nil && h.logger != nil {
-		_ = h.logger(h.logPath, h.issueID, "permission", "allow")
+		_ = h.logger(h.logPath, h.issueID, "permission", "allow", scope)
 	}
 	return ACPDecisionAllow
 }
 
 func (h *ACPHandler) HandleQuestion(ctx context.Context, requestID string, prompt string) string {
 	if h != nil && h.logger != nil {
-		_ = h.logger(h.logPath, h.issueID, "question", "decide yourself")
+		_ = h.logger(h.logPath, h.issueID, "question", "decide yourself", prompt)
 	}
 	return "decide yourself"
 }
