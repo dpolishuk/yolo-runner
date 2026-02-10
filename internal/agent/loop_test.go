@@ -209,11 +209,15 @@ type fakeRunner struct {
 	requests         []contracts.RunnerRequest
 	progressMessages []string
 	progressEvents   []contracts.RunnerProgress
+	runDelay         time.Duration
 }
 
 func (f *fakeRunner) Run(_ context.Context, request contracts.RunnerRequest) (contracts.RunnerResult, error) {
 	f.modes = append(f.modes, request.Mode)
 	f.requests = append(f.requests, request)
+	if f.runDelay > 0 {
+		time.Sleep(f.runDelay)
+	}
 	if request.OnProgress != nil {
 		if len(f.progressEvents) > 0 {
 			for _, progress := range f.progressEvents {
@@ -534,6 +538,38 @@ func TestLoopEmitsRunnerProgressEventsFromRunnerCallback(t *testing.T) {
 	}
 	if startedEvents[0].Message != "cmd start" || outputEvents[0].Message != "line output" || finishedEvents[0].Message != "cmd finish" || warningEvents[0].Message != "stall warning" {
 		t.Fatalf("unexpected progress message mapping")
+	}
+}
+
+func TestLoopEmitsRunnerHeartbeatDuringLongRun(t *testing.T) {
+	mgr := newFakeTaskManager(contracts.Task{ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen})
+	run := &fakeRunner{results: []contracts.RunnerResult{{Status: contracts.RunnerResultCompleted}}, runDelay: 25 * time.Millisecond}
+	sink := &recordingSink{}
+	loop := NewLoop(mgr, run, sink, LoopOptions{ParentID: "root", HeartbeatInterval: 5 * time.Millisecond, NoOutputWarningAfter: 100 * time.Millisecond})
+
+	_, err := loop.Run(context.Background())
+	if err != nil {
+		t.Fatalf("loop failed: %v", err)
+	}
+	heartbeats := eventsByType(sink.events, contracts.EventTypeRunnerHeartbeat)
+	if len(heartbeats) == 0 {
+		t.Fatalf("expected heartbeat events during long run")
+	}
+}
+
+func TestLoopEmitsRunnerWarningWhenNoOutputThresholdExceeded(t *testing.T) {
+	mgr := newFakeTaskManager(contracts.Task{ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen})
+	run := &fakeRunner{results: []contracts.RunnerResult{{Status: contracts.RunnerResultCompleted}}, runDelay: 30 * time.Millisecond}
+	sink := &recordingSink{}
+	loop := NewLoop(mgr, run, sink, LoopOptions{ParentID: "root", HeartbeatInterval: 5 * time.Millisecond, NoOutputWarningAfter: 10 * time.Millisecond})
+
+	_, err := loop.Run(context.Background())
+	if err != nil {
+		t.Fatalf("loop failed: %v", err)
+	}
+	warnings := eventsByType(sink.events, contracts.EventTypeRunnerWarning)
+	if len(warnings) == 0 {
+		t.Fatalf("expected warning events when no output threshold exceeded")
 	}
 }
 
