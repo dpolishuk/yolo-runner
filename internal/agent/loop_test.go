@@ -709,6 +709,43 @@ func TestLoopResumesPersistedSchedulerStateAndDoesNotRerunCompletedTask(t *testi
 	}
 }
 
+func TestSchedulerStateStoreMergesInterleavedUpdates(t *testing.T) {
+	tempDir := t.TempDir()
+	statePath := filepath.Join(tempDir, "scheduler-state.json")
+	store := newSchedulerStateStore(statePath, "root")
+
+	firstSnapshot, err := store.Load()
+	if err != nil {
+		t.Fatalf("load first snapshot: %v", err)
+	}
+	secondSnapshot, err := store.Load()
+	if err != nil {
+		t.Fatalf("load second snapshot: %v", err)
+	}
+
+	firstSnapshot.InFlight["t-1"] = struct{}{}
+	if err := store.Save(firstSnapshot); err != nil {
+		t.Fatalf("save first snapshot: %v", err)
+	}
+
+	secondSnapshot.InFlight["t-2"] = struct{}{}
+	if err := store.Save(secondSnapshot); err != nil {
+		t.Fatalf("save second snapshot: %v", err)
+	}
+
+	merged, err := store.Load()
+	if err != nil {
+		t.Fatalf("load merged snapshot: %v", err)
+	}
+
+	if _, ok := merged.InFlight["t-1"]; !ok {
+		t.Fatalf("expected t-1 to remain in in-flight set, got %#v", merged.InFlight)
+	}
+	if _, ok := merged.InFlight["t-2"]; !ok {
+		t.Fatalf("expected t-2 in in-flight set, got %#v", merged.InFlight)
+	}
+}
+
 func hasEventType(events []contracts.Event, eventType contracts.EventType) bool {
 	for _, event := range events {
 		if event.Type == eventType {

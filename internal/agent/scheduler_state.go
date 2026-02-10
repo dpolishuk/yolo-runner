@@ -33,6 +33,9 @@ type schedulerStateSnapshot struct {
 	InFlight  map[string]struct{}
 	Completed map[string]struct{}
 	Blocked   map[string]struct{}
+	baseInFly map[string]struct{}
+	baseDone  map[string]struct{}
+	baseBlock map[string]struct{}
 }
 
 func newSchedulerStateStore(path string, parentID string) *schedulerStateStore {
@@ -168,10 +171,16 @@ func (s *schedulerStateStore) Save(snapshot schedulerStateSnapshot) error {
 	if err != nil {
 		return err
 	}
+	current := state.snapshotForParent(s.parentID)
+	merged := schedulerStateSnapshot{
+		InFlight:  mergeSetChanges(current.InFlight, snapshot.baseInFly, snapshot.InFlight),
+		Completed: mergeSetChanges(current.Completed, snapshot.baseDone, snapshot.Completed),
+		Blocked:   mergeSetChanges(current.Blocked, snapshot.baseBlock, snapshot.Blocked),
+	}
 	state.Parents[s.parentID] = schedulerParentState{
-		InFlight:  sortedKeys(snapshot.InFlight),
-		Completed: sortedKeys(snapshot.Completed),
-		Blocked:   sortedKeys(snapshot.Blocked),
+		InFlight:  sortedKeys(merged.InFlight),
+		Completed: sortedKeys(merged.Completed),
+		Blocked:   sortedKeys(merged.Blocked),
 	}
 	return s.writeStateFileLocked(state)
 }
@@ -183,13 +192,23 @@ func (f schedulerStateFile) snapshotForParent(parentID string) schedulerStateSna
 			InFlight:  map[string]struct{}{},
 			Completed: map[string]struct{}{},
 			Blocked:   map[string]struct{}{},
+			baseInFly: map[string]struct{}{},
+			baseDone:  map[string]struct{}{},
+			baseBlock: map[string]struct{}{},
 		}
 	}
 
+	inFlight := makeSet(parentState.InFlight)
+	completed := makeSet(parentState.Completed)
+	blocked := makeSet(parentState.Blocked)
+
 	return schedulerStateSnapshot{
-		InFlight:  makeSet(parentState.InFlight),
-		Completed: makeSet(parentState.Completed),
-		Blocked:   makeSet(parentState.Blocked),
+		InFlight:  inFlight,
+		Completed: completed,
+		Blocked:   blocked,
+		baseInFly: cloneSet(inFlight),
+		baseDone:  cloneSet(completed),
+		baseBlock: cloneSet(blocked),
 	}
 }
 
@@ -244,4 +263,34 @@ func sortedKeys(set map[string]struct{}) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+func cloneSet(set map[string]struct{}) map[string]struct{} {
+	if len(set) == 0 {
+		return map[string]struct{}{}
+	}
+	out := make(map[string]struct{}, len(set))
+	for key := range set {
+		out[key] = struct{}{}
+	}
+	return out
+}
+
+func mergeSetChanges(current map[string]struct{}, base map[string]struct{}, next map[string]struct{}) map[string]struct{} {
+	if base == nil {
+		return cloneSet(next)
+	}
+
+	merged := cloneSet(current)
+	for key := range base {
+		if _, stillPresent := next[key]; !stillPresent {
+			delete(merged, key)
+		}
+	}
+	for key := range next {
+		if _, existed := base[key]; !existed {
+			merged[key] = struct{}{}
+		}
+	}
+	return merged
 }
