@@ -41,14 +41,28 @@ func renderFromReader(reader io.Reader, out io.Writer, errOut io.Writer) error {
 	decoder := contracts.NewEventDecoder(reader)
 	model := monitor.NewModel(nil)
 	haveEvents := false
+	decodeFailures := 0
 	for {
 		event, err := decoder.Next()
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
-			return err
+			decodeFailures++
+			haveEvents = true
+			model.Apply(contracts.Event{Type: contracts.EventTypeRunnerWarning, Message: "decode_error: " + err.Error()})
+			if _, writeErr := io.WriteString(out, model.View()); writeErr != nil {
+				return writeErr
+			}
+			if errOut != nil {
+				_, _ = io.WriteString(errOut, "event decode warning: "+err.Error()+"\n")
+			}
+			if decodeFailures >= 3 {
+				return fmt.Errorf("failed to decode event stream after %d errors: %w", decodeFailures, err)
+			}
+			continue
 		}
+		decodeFailures = 0
 		haveEvents = true
 		model.Apply(event)
 		if _, writeErr := io.WriteString(out, model.View()); writeErr != nil {
@@ -60,6 +74,5 @@ func renderFromReader(reader io.Reader, out io.Writer, errOut io.Writer) error {
 			return writeErr
 		}
 	}
-	_ = errOut
 	return nil
 }
