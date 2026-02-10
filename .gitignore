@@ -7,6 +7,7 @@ bin/
 # Runtime logs and OpenCode outputs
 runner-logs/
 .serena/
+.yolo-runner/
 
 # Python cache (bootstrap runner only; never commit)
 __pycache__/
