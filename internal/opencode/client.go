@@ -119,6 +119,10 @@ func RunWithContext(ctx context.Context, issueID string, repoRoot string, prompt
 }
 
 func RunWithACP(ctx context.Context, issueID string, repoRoot string, prompt string, model string, configRoot string, configDir string, logPath string, runner Runner, acpClient ACPClient) error {
+	return RunWithACPAndUpdates(ctx, issueID, repoRoot, prompt, model, configRoot, configDir, logPath, runner, acpClient, nil)
+}
+
+func RunWithACPAndUpdates(ctx context.Context, issueID string, repoRoot string, prompt string, model string, configRoot string, configDir string, logPath string, runner Runner, acpClient ACPClient, onLineUpdate func(string)) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -181,6 +185,9 @@ func RunWithACP(ctx context.Context, issueID string, repoRoot string, prompt str
 					return
 				}
 				if line := aggregator.ProcessUpdate(&note.Update); line != "" {
+					if onLineUpdate != nil {
+						onLineUpdate(line)
+					}
 					// Skip writing tool calls directly to console - they should go to log bubble instead
 					// Only write non-tool-call messages to console
 					if !strings.HasPrefix(line, "⏳") && !strings.HasPrefix(line, "🔄") && !strings.HasPrefix(line, "✅") && !strings.HasPrefix(line, "❌") && !strings.HasPrefix(line, "⚪") {

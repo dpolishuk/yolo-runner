@@ -1,6 +1,6 @@
 ---
 id: yr-a0vs
-status: open
+status: closed
 deps: [yr-kruo]
 links: []
 created: 2026-02-10T01:46:34Z

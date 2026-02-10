@@ -246,6 +246,19 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 			Model:    l.options.Model,
 			Timeout:  l.options.RunnerTimeout,
 			Prompt:   buildPrompt(task, contracts.RunnerModeImplement),
+			OnProgress: func(progress contracts.RunnerProgress) {
+				_ = l.emit(ctx, contracts.Event{
+					Type:      contracts.EventTypeRunnerProgress,
+					TaskID:    task.ID,
+					TaskTitle: task.Title,
+					WorkerID:  worker,
+					ClonePath: taskRepoRoot,
+					QueuePos:  queuePos,
+					Message:   progress.Message,
+					Metadata:  progress.Metadata,
+					Timestamp: progress.Timestamp,
+				})
+			},
 		})
 		if err != nil {
 			return summary, err
@@ -262,6 +275,19 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 				Model:    l.options.Model,
 				Timeout:  l.options.RunnerTimeout,
 				Prompt:   buildPrompt(task, contracts.RunnerModeReview),
+				OnProgress: func(progress contracts.RunnerProgress) {
+					_ = l.emit(ctx, contracts.Event{
+						Type:      contracts.EventTypeRunnerProgress,
+						TaskID:    task.ID,
+						TaskTitle: task.Title,
+						WorkerID:  worker,
+						ClonePath: taskRepoRoot,
+						QueuePos:  queuePos,
+						Message:   progress.Message,
+						Metadata:  progress.Metadata,
+						Timestamp: progress.Timestamp,
+					})
+				},
 			})
 			if reviewErr != nil {
 				return summary, reviewErr
