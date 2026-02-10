@@ -1,6 +1,6 @@
 ---
 id: yr-0yna
-status: in_progress
+status: closed
 deps: [yr-07wc]
 links: []
 created: 2026-02-09T23:07:07Z
