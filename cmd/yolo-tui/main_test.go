@@ -99,6 +99,44 @@ func TestRenderFromReaderWritesOnEachEventForLiveUpdates(t *testing.T) {
 	}
 }
 
+func TestRenderFromReaderContinuesAfterMalformedEventWithFallbackWarning(t *testing.T) {
+	input := strings.NewReader("{\"type\":\"task_started\",\"task_id\":\"task-1\",\"task_title\":\"Readable task\",\"ts\":\"2026-02-10T12:00:00Z\"}\n" +
+		"{\"type\":\"runner_output\",\"task_id\":\"task-1\",\"message\":\"unterminated\"\n" +
+		"{\"type\":\"runner_finished\",\"task_id\":\"task-1\",\"message\":\"completed\",\"ts\":\"2026-02-10T12:00:02Z\"}\n")
+	out := &bytes.Buffer{}
+	errOut := &bytes.Buffer{}
+
+	if err := renderFromReader(input, out, errOut); err != nil {
+		t.Fatalf("render failed: %v", err)
+	}
+	if !contains(out.String(), "decode_error") {
+		t.Fatalf("expected decode fallback warning in output, got %q", out.String())
+	}
+	if !contains(out.String(), "runner_finished") {
+		t.Fatalf("expected stream to continue after malformed event, got %q", out.String())
+	}
+}
+
+func TestRenderFromReaderIsDeterministicForSameInput(t *testing.T) {
+	content := "{\"type\":\"run_started\",\"metadata\":{\"root_id\":\"yr-2y0b\"},\"ts\":\"2026-02-10T12:00:00Z\"}\n" +
+		"{\"type\":\"runner_finished\",\"task_id\":\"task-1\",\"message\":\"failed\",\"ts\":\"2026-02-10T12:00:01Z\"}\n"
+
+	outA := &bytes.Buffer{}
+	outB := &bytes.Buffer{}
+	errA := &bytes.Buffer{}
+	errB := &bytes.Buffer{}
+
+	if err := renderFromReader(strings.NewReader(content), outA, errA); err != nil {
+		t.Fatalf("first render failed: %v", err)
+	}
+	if err := renderFromReader(strings.NewReader(content), outB, errB); err != nil {
+		t.Fatalf("second render failed: %v", err)
+	}
+	if outA.String() != outB.String() {
+		t.Fatalf("expected deterministic render output for same input")
+	}
+}
+
 func contains(text string, sub string) bool {
 	for i := 0; i+len(sub) <= len(text); i++ {
 		if text[i:i+len(sub)] == sub {
