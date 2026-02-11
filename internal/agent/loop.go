@@ -296,13 +296,48 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 				return summary, reviewErr
 			}
 			_ = l.emit(ctx, contracts.Event{Type: contracts.EventTypeRunnerFinished, TaskID: task.ID, TaskTitle: task.Title, WorkerID: worker, ClonePath: taskRepoRoot, QueuePos: queuePos, Message: string(reviewResult.Status), Metadata: buildRunnerFinishedMetadata(reviewResult), Timestamp: time.Now().UTC()})
-			_ = l.emit(ctx, contracts.Event{Type: contracts.EventTypeReviewFinished, TaskID: task.ID, TaskTitle: task.Title, WorkerID: worker, ClonePath: taskRepoRoot, QueuePos: queuePos, Message: string(reviewResult.Status), Timestamp: time.Now().UTC()})
+
+			finalReviewResult := reviewResult
 			if reviewResult.Status == contracts.RunnerResultCompleted && !reviewResult.ReviewReady {
-				reviewResult.Status = contracts.RunnerResultFailed
-				reviewResult.Reason = "review verdict missing explicit pass"
+				verdictMetadata := map[string]string{
+					"log_path":     reviewLogPath,
+					"clone_path":   taskRepoRoot,
+					"review_phase": "verdict_retry",
+				}
+				if l.options.WatchdogTimeout > 0 {
+					verdictMetadata["watchdog_timeout"] = l.options.WatchdogTimeout.String()
+				}
+				if l.options.WatchdogInterval > 0 {
+					verdictMetadata["watchdog_interval"] = l.options.WatchdogInterval.String()
+				}
+				verdictStartMeta := buildRunnerStartedMetadata(contracts.RunnerModeReview, l.options.Model, taskRepoRoot, reviewLogPath, time.Now().UTC())
+				verdictStartMeta["review_phase"] = "verdict_retry"
+				_ = l.emit(ctx, contracts.Event{Type: contracts.EventTypeRunnerStarted, TaskID: task.ID, TaskTitle: task.Title, WorkerID: worker, ClonePath: taskRepoRoot, QueuePos: queuePos, Message: string(contracts.RunnerModeReview), Metadata: verdictStartMeta, Timestamp: time.Now().UTC()})
+
+				verdictResult, verdictErr := l.runRunnerWithMonitoring(ctx, contracts.RunnerRequest{
+					TaskID:   task.ID,
+					ParentID: l.options.ParentID,
+					Mode:     contracts.RunnerModeReview,
+					RepoRoot: taskRepoRoot,
+					Model:    l.options.Model,
+					Timeout:  l.options.RunnerTimeout,
+					Prompt:   buildReviewVerdictPrompt(task),
+					Metadata: verdictMetadata,
+				}, task.ID, task.Title, worker, taskRepoRoot, queuePos)
+				if verdictErr != nil {
+					return summary, verdictErr
+				}
+				_ = l.emit(ctx, contracts.Event{Type: contracts.EventTypeRunnerFinished, TaskID: task.ID, TaskTitle: task.Title, WorkerID: worker, ClonePath: taskRepoRoot, QueuePos: queuePos, Message: string(verdictResult.Status), Metadata: buildRunnerFinishedMetadata(verdictResult), Timestamp: time.Now().UTC()})
+				finalReviewResult = verdictResult
 			}
-			if reviewResult.Status != contracts.RunnerResultCompleted {
-				result = reviewResult
+
+			if finalReviewResult.Status == contracts.RunnerResultCompleted && !finalReviewResult.ReviewReady {
+				finalReviewResult.Status = contracts.RunnerResultFailed
+				finalReviewResult.Reason = "review verdict missing explicit pass"
+			}
+			_ = l.emit(ctx, contracts.Event{Type: contracts.EventTypeReviewFinished, TaskID: task.ID, TaskTitle: task.Title, WorkerID: worker, ClonePath: taskRepoRoot, QueuePos: queuePos, Message: string(finalReviewResult.Status), Timestamp: time.Now().UTC()})
+			if finalReviewResult.Status != contracts.RunnerResultCompleted {
+				result = finalReviewResult
 			}
 		}
 
@@ -574,10 +609,33 @@ func buildPrompt(task contracts.Task, mode contracts.RunnerMode) string {
 		"Task ID: " + task.ID,
 		"Title: " + task.Title,
 	}
+	if mode == contracts.RunnerModeReview {
+		sections = append(sections, strings.Join([]string{
+			"Review Instructions:",
+			"- Include exactly one verdict line in this format: REVIEW_VERDICT: pass OR REVIEW_VERDICT: fail",
+			"- Use pass only when implementation satisfies acceptance criteria and tests.",
+			"- If fail, explain the blocking gaps and required fixes.",
+		}, "\n"))
+	}
 	if strings.TrimSpace(task.Description) != "" {
 		sections = append(sections, "Description:\n"+task.Description)
 	}
 	return strings.Join(sections, "\n\n")
+}
+
+func buildReviewVerdictPrompt(task contracts.Task) string {
+	sections := []string{
+		"Mode: Review",
+		"Task ID: " + task.ID,
+		"Title: " + task.Title,
+		"Verdict-only follow-up:",
+		"- Your previous review did not include the required structured verdict.",
+		"- Respond with exactly one line and no extra text:",
+		"REVIEW_VERDICT: pass",
+		"or",
+		"REVIEW_VERDICT: fail",
+	}
+	return strings.Join(sections, "\n")
 }
 
 func defaultRunnerLogPath(repoRoot string, taskID string) string {

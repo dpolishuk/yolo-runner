@@ -211,28 +211,38 @@ func RunWithACPAndUpdates(ctx context.Context, issueID string, repoRoot string, 
 				})
 			})
 			aggregator := NewAgentMessageAggregator()
+			emitUpdate := func(line string) {
+				if line == "" {
+					return
+				}
+				if onLineUpdate != nil {
+					onLineUpdate(line)
+				}
+				// Skip writing tool calls directly to console - they should go to log bubble instead
+				// Only write non-tool-call messages to console
+				if !strings.HasPrefix(line, "⏳") && !strings.HasPrefix(line, "🔄") && !strings.HasPrefix(line, "✅") && !strings.HasPrefix(line, "❌") && !strings.HasPrefix(line, "⚪") {
+					writeConsoleLine(os.Stderr, fmt.Sprintf("ACP[%s] %s", issueID, line))
+				}
+				_ = logging.AppendACPRequest(logPath, logging.ACPRequestEntry{
+					IssueID:     issueID,
+					RequestType: "update",
+					Decision:    "allow",
+					Message:     line,
+				})
+			}
 			onUpdate := func(note *acp.SessionNotification) {
 				if note == nil {
 					return
 				}
 				if line := aggregator.ProcessUpdate(&note.Update); line != "" {
-					if onLineUpdate != nil {
-						onLineUpdate(line)
-					}
-					// Skip writing tool calls directly to console - they should go to log bubble instead
-					// Only write non-tool-call messages to console
-					if !strings.HasPrefix(line, "⏳") && !strings.HasPrefix(line, "🔄") && !strings.HasPrefix(line, "✅") && !strings.HasPrefix(line, "❌") && !strings.HasPrefix(line, "⚪") {
-						writeConsoleLine(os.Stderr, fmt.Sprintf("ACP[%s] %s", issueID, line))
-					}
-					_ = logging.AppendACPRequest(logPath, logging.ACPRequestEntry{
-						IssueID:     issueID,
-						RequestType: "update",
-						Decision:    "allow",
-						Message:     line,
-					})
+					emitUpdate(line)
 				}
 			}
-			return RunACPClient(ctx, stdio.Stdin(), stdio.Stdout(), repoRoot, prompt, handler, onUpdate)
+			runErr := RunACPClient(ctx, stdio.Stdin(), stdio.Stdout(), repoRoot, prompt, handler, onUpdate)
+			for _, line := range aggregator.FlushPending() {
+				emitUpdate(line)
+			}
+			return runErr
 		})
 	}
 	process = newWaitOnceProcess(process)

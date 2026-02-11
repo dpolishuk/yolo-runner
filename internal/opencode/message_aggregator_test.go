@@ -235,3 +235,34 @@ func TestAgentMessageAggregator_SeparateBuffersForEachMessageType(t *testing.T) 
 		t.Fatalf("expected aggregated agent thought: %q, got: %q", expected6, got6)
 	}
 }
+
+func TestAgentMessageAggregator_FlushPendingEmitsIncompleteChunks(t *testing.T) {
+	aggregator := NewAgentMessageAggregator()
+
+	update1 := acp.NewSessionUpdateAgentMessageChunk(acp.NewContentBlockText("REVIEW_"))
+	update2 := acp.NewSessionUpdateAgentMessageChunk(acp.NewContentBlockText("VERDICT: pass"))
+	_ = aggregator.ProcessUpdate(&update1)
+	_ = aggregator.ProcessUpdate(&update2)
+
+	flushed := aggregator.FlushPending()
+	if len(flushed) != 1 {
+		t.Fatalf("expected one flushed entry, got %d: %#v", len(flushed), flushed)
+	}
+	expected := "agent_message \"REVIEW_VERDICT: pass\""
+	if flushed[0] != expected {
+		t.Fatalf("expected flushed verdict %q, got %q", expected, flushed[0])
+	}
+}
+
+func TestAgentMessageAggregator_FlushPendingClearsBuffers(t *testing.T) {
+	aggregator := NewAgentMessageAggregator()
+
+	update := acp.NewSessionUpdateAgentMessageChunk(acp.NewContentBlockText("pending"))
+	_ = aggregator.ProcessUpdate(&update)
+	if len(aggregator.FlushPending()) == 0 {
+		t.Fatalf("expected pending content to flush")
+	}
+	if extra := aggregator.FlushPending(); len(extra) != 0 {
+		t.Fatalf("expected buffers to be empty after flush, got %#v", extra)
+	}
+}

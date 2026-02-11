@@ -1,7 +1,9 @@
 package opencode
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -23,7 +25,7 @@ type CLIRunnerAdapter struct {
 	runWithACP runWithACPFunc
 }
 
-var structuredReviewVerdictPattern = regexp.MustCompile(`(?i)\bREVIEW_VERDICT\s*:\s*(pass|fail)\b(?:\s|\\|$|[.,!?"'])`)
+var structuredReviewVerdictLinePattern = regexp.MustCompile(`(?i)^\s*REVIEW_VERDICT\s*:\s*(pass|fail)(?:\s*DONE)?\s*$`)
 var tokenRedactionPattern = regexp.MustCompile(`\bsk-[A-Za-z0-9_-]{12,}\b`)
 
 const (
@@ -184,15 +186,86 @@ func hasStructuredPassVerdict(logPath string) bool {
 	if err != nil {
 		return false
 	}
-	matches := structuredReviewVerdictPattern.FindAllStringSubmatch(string(content), -1)
-	if len(matches) == 0 {
+	verdict, ok := lastStructuredVerdictFromACPLog(content)
+	if !ok {
 		return false
 	}
-	last := matches[len(matches)-1]
-	if len(last) < 2 {
-		return false
+	return strings.EqualFold(verdict, "pass")
+}
+
+func lastStructuredVerdictFromACPLog(content []byte) (string, bool) {
+	if len(content) == 0 {
+		return "", false
 	}
-	return strings.EqualFold(last[1], "pass")
+
+	scanner := bufio.NewScanner(strings.NewReader(string(content)))
+	buf := make([]byte, 0, 64*1024)
+	scanner.Buffer(buf, 2*1024*1024)
+
+	var combinedAgentMessages strings.Builder
+	for scanner.Scan() {
+		text := extractAgentMessageText(scanner.Text())
+		if text == "" {
+			continue
+		}
+		combinedAgentMessages.WriteString(text)
+	}
+
+	if scanner.Err() != nil {
+		return "", false
+	}
+
+	return lastStructuredVerdictLine(combinedAgentMessages.String())
+}
+
+func extractAgentMessageText(logLine string) string {
+	line := strings.TrimSpace(logLine)
+	if line == "" {
+		return ""
+	}
+
+	entry := struct {
+		Message string `json:"message"`
+	}{}
+	if err := json.Unmarshal([]byte(line), &entry); err != nil {
+		return ""
+	}
+
+	message := strings.TrimSpace(entry.Message)
+	if message == "" || !strings.HasPrefix(message, "agent_message") {
+		return ""
+	}
+
+	payload := strings.TrimSpace(strings.TrimPrefix(message, "agent_message"))
+	if payload == "" {
+		return ""
+	}
+	if strings.HasPrefix(payload, `"`) {
+		if unquoted, err := strconv.Unquote(payload); err == nil {
+			return unquoted
+		}
+	}
+	return payload
+}
+
+func lastStructuredVerdictLine(text string) (string, bool) {
+	normalized := strings.NewReplacer("\r\n", "\n", "\r", "\n").Replace(text)
+	if normalized == "" {
+		return "", false
+	}
+
+	lastVerdict := ""
+	found := false
+	for _, line := range strings.Split(normalized, "\n") {
+		matches := structuredReviewVerdictLinePattern.FindStringSubmatch(line)
+		if len(matches) < 2 {
+			continue
+		}
+		lastVerdict = strings.ToLower(matches[1])
+		found = true
+	}
+
+	return lastVerdict, found
 }
 
 func normalizeACPUpdateLine(line string) (string, string) {

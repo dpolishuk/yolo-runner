@@ -31,6 +31,26 @@ func TestLoopCompletesTask(t *testing.T) {
 	}
 }
 
+func TestBuildPromptReviewRequiresStructuredVerdict(t *testing.T) {
+	prompt := buildPrompt(contracts.Task{ID: "t-1", Title: "Task 1", Description: "Check behavior"}, contracts.RunnerModeReview)
+	if !strings.Contains(prompt, "Mode: Review") {
+		t.Fatalf("expected review mode marker in prompt, got %q", prompt)
+	}
+	if !strings.Contains(prompt, "REVIEW_VERDICT: pass") || !strings.Contains(prompt, "REVIEW_VERDICT: fail") {
+		t.Fatalf("expected structured review verdict instructions, got %q", prompt)
+	}
+}
+
+func TestBuildPromptImplementExcludesReviewVerdictInstructions(t *testing.T) {
+	prompt := buildPrompt(contracts.Task{ID: "t-1", Title: "Task 1", Description: "Implement behavior"}, contracts.RunnerModeImplement)
+	if !strings.Contains(prompt, "Mode: Implementation") {
+		t.Fatalf("expected implementation mode marker in prompt, got %q", prompt)
+	}
+	if strings.Contains(prompt, "REVIEW_VERDICT") {
+		t.Fatalf("did not expect review verdict instructions in implement prompt, got %q", prompt)
+	}
+}
+
 func TestLoopRetriesFailedTaskThenCompletes(t *testing.T) {
 	mgr := newFakeTaskManager(contracts.Task{ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen})
 	run := &fakeRunner{results: []contracts.RunnerResult{
@@ -339,6 +359,7 @@ func TestLoopFailsTaskWhenReviewVerdictIsMissing(t *testing.T) {
 	run := &fakeRunner{results: []contracts.RunnerResult{
 		{Status: contracts.RunnerResultCompleted},
 		{Status: contracts.RunnerResultCompleted, ReviewReady: false},
+		{Status: contracts.RunnerResultCompleted, ReviewReady: false},
 	}}
 	vcs := &fakeVCS{}
 	loop := NewLoop(mgr, run, nil, LoopOptions{ParentID: "root", MaxRetries: 0, RequireReview: true, MergeOnSuccess: true, VCS: vcs})
@@ -358,6 +379,39 @@ func TestLoopFailsTaskWhenReviewVerdictIsMissing(t *testing.T) {
 	}
 	if containsCall(vcs.calls, "push_main") {
 		t.Fatalf("did not expect push_main call, got %v", vcs.calls)
+	}
+	if len(run.modes) != 3 {
+		t.Fatalf("expected implement + review + verdict retry runs, got %d", len(run.modes))
+	}
+}
+
+func TestLoopRetriesReviewWithVerdictOnlyPromptAndCompletes(t *testing.T) {
+	mgr := newFakeTaskManager(contracts.Task{ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen})
+	run := &fakeRunner{results: []contracts.RunnerResult{
+		{Status: contracts.RunnerResultCompleted},
+		{Status: contracts.RunnerResultCompleted, ReviewReady: false},
+		{Status: contracts.RunnerResultCompleted, ReviewReady: true},
+	}}
+	loop := NewLoop(mgr, run, nil, LoopOptions{ParentID: "root", MaxRetries: 0, RequireReview: true})
+
+	summary, err := loop.Run(context.Background())
+	if err != nil {
+		t.Fatalf("loop failed: %v", err)
+	}
+	if summary.Completed != 1 {
+		t.Fatalf("expected completed summary after verdict retry, got %#v", summary)
+	}
+	if mgr.statusByID["t-1"] != contracts.TaskStatusClosed {
+		t.Fatalf("expected closed task status, got %s", mgr.statusByID["t-1"])
+	}
+	if len(run.modes) != 3 {
+		t.Fatalf("expected implement + review + verdict retry runs, got %d", len(run.modes))
+	}
+	if run.modes[0] != contracts.RunnerModeImplement || run.modes[1] != contracts.RunnerModeReview || run.modes[2] != contracts.RunnerModeReview {
+		t.Fatalf("unexpected mode sequence: %#v", run.modes)
+	}
+	if !strings.Contains(run.requests[2].Prompt, "Verdict-only follow-up") {
+		t.Fatalf("expected verdict-only retry prompt, got %q", run.requests[2].Prompt)
 	}
 }
 

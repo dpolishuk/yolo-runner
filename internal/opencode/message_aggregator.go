@@ -154,3 +154,32 @@ func (a *AgentMessageAggregator) processAgentThoughtChunk(content *acp.ContentBl
 	// No newline yet, don't output anything
 	return ""
 }
+
+func (a *AgentMessageAggregator) FlushPending() []string {
+	if a == nil {
+		return nil
+	}
+
+	lines := make([]string, 0, 3)
+	if text := a.agentMessageBuffer.String(); text != "" {
+		a.agentMessageBuffer.Reset()
+		content := acp.NewContentBlockText(text)
+		lines = append(lines, formatMessage("agent_message", &content))
+	}
+	if text := a.userMessageBuffer.String(); text != "" {
+		a.userMessageBuffer.Reset()
+		content := acp.NewContentBlockText(text)
+		lines = append(lines, formatMessage("user_message", &content))
+	}
+	if text := a.agentThoughtBuffer.String(); text != "" {
+		a.agentThoughtBuffer.Reset()
+		normalized := normalizeAgentThoughtText(text)
+		content := acp.NewContentBlockText(normalized)
+		lines = append(lines, formatMessage("agent_thought", &content))
+	}
+
+	if len(lines) == 0 {
+		return nil
+	}
+	return lines
+}

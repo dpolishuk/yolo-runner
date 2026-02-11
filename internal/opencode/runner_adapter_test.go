@@ -12,6 +12,20 @@ import (
 	"github.com/anomalyco/yolo-runner/internal/contracts"
 )
 
+func writeACPLogFile(t *testing.T, lines ...string) string {
+	t.Helper()
+	tmp := t.TempDir()
+	logPath := filepath.Join(tmp, "review.jsonl")
+	payload := strings.Join(lines, "\n")
+	if payload != "" {
+		payload += "\n"
+	}
+	if err := os.WriteFile(logPath, []byte(payload), 0o644); err != nil {
+		t.Fatalf("write log: %v", err)
+	}
+	return logPath
+}
+
 func TestCLIRunnerAdapterImplementsContract(t *testing.T) {
 	var _ contracts.AgentRunner = (*CLIRunnerAdapter)(nil)
 }
@@ -223,6 +237,63 @@ func TestCLIRunnerAdapterLeavesReviewReadyFalseWhenOnlyPassFailTemplatePresent(t
 	}
 	if result.ReviewReady {
 		t.Fatalf("expected ReviewReady=false when only pass/fail template appears")
+	}
+}
+
+func TestHasStructuredPassVerdictHandlesChunkedVerdictAcrossMessages(t *testing.T) {
+	logPath := writeACPLogFile(
+		t,
+		`{"message":"agent_message \"REVIEW_\""}`,
+		`{"message":"agent_message \"VERDICT: pass\""}`,
+	)
+
+	if !hasStructuredPassVerdict(logPath) {
+		t.Fatalf("expected ReviewReady=true for chunked structured pass verdict")
+	}
+}
+
+func TestHasStructuredPassVerdictIgnoresInstructionTemplateMentions(t *testing.T) {
+	logPath := writeACPLogFile(
+		t,
+		`{"message":"agent_message \"Use REVIEW_VERDICT: pass only when all checks are green\\n\""}`,
+	)
+
+	if hasStructuredPassVerdict(logPath) {
+		t.Fatalf("expected ReviewReady=false when REVIEW_VERDICT appears only in instruction text")
+	}
+}
+
+func TestHasStructuredPassVerdictUsesLastStructuredVerdict(t *testing.T) {
+	logPath := writeACPLogFile(
+		t,
+		`{"message":"agent_message \"REVIEW_VERDICT: pass\\n\""}`,
+		`{"message":"agent_message \"REVIEW_VERDICT: fail\\n\""}`,
+	)
+
+	if hasStructuredPassVerdict(logPath) {
+		t.Fatalf("expected ReviewReady=false when the last structured verdict is fail")
+	}
+}
+
+func TestHasStructuredPassVerdictAcceptsDoneSuffix(t *testing.T) {
+	logPath := writeACPLogFile(
+		t,
+		`{"message":"agent_message \"REVIEW_VERDICT: passDONE\""}`,
+	)
+
+	if !hasStructuredPassVerdict(logPath) {
+		t.Fatalf("expected ReviewReady=true for REVIEW_VERDICT with DONE suffix")
+	}
+}
+
+func TestHasStructuredPassVerdictRejectsFailWithDoneSuffix(t *testing.T) {
+	logPath := writeACPLogFile(
+		t,
+		`{"message":"agent_message \"REVIEW_VERDICT: failDONE\""}`,
+	)
+
+	if hasStructuredPassVerdict(logPath) {
+		t.Fatalf("expected ReviewReady=false for failing REVIEW_VERDICT with DONE suffix")
 	}
 }
 
