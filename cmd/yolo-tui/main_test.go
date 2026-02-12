@@ -236,6 +236,31 @@ func TestFullscreenModelToggleDetailsWithDKey(t *testing.T) {
 	}
 }
 
+func TestFullscreenModelStaysOpenAfterStreamDoneUntilQuitKey(t *testing.T) {
+	stream := make(chan streamMsg)
+	close(stream)
+	m := newFullscreenModel(stream, nil, false)
+
+	updated, cmd := m.Update(streamDoneMsg{})
+	if cmd != nil {
+		t.Fatalf("expected no quit command when stream ends")
+	}
+
+	next := updated.(fullscreenModel)
+	if !next.streamDone {
+		t.Fatalf("expected streamDone to be true")
+	}
+
+	updated, cmd = next.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	if cmd == nil {
+		t.Fatalf("expected quit command on q after stream ends")
+	}
+	if _, ok := cmd().(tea.QuitMsg); !ok {
+		t.Fatalf("expected tea.QuitMsg, got %T", cmd())
+	}
+	_ = updated
+}
+
 func TestStylePanelLinesUsesDepthWithoutMarkers(t *testing.T) {
 	lines := []monitor.UIPanelLine{
 		{ID: "run", Depth: 0, Label: "Run", Selected: false, Expanded: true, Leaf: false},
