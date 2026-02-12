@@ -185,8 +185,8 @@ func (watchdog *Watchdog) Monitor(process Process) error {
 				}
 			}
 
-			if currentTime.Sub(lastOutput) > idleTransportGrace {
-				if stall, ok := classifyIdleTransportOpen(config, currentTime, lastOutput); ok {
+			if stall, ok := classifyIdleTransportOpen(config, currentTime, lastOutput); ok {
+				if currentTime.Sub(lastOutput) >= idleTransportGrace || currentSize == lastSize {
 					if err := process.Kill(); err != nil {
 						return err
 					}
@@ -340,9 +340,6 @@ func hasPromptLoopCompletionTail(lines []string) bool {
 		}
 	}
 	if idleIdx < 0 {
-		return false
-	}
-	if len(lines)-1-idleIdx > 2 {
 		return false
 	}
 	start := idleIdx - 12

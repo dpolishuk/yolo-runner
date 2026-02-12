@@ -190,6 +190,7 @@ func RunWithACPAndUpdates(ctx context.Context, issueID string, repoRoot string, 
 	}
 
 	if acpClient == nil {
+		printACPToConsole := onLineUpdate == nil
 		type stdioProcess interface {
 			Stdin() io.WriteCloser
 			Stdout() io.ReadCloser
@@ -201,7 +202,9 @@ func RunWithACPAndUpdates(ctx context.Context, issueID string, repoRoot string, 
 		acpClient = ACPClientFunc(func(ctx context.Context, issueID string, logPath string) error {
 			handler := NewACPHandler(issueID, logPath, func(logPath string, issueID string, requestType string, decision string, detail string) error {
 				if line := forwardACPRequestLine(requestType, decision, detail, onLineUpdate); line != "" {
-					writeConsoleLine(os.Stderr, fmt.Sprintf("ACP[%s] %s", issueID, line))
+					if printACPToConsole {
+						writeConsoleLine(os.Stderr, fmt.Sprintf("ACP[%s] %s", issueID, line))
+					}
 				}
 				return logging.AppendACPRequest(logPath, logging.ACPRequestEntry{
 					IssueID:     issueID,
@@ -218,9 +221,10 @@ func RunWithACPAndUpdates(ctx context.Context, issueID string, repoRoot string, 
 				if onLineUpdate != nil {
 					onLineUpdate(line)
 				}
-				// Skip writing tool calls directly to console - they should go to log bubble instead
-				// Only write non-tool-call messages to console
-				if !strings.HasPrefix(line, "⏳") && !strings.HasPrefix(line, "🔄") && !strings.HasPrefix(line, "✅") && !strings.HasPrefix(line, "❌") && !strings.HasPrefix(line, "⚪") {
+				// Skip writing tool calls directly to console - they should go to log bubble instead.
+				// In event-stream mode (onLineUpdate != nil), don't print ACP lines to stderr to avoid
+				// corrupting yolo-tui's rendered status bar in the same terminal.
+				if printACPToConsole && !strings.HasPrefix(line, "⏳") && !strings.HasPrefix(line, "🔄") && !strings.HasPrefix(line, "✅") && !strings.HasPrefix(line, "❌") && !strings.HasPrefix(line, "⚪") {
 					writeConsoleLine(os.Stderr, fmt.Sprintf("ACP[%s] %s", issueID, line))
 				}
 				_ = logging.AppendACPRequest(logPath, logging.ACPRequestEntry{
