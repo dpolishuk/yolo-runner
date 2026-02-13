@@ -1,6 +1,7 @@
 package webhook
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -12,16 +13,19 @@ import (
 )
 
 const defaultMaxBodyBytes = int64(1 << 20)
+const defaultDispatchTimeout = 5 * time.Second
 
 type HandlerOptions struct {
-	MaxBodyBytes int64
-	Now          func() time.Time
+	MaxBodyBytes    int64
+	DispatchTimeout time.Duration
+	Now             func() time.Time
 }
 
 type handler struct {
-	dispatcher   Dispatcher
-	maxBodyBytes int64
-	now          func() time.Time
+	dispatcher      Dispatcher
+	maxBodyBytes    int64
+	dispatchTimeout time.Duration
+	now             func() time.Time
 }
 
 func NewHandler(dispatcher Dispatcher, opts HandlerOptions) http.Handler {
@@ -29,15 +33,20 @@ func NewHandler(dispatcher Dispatcher, opts HandlerOptions) http.Handler {
 	if maxBodyBytes <= 0 {
 		maxBodyBytes = defaultMaxBodyBytes
 	}
+	dispatchTimeout := opts.DispatchTimeout
+	if dispatchTimeout <= 0 {
+		dispatchTimeout = defaultDispatchTimeout
+	}
 	nowFn := opts.Now
 	if nowFn == nil {
 		nowFn = func() time.Time { return time.Now().UTC() }
 	}
 
 	return handler{
-		dispatcher:   dispatcher,
-		maxBodyBytes: maxBodyBytes,
-		now:          nowFn,
+		dispatcher:      dispatcher,
+		maxBodyBytes:    maxBodyBytes,
+		dispatchTimeout: dispatchTimeout,
+		now:             nowFn,
 	}
 }
 
@@ -70,9 +79,13 @@ func (h handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "dispatcher unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	if err := h.dispatcher.Dispatch(r.Context(), job); err != nil {
+	dispatchCtx, cancel := context.WithTimeout(r.Context(), h.dispatchTimeout)
+	defer cancel()
+	if err := h.dispatcher.Dispatch(dispatchCtx, job); err != nil {
 		switch {
 		case errors.Is(err, ErrQueueFull), errors.Is(err, ErrDispatcherClosed):
+			http.Error(w, "webhook queue unavailable", http.StatusServiceUnavailable)
+		case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
 			http.Error(w, "webhook queue unavailable", http.StatusServiceUnavailable)
 		default:
 			http.Error(w, "failed to enqueue webhook job", http.StatusInternalServerError)
