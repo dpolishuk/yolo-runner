@@ -13,3 +13,4 @@ build:
 	go build -o bin/yolo-agent ./cmd/yolo-agent
 	go build -o bin/yolo-task ./cmd/yolo-task
 	go build -o bin/yolo-tui ./cmd/yolo-tui
+	go build -o bin/yolo-linear-webhook ./cmd/yolo-linear-webhook
