@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -125,6 +126,29 @@ func TestHandlerMapsUnexpectedDispatchFailureTo500(t *testing.T) {
 	}
 }
 
+func TestHandlerReturns503WhenDispatchTimesOut(t *testing.T) {
+	dispatcher := &blockingDispatcher{}
+	h := NewHandler(dispatcher, HandlerOptions{
+		DispatchTimeout: 20 * time.Millisecond,
+	})
+	req := httptest.NewRequest(http.MethodPost, "/linear/webhook", bytes.NewReader(readFixture(t, "agent_session_event.created.v1.json")))
+	rw := httptest.NewRecorder()
+
+	start := time.Now()
+	h.ServeHTTP(rw, req)
+	elapsed := time.Since(start)
+
+	if rw.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected %d, got %d body=%q", http.StatusServiceUnavailable, rw.Code, rw.Body.String())
+	}
+	if elapsed >= 250*time.Millisecond {
+		t.Fatalf("expected timeout response to be fast, got %s", elapsed)
+	}
+	if !dispatcher.sawDeadline() {
+		t.Fatal("expected dispatcher context to include deadline")
+	}
+}
+
 func TestHandlerAckRemainsFastWhenSinkIsSlow(t *testing.T) {
 	sink := &slowQueueSink{release: make(chan struct{}), started: make(chan struct{}, 1)}
 	dispatcher := NewAsyncDispatcher(sink, 8)
@@ -187,4 +211,25 @@ func (s *slowQueueSink) Enqueue(context.Context, Job) error {
 	}
 	<-s.release
 	return nil
+}
+
+type blockingDispatcher struct {
+	mu           sync.Mutex
+	sawCtxBounds bool
+}
+
+func (d *blockingDispatcher) Dispatch(ctx context.Context, _ Job) error {
+	if _, ok := ctx.Deadline(); ok {
+		d.mu.Lock()
+		d.sawCtxBounds = true
+		d.mu.Unlock()
+	}
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func (d *blockingDispatcher) sawDeadline() bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.sawCtxBounds
 }
