@@ -16,6 +16,12 @@ type backendSelectionOptions struct {
 	Stream        bool
 }
 
+type backendSelectionPolicyInput struct {
+	AgentBackendFlag      string
+	LegacyBackendFlag     string
+	ProfileDefaultBackend string
+}
+
 func defaultBackendCapabilityMatrix() map[string]backendCapabilities {
 	return map[string]backendCapabilities{
 		backendOpenCode: {
@@ -50,6 +56,19 @@ func selectBackend(raw string, options backendSelectionOptions, matrix map[strin
 		return "", backendCapabilities{}, fmt.Errorf("backend %q does not support stream mode", name)
 	}
 	return name, caps, nil
+}
+
+func resolveBackendSelectionPolicy(input backendSelectionPolicyInput) string {
+	for _, value := range []string{
+		input.AgentBackendFlag,
+		input.LegacyBackendFlag,
+		input.ProfileDefaultBackend,
+	} {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return backendOpenCode
 }
 
 func supportedBackends(matrix map[string]backendCapabilities) []string {

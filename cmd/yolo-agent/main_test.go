@@ -74,6 +74,71 @@ func TestRunMainDefaultsBackendToOpenCode(t *testing.T) {
 	}
 }
 
+func TestRunMainAcceptsAgentBackendFlag(t *testing.T) {
+	called := false
+	var got runConfig
+	run := func(_ context.Context, cfg runConfig) error {
+		called = true
+		got = cfg
+		return nil
+	}
+
+	code := RunMain([]string{"--repo", "/repo", "--root", "root-1", "--agent-backend", "codex"}, run)
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d", code)
+	}
+	if !called {
+		t.Fatalf("expected run function to be called")
+	}
+	if got.backend != backendCodex {
+		t.Fatalf("expected backend=%q, got %q", backendCodex, got.backend)
+	}
+}
+
+func TestRunMainUsesProfileDefaultBackendWhenBackendFlagsAreUnset(t *testing.T) {
+	t.Setenv("YOLO_AGENT_BACKEND", backendClaude)
+	called := false
+	var got runConfig
+	run := func(_ context.Context, cfg runConfig) error {
+		called = true
+		got = cfg
+		return nil
+	}
+
+	code := RunMain([]string{"--repo", "/repo", "--root", "root-1"}, run)
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d", code)
+	}
+	if !called {
+		t.Fatalf("expected run function to be called")
+	}
+	if got.backend != backendClaude {
+		t.Fatalf("expected profile default backend=%q, got %q", backendClaude, got.backend)
+	}
+}
+
+func TestRunMainAgentBackendFlagOverridesLegacyAndProfileBackends(t *testing.T) {
+	t.Setenv("YOLO_AGENT_BACKEND", backendKimi)
+	called := false
+	var got runConfig
+	run := func(_ context.Context, cfg runConfig) error {
+		called = true
+		got = cfg
+		return nil
+	}
+
+	code := RunMain([]string{"--repo", "/repo", "--root", "root-1", "--backend", "claude", "--agent-backend", "codex"}, run)
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d", code)
+	}
+	if !called {
+		t.Fatalf("expected run function to be called")
+	}
+	if got.backend != backendCodex {
+		t.Fatalf("expected backend=%q, got %q", backendCodex, got.backend)
+	}
+}
+
 func TestRunMainAcceptsKimiBackend(t *testing.T) {
 	called := false
 	var got runConfig
