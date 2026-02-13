@@ -1,6 +1,6 @@
 ---
 id: yr-70nw
-status: open
+status: closed
 deps: []
 links: []
 created: 2026-02-09T23:07:07Z
@@ -17,3 +17,9 @@ STRICT TDD: failing tests first. Normalize implement/review/timeouts/result mapp
 
 Given backend contract tests, when all adapters run, then they satisfy required interfaces and statuses.
 
+
+## Notes
+
+**2026-02-13T20:10:48Z**
+
+Implemented backend contract hardening for timeout/result normalization and opencode adapter nil-safety parity. Validation: go test ./...
