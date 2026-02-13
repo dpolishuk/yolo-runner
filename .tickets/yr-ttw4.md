@@ -20,6 +20,54 @@ Given kimi profile, when task runs, then implement and review are executed with 
 
 ## Notes
 
+**2026-02-11T18:34:52Z**
+
+triage_reason=review verdict missing explicit pass
+
+**2026-02-11T18:34:52Z**
+
+triage_status=failed
+
+**2026-02-12T20:34:18Z**
+
+triage_reason=exit status 1
+
+**2026-02-12T20:34:18Z**
+
+triage_status=failed
+
+**2026-02-12T20:40:19Z**
+
+triage_reason=review verdict missing explicit pass
+
+**2026-02-12T20:40:19Z**
+
+triage_status=failed
+
+**2026-02-12T21:15:19Z**
+
+triage_reason=review verdict returned fail
+
+**2026-02-12T21:15:19Z**
+
+triage_status=failed
+
+**2026-02-13T07:53:37Z**
+
+triage_reason=review verdict returned fail
+
+**2026-02-13T07:53:37Z**
+
+triage_status=failed
+
+**2026-02-13T08:38:48Z**
+
+triage_reason=review verdict returned fail
+
+**2026-02-13T08:38:48Z**
+
+triage_status=failed
+
 **2026-02-13T20:15:31Z**
 
 Validated Kimi backend MVP end-to-end in current branch: adapter wiring in yolo-agent, implement+review mode support, and normalized result mapping via contracts.NormalizeBackendRunnerResult. Verification: go test ./... on 2026-02-13.
