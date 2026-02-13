@@ -171,7 +171,7 @@ func resolveLogPath(request contracts.RunnerRequest) string {
 }
 
 func buildArgs(request contracts.RunnerRequest) []string {
-	args := []string{"exec", "--sandbox", "workspace-write"}
+	args := []string{"exec", "--dangerously-bypass-approvals-and-sandbox"}
 	if model := strings.TrimSpace(request.Model); model != "" {
 		args = append(args, "--model", model)
 	}

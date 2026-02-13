@@ -171,7 +171,7 @@ func resolveLogPath(request contracts.RunnerRequest) string {
 }
 
 func buildArgs(request contracts.RunnerRequest) []string {
-	args := []string{"--print", "--output-format", "text"}
+	args := []string{"--print", "--output-format", "text", "--yolo"}
 	if model := strings.TrimSpace(request.Model); model != "" {
 		args = append(args, "--model", model)
 	}

@@ -47,7 +47,7 @@ func TestCLIRunnerAdapterRunsKimiAndStreamsProgress(t *testing.T) {
 	if gotSpec.Binary != "kimi-bin" {
 		t.Fatalf("expected binary kimi-bin, got %q", gotSpec.Binary)
 	}
-	expectedArgs := []string{"--print", "--output-format", "text", "--model", "kimi-k2", "--prompt", "implement feature"}
+	expectedArgs := []string{"--print", "--output-format", "text", "--yolo", "--model", "kimi-k2", "--prompt", "implement feature"}
 	if !reflect.DeepEqual(gotSpec.Args, expectedArgs) {
 		t.Fatalf("unexpected args: %#v", gotSpec.Args)
 	}

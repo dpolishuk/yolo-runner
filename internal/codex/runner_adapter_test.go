@@ -47,7 +47,7 @@ func TestCLIRunnerAdapterRunsCodexAndStreamsProgress(t *testing.T) {
 	if gotSpec.Binary != "codex-bin" {
 		t.Fatalf("expected binary codex-bin, got %q", gotSpec.Binary)
 	}
-	expectedArgs := []string{"exec", "--sandbox", "workspace-write", "--model", "openai/gpt-5.3-codex", "implement feature"}
+	expectedArgs := []string{"exec", "--dangerously-bypass-approvals-and-sandbox", "--model", "openai/gpt-5.3-codex", "implement feature"}
 	if !reflect.DeepEqual(gotSpec.Args, expectedArgs) {
 		t.Fatalf("unexpected args: %#v", gotSpec.Args)
 	}
