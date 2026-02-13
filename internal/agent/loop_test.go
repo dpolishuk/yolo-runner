@@ -948,6 +948,17 @@ func TestLoopEmitsLandingQueueLifecycleEventsOnAutoLandSuccess(t *testing.T) {
 	if !hasEventType(sink.events, contracts.EventTypePushCompleted) {
 		t.Fatalf("expected push_completed event")
 	}
+	if !hasEventType(sink.events, contracts.EventTypeMergeQueued) {
+		t.Fatalf("expected merge_queued event")
+	}
+	if !hasEventType(sink.events, contracts.EventTypeMergeLanded) {
+		t.Fatalf("expected merge_landed event")
+	}
+	queuedIndex := indexOfEventType(sink.events, contracts.EventTypeMergeQueued)
+	landedIndex := indexOfEventType(sink.events, contracts.EventTypeMergeLanded)
+	if queuedIndex == -1 || landedIndex == -1 || queuedIndex >= landedIndex {
+		t.Fatalf("expected merge_queued before merge_landed, got events=%#v", sink.events)
+	}
 }
 
 func TestLoopMarksLandingQueueBlockedOnMergeFailure(t *testing.T) {
@@ -984,6 +995,15 @@ func TestLoopMarksLandingQueueBlockedOnMergeFailure(t *testing.T) {
 	if !hasLandingStatus(updates, "blocked") {
 		t.Fatalf("expected blocked landing update, got %#v", updates)
 	}
+	if !hasEventType(sink.events, contracts.EventTypeMergeRetry) {
+		t.Fatalf("expected merge_retry event")
+	}
+	if !hasEventType(sink.events, contracts.EventTypeMergeBlocked) {
+		t.Fatalf("expected merge_blocked event")
+	}
+	if hasEventType(sink.events, contracts.EventTypeMergeLanded) {
+		t.Fatalf("did not expect merge_landed event on blocked landing")
+	}
 }
 
 func TestLoopAutoLandRetriesOnceThenSucceeds(t *testing.T) {
@@ -1012,6 +1032,15 @@ func TestLoopAutoLandRetriesOnceThenSucceeds(t *testing.T) {
 	}
 	if !hasLandingStatus(updates, "landed") {
 		t.Fatalf("expected landed landing update, got %#v", updates)
+	}
+	if !hasEventType(sink.events, contracts.EventTypeMergeRetry) {
+		t.Fatalf("expected merge_retry event")
+	}
+	if !hasEventType(sink.events, contracts.EventTypeMergeLanded) {
+		t.Fatalf("expected merge_landed event")
+	}
+	if indexOfEventType(sink.events, contracts.EventTypeMergeRetry) >= indexOfEventType(sink.events, contracts.EventTypeMergeLanded) {
+		t.Fatalf("expected merge_retry before merge_landed, got events=%#v", sink.events)
 	}
 }
 
@@ -1423,6 +1452,15 @@ func eventsByType(events []contracts.Event, eventType contracts.EventType) []con
 		}
 	}
 	return result
+}
+
+func indexOfEventType(events []contracts.Event, eventType contracts.EventType) int {
+	for i, event := range events {
+		if event.Type == eventType {
+			return i
+		}
+	}
+	return -1
 }
 
 func hasLandingStatus(events []contracts.Event, status string) bool {
