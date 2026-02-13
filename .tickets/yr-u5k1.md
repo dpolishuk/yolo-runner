@@ -1,6 +1,6 @@
 ---
 id: yr-u5k1
-status: open
+status: closed
 deps: []
 links: []
 created: 2026-02-10T00:12:27Z
