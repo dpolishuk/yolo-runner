@@ -9,6 +9,7 @@ require (
 	github.com/charmbracelet/lipgloss v1.1.1-0.20250404203927-76690c660834
 	github.com/ironpark/acp-go v0.0.0-20250912060836-d127df3b2709
 	golang.org/x/term v0.39.0
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 replace github.com/ironpark/acp-go => ./third_party/acp-go
