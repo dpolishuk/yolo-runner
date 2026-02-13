@@ -1,4 +1,4 @@
-package codex
+package kimi
 
 import (
 	"context"
@@ -18,11 +18,11 @@ func TestCLIRunnerAdapterImplementsContract(t *testing.T) {
 	var _ contracts.AgentRunner = (*CLIRunnerAdapter)(nil)
 }
 
-func TestCLIRunnerAdapterRunsCodexAndStreamsProgress(t *testing.T) {
+func TestCLIRunnerAdapterRunsKimiAndStreamsProgress(t *testing.T) {
 	repoRoot := t.TempDir()
 	var gotSpec CommandSpec
 	updates := []contracts.RunnerProgress{}
-	adapter := NewCLIRunnerAdapter("codex-bin", commandRunnerFunc(func(_ context.Context, spec CommandSpec) error {
+	adapter := NewCLIRunnerAdapter("kimi-bin", commandRunnerFunc(func(_ context.Context, spec CommandSpec) error {
 		gotSpec = spec
 		_, _ = io.WriteString(spec.Stdout, "working line\n")
 		_, _ = io.WriteString(spec.Stderr, "warn line\n")
@@ -33,7 +33,7 @@ func TestCLIRunnerAdapterRunsCodexAndStreamsProgress(t *testing.T) {
 		TaskID:   "t-1",
 		RepoRoot: repoRoot,
 		Prompt:   "implement feature",
-		Model:    "openai/gpt-5.3-codex",
+		Model:    "kimi-k2",
 		OnProgress: func(progress contracts.RunnerProgress) {
 			updates = append(updates, progress)
 		},
@@ -44,22 +44,22 @@ func TestCLIRunnerAdapterRunsCodexAndStreamsProgress(t *testing.T) {
 	if result.Status != contracts.RunnerResultCompleted {
 		t.Fatalf("expected completed status, got %s", result.Status)
 	}
-	if gotSpec.Binary != "codex-bin" {
-		t.Fatalf("expected binary codex-bin, got %q", gotSpec.Binary)
+	if gotSpec.Binary != "kimi-bin" {
+		t.Fatalf("expected binary kimi-bin, got %q", gotSpec.Binary)
 	}
-	expectedArgs := []string{"exec", "--sandbox", "workspace-write", "--model", "openai/gpt-5.3-codex", "implement feature"}
+	expectedArgs := []string{"--print", "--output-format", "text", "--model", "kimi-k2", "--prompt", "implement feature"}
 	if !reflect.DeepEqual(gotSpec.Args, expectedArgs) {
 		t.Fatalf("unexpected args: %#v", gotSpec.Args)
 	}
 	if gotSpec.Dir != repoRoot {
 		t.Fatalf("expected command dir %q, got %q", repoRoot, gotSpec.Dir)
 	}
-	expectedLogPath := filepath.Join(repoRoot, "runner-logs", "codex", "t-1.jsonl")
+	expectedLogPath := filepath.Join(repoRoot, "runner-logs", "kimi", "t-1.jsonl")
 	if result.LogPath != expectedLogPath {
 		t.Fatalf("expected log path %q, got %q", expectedLogPath, result.LogPath)
 	}
-	if result.Artifacts["backend"] != "codex" {
-		t.Fatalf("expected backend artifact codex, got %q", result.Artifacts["backend"])
+	if result.Artifacts["backend"] != "kimi" {
+		t.Fatalf("expected backend artifact kimi, got %q", result.Artifacts["backend"])
 	}
 	if len(updates) < 2 {
 		t.Fatalf("expected at least 2 progress updates, got %d", len(updates))
@@ -89,7 +89,7 @@ func TestCLIRunnerAdapterRunsCodexAndStreamsProgress(t *testing.T) {
 }
 
 func TestCLIRunnerAdapterSetsReviewReadyOnStructuredPassVerdict(t *testing.T) {
-	adapter := NewCLIRunnerAdapter("codex-bin", commandRunnerFunc(func(_ context.Context, spec CommandSpec) error {
+	adapter := NewCLIRunnerAdapter("kimi-bin", commandRunnerFunc(func(_ context.Context, spec CommandSpec) error {
 		_, _ = io.WriteString(spec.Stdout, "REVIEW_VERDICT: pass\n")
 		return nil
 	}))
@@ -112,7 +112,7 @@ func TestCLIRunnerAdapterSetsReviewReadyOnStructuredPassVerdict(t *testing.T) {
 }
 
 func TestCLIRunnerAdapterLeavesReviewReadyFalseOnStructuredFailVerdict(t *testing.T) {
-	adapter := NewCLIRunnerAdapter("codex-bin", commandRunnerFunc(func(_ context.Context, spec CommandSpec) error {
+	adapter := NewCLIRunnerAdapter("kimi-bin", commandRunnerFunc(func(_ context.Context, spec CommandSpec) error {
 		_, _ = io.WriteString(spec.Stdout, "REVIEW_VERDICT: failDONE\n")
 		return nil
 	}))
@@ -135,7 +135,7 @@ func TestCLIRunnerAdapterLeavesReviewReadyFalseOnStructuredFailVerdict(t *testin
 }
 
 func TestCLIRunnerAdapterMapsTimeoutToBlocked(t *testing.T) {
-	adapter := NewCLIRunnerAdapter("codex-bin", commandRunnerFunc(func(_ context.Context, spec CommandSpec) error {
+	adapter := NewCLIRunnerAdapter("kimi-bin", commandRunnerFunc(func(_ context.Context, spec CommandSpec) error {
 		_, _ = io.WriteString(spec.Stdout, "still working\n")
 		return context.DeadlineExceeded
 	}))
@@ -158,9 +158,9 @@ func TestCLIRunnerAdapterMapsTimeoutToBlocked(t *testing.T) {
 }
 
 func TestCLIRunnerAdapterMapsGenericErrorToFailed(t *testing.T) {
-	adapter := NewCLIRunnerAdapter("codex-bin", commandRunnerFunc(func(_ context.Context, spec CommandSpec) error {
+	adapter := NewCLIRunnerAdapter("kimi-bin", commandRunnerFunc(func(_ context.Context, spec CommandSpec) error {
 		_, _ = io.WriteString(spec.Stderr, "boom\n")
-		return errors.New("codex failed")
+		return errors.New("kimi failed")
 	}))
 
 	result, err := adapter.Run(context.Background(), contracts.RunnerRequest{
@@ -174,7 +174,7 @@ func TestCLIRunnerAdapterMapsGenericErrorToFailed(t *testing.T) {
 	if result.Status != contracts.RunnerResultFailed {
 		t.Fatalf("expected failed status, got %s", result.Status)
 	}
-	if !strings.Contains(result.Reason, "codex failed") {
-		t.Fatalf("expected failure reason to contain codex failed, got %q", result.Reason)
+	if !strings.Contains(result.Reason, "kimi failed") {
+		t.Fatalf("expected failure reason to contain kimi failed, got %q", result.Reason)
 	}
 }

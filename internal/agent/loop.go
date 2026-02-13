@@ -248,7 +248,7 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 			return summary, err
 		}
 
-		implementLogPath := defaultRunnerLogPath(taskRepoRoot, task.ID)
+		implementLogPath := defaultRunnerLogPath(taskRepoRoot, task.ID, l.options.Backend)
 		implementStartMeta := buildRunnerStartedMetadata(contracts.RunnerModeImplement, l.options.Backend, l.options.Model, taskRepoRoot, implementLogPath, time.Now().UTC())
 		_ = l.emit(ctx, contracts.Event{Type: contracts.EventTypeRunnerStarted, TaskID: task.ID, TaskTitle: task.Title, WorkerID: worker, ClonePath: taskRepoRoot, QueuePos: queuePos, Message: string(contracts.RunnerModeImplement), Metadata: implementStartMeta, Timestamp: time.Now().UTC()})
 		requestMetadata := map[string]string{"log_path": implementLogPath, "clone_path": taskRepoRoot}
@@ -276,7 +276,7 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 
 		if result.Status == contracts.RunnerResultCompleted && l.options.RequireReview {
 			_ = l.emit(ctx, contracts.Event{Type: contracts.EventTypeReviewStarted, TaskID: task.ID, TaskTitle: task.Title, WorkerID: worker, ClonePath: taskRepoRoot, QueuePos: queuePos, Timestamp: time.Now().UTC()})
-			reviewLogPath := defaultRunnerLogPath(taskRepoRoot, task.ID)
+			reviewLogPath := defaultRunnerLogPath(taskRepoRoot, task.ID, l.options.Backend)
 			reviewStartMeta := buildRunnerStartedMetadata(contracts.RunnerModeReview, l.options.Backend, l.options.Model, taskRepoRoot, reviewLogPath, time.Now().UTC())
 			_ = l.emit(ctx, contracts.Event{Type: contracts.EventTypeRunnerStarted, TaskID: task.ID, TaskTitle: task.Title, WorkerID: worker, ClonePath: taskRepoRoot, QueuePos: queuePos, Message: string(contracts.RunnerModeReview), Metadata: reviewStartMeta, Timestamp: time.Now().UTC()})
 			reviewMetadata := map[string]string{"log_path": reviewLogPath, "clone_path": taskRepoRoot}
@@ -685,11 +685,22 @@ func buildReviewVerdictPrompt(task contracts.Task) string {
 	return strings.Join(sections, "\n")
 }
 
-func defaultRunnerLogPath(repoRoot string, taskID string) string {
+func defaultRunnerLogPath(repoRoot string, taskID string, backend string) string {
 	if strings.TrimSpace(repoRoot) == "" || strings.TrimSpace(taskID) == "" {
 		return ""
 	}
-	return filepath.Join(repoRoot, "runner-logs", "opencode", taskID+".jsonl")
+	return filepath.Join(repoRoot, "runner-logs", runnerLogBackendDir(backend), taskID+".jsonl")
+}
+
+func runnerLogBackendDir(backend string) string {
+	switch strings.TrimSpace(strings.ToLower(backend)) {
+	case "codex":
+		return "codex"
+	case "kimi":
+		return "kimi"
+	default:
+		return "opencode"
+	}
 }
 
 func buildRunnerStartedMetadata(mode contracts.RunnerMode, backend string, model string, clonePath string, logPath string, startedAt time.Time) map[string]string {
