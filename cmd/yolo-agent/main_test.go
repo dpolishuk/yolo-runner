@@ -95,6 +95,49 @@ func TestRunMainAcceptsAgentBackendFlag(t *testing.T) {
 	}
 }
 
+func TestRunMainParsesProfileFlag(t *testing.T) {
+	called := false
+	var got runConfig
+	run := func(_ context.Context, cfg runConfig) error {
+		called = true
+		got = cfg
+		return nil
+	}
+
+	code := RunMain([]string{"--repo", "/repo", "--root", "root-1", "--profile", "linear-dev"}, run)
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d", code)
+	}
+	if !called {
+		t.Fatalf("expected run function to be called")
+	}
+	if got.profile != "linear-dev" {
+		t.Fatalf("expected profile=linear-dev, got %q", got.profile)
+	}
+}
+
+func TestRunMainUsesProfileFromEnvWhenFlagUnset(t *testing.T) {
+	t.Setenv("YOLO_PROFILE", "team-default")
+	called := false
+	var got runConfig
+	run := func(_ context.Context, cfg runConfig) error {
+		called = true
+		got = cfg
+		return nil
+	}
+
+	code := RunMain([]string{"--repo", "/repo", "--root", "root-1"}, run)
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d", code)
+	}
+	if !called {
+		t.Fatalf("expected run function to be called")
+	}
+	if got.profile != "team-default" {
+		t.Fatalf("expected profile from env, got %q", got.profile)
+	}
+}
+
 func TestRunMainUsesProfileDefaultBackendWhenBackendFlagsAreUnset(t *testing.T) {
 	t.Setenv("YOLO_AGENT_BACKEND", backendClaude)
 	called := false

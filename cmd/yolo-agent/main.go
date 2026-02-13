@@ -18,7 +18,6 @@ import (
 	"github.com/anomalyco/yolo-runner/internal/contracts"
 	"github.com/anomalyco/yolo-runner/internal/kimi"
 	"github.com/anomalyco/yolo-runner/internal/opencode"
-	"github.com/anomalyco/yolo-runner/internal/tk"
 	gitvcs "github.com/anomalyco/yolo-runner/internal/vcs/git"
 )
 
@@ -33,6 +32,8 @@ type runConfig struct {
 	repoRoot             string
 	rootID               string
 	backend              string
+	profile              string
+	trackerType          string
 	model                string
 	maxTasks             int
 	concurrency          int
@@ -54,6 +55,7 @@ func RunMain(args []string, run func(context.Context, runConfig) error) int {
 	backend := fs.String("backend", "", "DEPRECATED: use --agent-backend (opencode|codex|claude|kimi)")
 	agentBackend := fs.String("agent-backend", "", "Runner backend (opencode|codex|claude|kimi)")
 	model := fs.String("model", "", "Model for CLI agent")
+	profile := fs.String("profile", "", "Tracker profile name from .yolo-runner/config.yaml")
 	max := fs.Int("max", 0, "Maximum tasks to execute")
 	concurrency := fs.Int("concurrency", 1, "Maximum number of active task workers")
 	dryRun := fs.Bool("dry-run", false, "Dry run task loop")
@@ -76,6 +78,10 @@ func RunMain(args []string, run func(context.Context, runConfig) error) int {
 		AgentBackendFlag:      *agentBackend,
 		LegacyBackendFlag:     *backend,
 		ProfileDefaultBackend: os.Getenv("YOLO_AGENT_BACKEND"),
+	})
+	selectedProfile := resolveProfileSelectionPolicy(profileSelectionInput{
+		FlagValue: *profile,
+		EnvValue:  os.Getenv("YOLO_PROFILE"),
 	})
 	selectedBackend, _, err := selectBackend(selectedBackendRaw, backendSelectionOptions{
 		RequireReview: true,
@@ -114,6 +120,7 @@ func RunMain(args []string, run func(context.Context, runConfig) error) int {
 		repoRoot:             *repo,
 		rootID:               *root,
 		backend:              selectedBackend,
+		profile:              selectedProfile,
 		model:                *model,
 		maxTasks:             *max,
 		concurrency:          *concurrency,
@@ -143,8 +150,16 @@ func defaultRun(ctx context.Context, cfg runConfig) error {
 	}
 	cfg.eventsPath = resolveEventsPath(cfg)
 
-	tkRunner := localRunner{dir: cfg.repoRoot}
-	taskManager := tk.NewTaskManager(tkRunner)
+	trackerProfile, err := resolveTrackerProfile(cfg.repoRoot, cfg.profile, cfg.rootID, os.Getenv)
+	if err != nil {
+		return err
+	}
+	cfg.profile = trackerProfile.Name
+	cfg.trackerType = trackerProfile.Tracker.Type
+	taskManager, err := buildTaskManagerForTracker(cfg.repoRoot, trackerProfile)
+	if err != nil {
+		return err
+	}
 	vcsAdapter := gitvcs.NewVCSAdapter(localGitRunner{dir: cfg.repoRoot})
 	runnerAdapter, err := buildRunnerAdapter(cfg)
 	if err != nil {
@@ -267,6 +282,8 @@ func buildRunStartedMetadata(cfg runConfig) map[string]string {
 	return map[string]string{
 		"root_id":                cfg.rootID,
 		"backend":                normalizeBackend(cfg.backend),
+		"profile":                strings.TrimSpace(cfg.profile),
+		"tracker":                strings.TrimSpace(cfg.trackerType),
 		"concurrency":            strconv.Itoa(cfg.concurrency),
 		"model":                  cfg.model,
 		"runner_timeout":         cfg.runnerTimeout.String(),

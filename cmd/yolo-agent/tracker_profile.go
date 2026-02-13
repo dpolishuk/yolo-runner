@@ -1,0 +1,209 @@
+package main
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+
+	"github.com/anomalyco/yolo-runner/internal/contracts"
+	"github.com/anomalyco/yolo-runner/internal/tk"
+	"gopkg.in/yaml.v3"
+)
+
+const (
+	trackerTypeTK     = "tk"
+	trackerTypeLinear = "linear"
+
+	defaultProfileName     = "default"
+	trackerConfigRelPath   = ".yolo-runner/config.yaml"
+	linearTokenEnvVarLabel = "linear.auth.token_env"
+)
+
+type profileSelectionInput struct {
+	FlagValue string
+	EnvValue  string
+}
+
+type trackerProfilesModel struct {
+	DefaultProfile string                       `yaml:"default_profile"`
+	Profiles       map[string]trackerProfileDef `yaml:"profiles"`
+	Tracker        trackerModel                 `yaml:"tracker,omitempty"`
+}
+
+type trackerProfileDef struct {
+	Tracker trackerModel `yaml:"tracker"`
+}
+
+type trackerModel struct {
+	Type   string              `yaml:"type"`
+	TK     *tkTrackerModel     `yaml:"tk,omitempty"`
+	Linear *linearTrackerModel `yaml:"linear,omitempty"`
+}
+
+type tkTrackerModel struct {
+	Scope tkScopeModel `yaml:"scope"`
+}
+
+type tkScopeModel struct {
+	Root string `yaml:"root"`
+}
+
+type linearTrackerModel struct {
+	Scope linearScopeModel `yaml:"scope"`
+	Auth  linearAuthModel  `yaml:"auth"`
+}
+
+type linearScopeModel struct {
+	Workspace string `yaml:"workspace"`
+}
+
+type linearAuthModel struct {
+	TokenEnv string `yaml:"token_env"`
+}
+
+type resolvedTrackerProfile struct {
+	Name    string
+	Tracker trackerModel
+}
+
+func resolveProfileSelectionPolicy(input profileSelectionInput) string {
+	for _, value := range []string{
+		input.FlagValue,
+		input.EnvValue,
+	} {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func resolveTrackerProfile(repoRoot string, selectedProfile string, rootID string, getenv func(string) string) (resolvedTrackerProfile, error) {
+	configPath := filepath.Join(repoRoot, trackerConfigRelPath)
+	model, err := loadTrackerProfilesModel(configPath)
+	if err != nil {
+		return resolvedTrackerProfile{}, err
+	}
+
+	profileName := strings.TrimSpace(selectedProfile)
+	if profileName == "" {
+		profileName = strings.TrimSpace(model.DefaultProfile)
+	}
+	if profileName == "" {
+		profileName = defaultProfileName
+	}
+
+	profile, ok := model.Profiles[profileName]
+	if !ok {
+		return resolvedTrackerProfile{}, fmt.Errorf("tracker profile %q not found (available: %s)", profileName, strings.Join(sortedProfileNames(model.Profiles), ", "))
+	}
+
+	validated, err := validateTrackerModel(profileName, profile.Tracker, rootID, getenv)
+	if err != nil {
+		return resolvedTrackerProfile{}, err
+	}
+	return resolvedTrackerProfile{
+		Name:    profileName,
+		Tracker: validated,
+	}, nil
+}
+
+func buildTaskManagerForTracker(repoRoot string, profile resolvedTrackerProfile) (contracts.TaskManager, error) {
+	switch profile.Tracker.Type {
+	case trackerTypeTK:
+		return tk.NewTaskManager(localRunner{dir: repoRoot}), nil
+	default:
+		return nil, fmt.Errorf("tracker type %q is not supported yet", profile.Tracker.Type)
+	}
+}
+
+func loadTrackerProfilesModel(path string) (trackerProfilesModel, error) {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return defaultTrackerProfilesModel(), nil
+		}
+		return trackerProfilesModel{}, fmt.Errorf("cannot read config file at %s: %w", trackerConfigRelPath, err)
+	}
+
+	var model trackerProfilesModel
+	decoder := yaml.NewDecoder(strings.NewReader(string(content)))
+	decoder.KnownFields(true)
+	if err := decoder.Decode(&model); err != nil {
+		return trackerProfilesModel{}, fmt.Errorf("cannot parse config file at %s: %w", trackerConfigRelPath, err)
+	}
+
+	if len(model.Profiles) == 0 && strings.TrimSpace(model.Tracker.Type) != "" {
+		model.Profiles = map[string]trackerProfileDef{
+			defaultProfileName: {Tracker: model.Tracker},
+		}
+	}
+
+	if len(model.Profiles) == 0 {
+		return trackerProfilesModel{}, fmt.Errorf("config file at %s must define at least one profile", trackerConfigRelPath)
+	}
+	return model, nil
+}
+
+func defaultTrackerProfilesModel() trackerProfilesModel {
+	return trackerProfilesModel{
+		DefaultProfile: defaultProfileName,
+		Profiles: map[string]trackerProfileDef{
+			defaultProfileName: {
+				Tracker: trackerModel{
+					Type: trackerTypeTK,
+				},
+			},
+		},
+	}
+}
+
+func validateTrackerModel(profileName string, model trackerModel, rootID string, getenv func(string) string) (trackerModel, error) {
+	model.Type = strings.ToLower(strings.TrimSpace(model.Type))
+	if model.Type == "" {
+		return trackerModel{}, fmt.Errorf("tracker.type is required for profile %q", profileName)
+	}
+
+	switch model.Type {
+	case trackerTypeTK:
+		if model.TK != nil {
+			scopeRoot := strings.TrimSpace(model.TK.Scope.Root)
+			if scopeRoot != "" && strings.TrimSpace(rootID) != scopeRoot {
+				return trackerModel{}, fmt.Errorf("root %q is outside tk scope %q in profile %q", rootID, scopeRoot, profileName)
+			}
+		}
+		return model, nil
+	case trackerTypeLinear:
+		if model.Linear == nil {
+			return trackerModel{}, fmt.Errorf("tracker.linear settings are required for profile %q", profileName)
+		}
+		workspace := strings.TrimSpace(model.Linear.Scope.Workspace)
+		if workspace == "" {
+			return trackerModel{}, fmt.Errorf("%s is required for profile %q", "linear.scope.workspace", profileName)
+		}
+		tokenEnv := strings.TrimSpace(model.Linear.Auth.TokenEnv)
+		if tokenEnv == "" {
+			return trackerModel{}, fmt.Errorf("%s is required for profile %q", linearTokenEnvVarLabel, profileName)
+		}
+		if getenv != nil && strings.TrimSpace(getenv(tokenEnv)) == "" {
+			return trackerModel{}, fmt.Errorf("missing auth token from %s for profile %q", tokenEnv, profileName)
+		}
+		return model, nil
+	default:
+		return trackerModel{}, fmt.Errorf("unsupported tracker type %q for profile %q", model.Type, profileName)
+	}
+}
+
+func sortedProfileNames(profiles map[string]trackerProfileDef) []string {
+	if len(profiles) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(profiles))
+	for name := range profiles {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
