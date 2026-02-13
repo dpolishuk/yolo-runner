@@ -1,4 +1,4 @@
-package codex
+package kimi
 
 import (
 	"context"
@@ -15,7 +15,7 @@ import (
 	"github.com/anomalyco/yolo-runner/internal/contracts"
 )
 
-const defaultBinary = "codex"
+const defaultBinary = "kimi"
 
 var structuredReviewVerdictLinePattern = regexp.MustCompile(`(?i)^\s*REVIEW_VERDICT\s*:\s*(pass|fail)(?:\s*DONE)?\s*$`)
 var tokenRedactionPattern = regexp.MustCompile(`\bsk-[A-Za-z0-9_-]{12,}\b`)
@@ -65,7 +65,7 @@ func (a *CLIRunnerAdapter) Run(ctx context.Context, request contracts.RunnerRequ
 		ctx = context.Background()
 	}
 	if a == nil {
-		return contracts.RunnerResult{}, errors.New("nil codex runner adapter")
+		return contracts.RunnerResult{}, errors.New("nil kimi runner adapter")
 	}
 	if a.runner == nil {
 		a.runner = commandRunnerFunc(runCommand)
@@ -162,28 +162,28 @@ func resolveLogPath(request contracts.RunnerRequest) string {
 		}
 	}
 	if strings.TrimSpace(request.RepoRoot) != "" && strings.TrimSpace(request.TaskID) != "" {
-		return filepath.Join(request.RepoRoot, "runner-logs", "codex", request.TaskID+".jsonl")
+		return filepath.Join(request.RepoRoot, "runner-logs", "kimi", request.TaskID+".jsonl")
 	}
 	if strings.TrimSpace(request.TaskID) != "" {
-		return filepath.Join("runner-logs", "codex", request.TaskID+".jsonl")
+		return filepath.Join("runner-logs", "kimi", request.TaskID+".jsonl")
 	}
-	return filepath.Join("runner-logs", "codex", "codex-run.jsonl")
+	return filepath.Join("runner-logs", "kimi", "kimi-run.jsonl")
 }
 
 func buildArgs(request contracts.RunnerRequest) []string {
-	args := []string{"exec", "--sandbox", "workspace-write"}
+	args := []string{"--print", "--output-format", "text"}
 	if model := strings.TrimSpace(request.Model); model != "" {
 		args = append(args, "--model", model)
 	}
 	if prompt := strings.TrimSpace(request.Prompt); prompt != "" {
-		args = append(args, prompt)
+		args = append(args, "--prompt", prompt)
 	}
 	return args
 }
 
 func runCommand(ctx context.Context, spec CommandSpec) error {
 	if strings.TrimSpace(spec.Binary) == "" {
-		return errors.New("codex binary is required")
+		return errors.New("kimi binary is required")
 	}
 	cmd := exec.CommandContext(ctx, spec.Binary, spec.Args...)
 	if strings.TrimSpace(spec.Dir) != "" {
@@ -206,7 +206,7 @@ func runCommand(ctx context.Context, spec CommandSpec) error {
 
 func buildRunnerArtifacts(request contracts.RunnerRequest, result contracts.RunnerResult) map[string]string {
 	artifacts := map[string]string{
-		"backend": "codex",
+		"backend": "kimi",
 		"status":  string(result.Status),
 	}
 	if strings.TrimSpace(request.Model) != "" {

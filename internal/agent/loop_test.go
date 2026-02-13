@@ -660,6 +660,9 @@ func TestLoopEmitsRunnerStartedMetadataWithConfiguredBackend(t *testing.T) {
 	if event.Metadata["backend"] != "codex" {
 		t.Fatalf("expected backend metadata=codex, got %#v", event.Metadata)
 	}
+	if event.Metadata["log_path"] != "/repo/runner-logs/codex/t-1.jsonl" {
+		t.Fatalf("expected codex log path metadata, got %#v", event.Metadata)
+	}
 }
 
 func TestLoopEmitsRunnerFinishedMetadataWithStallDiagnostics(t *testing.T) {

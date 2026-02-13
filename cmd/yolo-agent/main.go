@@ -15,6 +15,7 @@ import (
 	"github.com/anomalyco/yolo-runner/internal/agent"
 	"github.com/anomalyco/yolo-runner/internal/codex"
 	"github.com/anomalyco/yolo-runner/internal/contracts"
+	"github.com/anomalyco/yolo-runner/internal/kimi"
 	"github.com/anomalyco/yolo-runner/internal/opencode"
 	"github.com/anomalyco/yolo-runner/internal/tk"
 	gitvcs "github.com/anomalyco/yolo-runner/internal/vcs/git"
@@ -23,6 +24,7 @@ import (
 const (
 	backendOpenCode = "opencode"
 	backendCodex    = "codex"
+	backendKimi     = "kimi"
 )
 
 type runConfig struct {
@@ -47,7 +49,7 @@ func RunMain(args []string, run func(context.Context, runConfig) error) int {
 	fs := flag.NewFlagSet("yolo-agent", flag.ContinueOnError)
 	repo := fs.String("repo", ".", "Repository root")
 	root := fs.String("root", "", "Root task ID")
-	backend := fs.String("backend", backendOpenCode, "Runner backend (opencode|codex)")
+	backend := fs.String("backend", backendOpenCode, "Runner backend (opencode|codex|kimi)")
 	model := fs.String("model", "", "Model for CLI agent")
 	max := fs.Int("max", 0, "Maximum tasks to execute")
 	concurrency := fs.Int("concurrency", 1, "Maximum number of active task workers")
@@ -69,7 +71,7 @@ func RunMain(args []string, run func(context.Context, runConfig) error) int {
 	}
 	selectedBackend := normalizeBackend(*backend)
 	if !isSupportedBackend(selectedBackend) {
-		fmt.Fprintf(os.Stderr, "--backend must be one of: %s, %s\n", backendOpenCode, backendCodex)
+		fmt.Fprintf(os.Stderr, "--backend must be one of: %s, %s, %s\n", backendOpenCode, backendCodex, backendKimi)
 		return 1
 	}
 	if *concurrency <= 0 {
@@ -146,6 +148,8 @@ func buildRunnerAdapter(cfg runConfig) (contracts.AgentRunner, error) {
 		return opencode.NewCLIRunnerAdapter(opencode.CommandRunner{}, nil, defaultConfigRoot(), defaultConfigDir()), nil
 	case backendCodex:
 		return codex.NewCLIRunnerAdapter("", nil), nil
+	case backendKimi:
+		return kimi.NewCLIRunnerAdapter("", nil), nil
 	default:
 		return nil, fmt.Errorf("unsupported runner backend %q", cfg.backend)
 	}
@@ -264,7 +268,7 @@ func normalizeBackend(raw string) string {
 
 func isSupportedBackend(raw string) bool {
 	switch normalizeBackend(raw) {
-	case backendOpenCode, backendCodex:
+	case backendOpenCode, backendCodex, backendKimi:
 		return true
 	default:
 		return false
