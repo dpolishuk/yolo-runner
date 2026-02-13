@@ -83,6 +83,9 @@ func (a *CLIRunnerAdapter) Run(ctx context.Context, request contracts.RunnerRequ
 		}
 		progress(contracts.RunnerProgress{Type: progressType, Message: normalized, Timestamp: time.Now().UTC()})
 	})
+	if err == nil && runCtx.Err() != nil {
+		err = runCtx.Err()
+	}
 
 	result := contracts.NormalizeBackendRunnerResult(start, time.Now().UTC(), request, err, func(classifyErr error) bool {
 		var stallErr *StallError
