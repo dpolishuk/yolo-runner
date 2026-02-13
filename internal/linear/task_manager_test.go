@@ -291,6 +291,124 @@ func TestTaskManagerGetTaskMapsIssueDetailsAndDependencyMetadata(t *testing.T) {
 	}
 }
 
+func TestTaskManagerSetTaskStatusUpdatesIssueWorkflowState(t *testing.T) {
+	t.Parallel()
+
+	queries := make([]string, 0, 2)
+	manager := newLinearTestManager(t, func(t *testing.T, query string, w http.ResponseWriter) {
+		t.Helper()
+		switch {
+		case strings.Contains(query, "ReadIssueWorkflowStatesForWrite"):
+			queries = append(queries, query)
+			if !strings.Contains(query, `issue(id: "iss-2")`) {
+				t.Fatalf("expected workflow-state query to include issue ID, got %q", query)
+			}
+			_, _ = w.Write([]byte(`{
+  "data": {
+    "issue": {
+      "id": "iss-2",
+      "team": {
+        "states": {
+          "nodes": [
+            {"id": "st-backlog", "type": "backlog", "name": "Backlog"},
+            {"id": "st-started", "type": "started", "name": "In Progress"},
+            {"id": "st-blocked", "type": "unstarted", "name": "Blocked"},
+            {"id": "st-done", "type": "completed", "name": "Done"}
+          ]
+        }
+      }
+    }
+  }
+}`))
+		case strings.Contains(query, "UpdateIssueWorkflowState"):
+			queries = append(queries, query)
+			if !strings.Contains(query, `issueUpdate(id: "iss-2", input: { stateId: "st-blocked" })`) {
+				t.Fatalf("expected issueUpdate mutation to target blocked state, got %q", query)
+			}
+			_, _ = w.Write([]byte(`{"data":{"issueUpdate":{"success":true}}}`))
+		default:
+			t.Fatalf("unexpected query: %q", query)
+		}
+	})
+
+	if err := manager.SetTaskStatus(context.Background(), "iss-2", contracts.TaskStatusBlocked); err != nil {
+		t.Fatalf("SetTaskStatus returned error: %v", err)
+	}
+	if len(queries) != 2 {
+		t.Fatalf("expected 2 GraphQL calls, got %d", len(queries))
+	}
+}
+
+func TestTaskManagerSetTaskStatusErrorsWhenNoMatchingWorkflowState(t *testing.T) {
+	t.Parallel()
+
+	manager := newLinearTestManager(t, func(t *testing.T, query string, w http.ResponseWriter) {
+		t.Helper()
+		if !strings.Contains(query, "ReadIssueWorkflowStatesForWrite") {
+			t.Fatalf("expected only workflow-state query, got %q", query)
+		}
+		_, _ = w.Write([]byte(`{
+  "data": {
+    "issue": {
+      "id": "iss-2",
+      "team": {
+        "states": {
+          "nodes": [
+            {"id": "st-backlog", "type": "backlog", "name": "Backlog"},
+            {"id": "st-started", "type": "started", "name": "In Progress"},
+            {"id": "st-done", "type": "completed", "name": "Done"}
+          ]
+        }
+      }
+    }
+  }
+}`))
+	})
+
+	err := manager.SetTaskStatus(context.Background(), "iss-2", contracts.TaskStatusBlocked)
+	if err == nil {
+		t.Fatalf("expected missing blocked workflow state error")
+	}
+	if !strings.Contains(err.Error(), `no Linear workflow state found for status "blocked"`) {
+		t.Fatalf("expected status mapping error, got %q", err.Error())
+	}
+}
+
+func TestTaskManagerSetTaskDataWritesSortedIssueComments(t *testing.T) {
+	t.Parallel()
+
+	queries := []string{}
+	manager := newLinearTestManager(t, func(t *testing.T, query string, w http.ResponseWriter) {
+		t.Helper()
+		if !strings.Contains(query, "CreateIssueCommentForTaskData") {
+			t.Fatalf("expected comment-create mutation, got %q", query)
+		}
+		queries = append(queries, query)
+		_, _ = w.Write([]byte(`{"data":{"commentCreate":{"success":true}}}`))
+	})
+
+	err := manager.SetTaskData(context.Background(), "iss-7", map[string]string{
+		"triage_status":  "blocked",
+		"triage_reason":  "needs manual input",
+		"landing_status": "merge_blocked",
+	})
+	if err != nil {
+		t.Fatalf("SetTaskData returned error: %v", err)
+	}
+	if len(queries) != 3 {
+		t.Fatalf("expected 3 GraphQL writes, got %d", len(queries))
+	}
+	if !strings.Contains(queries[0], `body: "landing_status=merge_blocked"`) {
+		t.Fatalf("expected first mutation to be landing_status, got %q", queries[0])
+	}
+	if !strings.Contains(queries[1], `body: "triage_reason=needs manual input"`) {
+		t.Fatalf("expected second mutation to be triage_reason, got %q", queries[1])
+	}
+	if !strings.Contains(queries[2], `body: "triage_status=blocked"`) {
+		t.Fatalf("expected third mutation to be triage_status, got %q", queries[2])
+	}
+}
+
 func newLinearTestManager(t *testing.T, handler func(t *testing.T, query string, w http.ResponseWriter)) *TaskManager {
 	t.Helper()
 

@@ -21,10 +21,6 @@ const (
 	maxReadResponseBytes   = 8 << 20
 )
 
-var (
-	ErrWriteOperationsNotImplemented = errors.New("linear write operations are not implemented yet")
-)
-
 type HTTPClient interface {
 	Do(req *http.Request) (*http.Response, error)
 }
@@ -36,7 +32,7 @@ type Config struct {
 	HTTPClient HTTPClient
 }
 
-type graphQLError struct {
+type taskManagerGraphQLError struct {
 	Message string `json:"message"`
 }
 
@@ -80,6 +76,12 @@ type linearRelationPayload struct {
 	RelatedIssue *struct {
 		ID string `json:"id"`
 	} `json:"relatedIssue"`
+}
+
+type linearWorkflowStatePayload struct {
+	ID   string `json:"id"`
+	Type string `json:"type"`
+	Name string `json:"name"`
 }
 
 func NewTaskManager(cfg Config) (*TaskManager, error) {
@@ -197,12 +199,89 @@ func (m *TaskManager) GetTask(ctx context.Context, taskID string) (contracts.Tas
 	}, nil
 }
 
-func (m *TaskManager) SetTaskStatus(_ context.Context, _ string, _ contracts.TaskStatus) error {
-	return ErrWriteOperationsNotImplemented
+func (m *TaskManager) SetTaskStatus(ctx context.Context, taskID string, status contracts.TaskStatus) error {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return errors.New("task ID is required")
+	}
+	if !isSupportedTaskStatus(status) {
+		return fmt.Errorf("unsupported task status %q", status)
+	}
+
+	stateID, err := m.resolveWorkflowStateIDForStatus(ctx, taskID, status)
+	if err != nil {
+		return err
+	}
+
+	mutation := fmt.Sprintf(`mutation UpdateIssueWorkflowState {
+  issueUpdate(id: %s, input: { stateId: %s }) {
+    success
+  }
+}`, graphQLQuote(taskID), graphQLQuote(stateID))
+
+	var payload struct {
+		IssueUpdate struct {
+			Success bool `json:"success"`
+		} `json:"issueUpdate"`
+	}
+	if err := m.runGraphQLQuery(ctx, mutation, &payload); err != nil {
+		return fmt.Errorf("update Linear issue %q status %q: %w", taskID, status, err)
+	}
+	if !payload.IssueUpdate.Success {
+		return fmt.Errorf("update Linear issue %q status %q: unsuccessful mutation", taskID, status)
+	}
+	return nil
 }
 
-func (m *TaskManager) SetTaskData(_ context.Context, _ string, _ map[string]string) error {
-	return ErrWriteOperationsNotImplemented
+func (m *TaskManager) SetTaskData(ctx context.Context, taskID string, data map[string]string) error {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return errors.New("task ID is required")
+	}
+	if len(data) == 0 {
+		return nil
+	}
+
+	entries := map[string]string{}
+	for key, value := range data {
+		trimmedKey := strings.TrimSpace(key)
+		if trimmedKey == "" {
+			continue
+		}
+		entries[trimmedKey] = value
+	}
+	if len(entries) == 0 {
+		return nil
+	}
+
+	keys := make([]string, 0, len(entries))
+	for key := range entries {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	for _, key := range keys {
+		body := key + "=" + entries[key]
+		mutation := fmt.Sprintf(`mutation CreateIssueCommentForTaskData {
+  commentCreate(input: { issueId: %s, body: %s }) {
+    success
+  }
+}`, graphQLQuote(taskID), graphQLQuote(body))
+
+		var payload struct {
+			CommentCreate struct {
+				Success bool `json:"success"`
+			} `json:"commentCreate"`
+		}
+		if err := m.runGraphQLQuery(ctx, mutation, &payload); err != nil {
+			return fmt.Errorf("write Linear issue %q task data %q: %w", taskID, key, err)
+		}
+		if !payload.CommentCreate.Success {
+			return fmt.Errorf("write Linear issue %q task data %q: unsuccessful mutation", taskID, key)
+		}
+	}
+
+	return nil
 }
 
 func probeViewer(ctx context.Context, client HTTPClient, endpoint string, token string) error {
@@ -240,7 +319,7 @@ func probeViewer(ctx context.Context, client HTTPClient, endpoint string, token 
 				ID string `json:"id"`
 			} `json:"viewer"`
 		} `json:"data"`
-		Errors []graphQLError `json:"errors"`
+		Errors []taskManagerGraphQLError `json:"errors"`
 	}
 	if len(strings.TrimSpace(string(body))) > 0 {
 		if err := json.Unmarshal(body, &graphQLResp); err != nil {
@@ -263,7 +342,7 @@ func probeViewer(ctx context.Context, client HTTPClient, endpoint string, token 
 	return nil
 }
 
-func firstProbeError(errors []graphQLError, fallback string) string {
+func firstProbeError(errors []taskManagerGraphQLError, fallback string) string {
 	for _, entry := range errors {
 		msg := strings.TrimSpace(entry.Message)
 		if msg != "" {
@@ -274,6 +353,133 @@ func firstProbeError(errors []graphQLError, fallback string) string {
 		return fallback
 	}
 	return "unknown error"
+}
+
+func isSupportedTaskStatus(status contracts.TaskStatus) bool {
+	switch status {
+	case contracts.TaskStatusOpen,
+		contracts.TaskStatusInProgress,
+		contracts.TaskStatusBlocked,
+		contracts.TaskStatusClosed,
+		contracts.TaskStatusFailed:
+		return true
+	default:
+		return false
+	}
+}
+
+func (m *TaskManager) resolveWorkflowStateIDForStatus(ctx context.Context, taskID string, status contracts.TaskStatus) (string, error) {
+	query := fmt.Sprintf(`query ReadIssueWorkflowStatesForWrite {
+  issue(id: %s) {
+    id
+    team {
+      states {
+        nodes {
+          id
+          type
+          name
+        }
+      }
+    }
+  }
+}`, graphQLQuote(taskID))
+
+	var payload struct {
+		Issue *struct {
+			ID   string `json:"id"`
+			Team *struct {
+				States struct {
+					Nodes []linearWorkflowStatePayload `json:"nodes"`
+				} `json:"states"`
+			} `json:"team"`
+		} `json:"issue"`
+	}
+	if err := m.runGraphQLQuery(ctx, query, &payload); err != nil {
+		return "", fmt.Errorf("query Linear issue %q workflow states: %w", taskID, err)
+	}
+	if payload.Issue == nil {
+		return "", fmt.Errorf("cannot set status for Linear issue %q: issue not found", taskID)
+	}
+	if payload.Issue.Team == nil {
+		return "", fmt.Errorf("cannot set status for Linear issue %q: issue has no team", taskID)
+	}
+	stateID, ok := selectWorkflowStateIDForStatus(payload.Issue.Team.States.Nodes, status)
+	if !ok {
+		return "", fmt.Errorf("no Linear workflow state found for status %q", status)
+	}
+	return stateID, nil
+}
+
+func selectWorkflowStateIDForStatus(states []linearWorkflowStatePayload, status contracts.TaskStatus) (string, bool) {
+	bestStateID := ""
+	bestScore := -1
+
+	for _, state := range states {
+		stateID := strings.TrimSpace(state.ID)
+		if stateID == "" {
+			continue
+		}
+		score := workflowStateMatchScore(status, state.Type, state.Name)
+		if score < 0 {
+			continue
+		}
+		if score > bestScore || (score == bestScore && (bestStateID == "" || stateID < bestStateID)) {
+			bestStateID = stateID
+			bestScore = score
+		}
+	}
+
+	if bestScore < 0 || bestStateID == "" {
+		return "", false
+	}
+	return bestStateID, true
+}
+
+func workflowStateMatchScore(status contracts.TaskStatus, stateType string, stateName string) int {
+	if classifyTaskStatus(stateType, stateName) != status {
+		return -1
+	}
+
+	score := 1
+	normalizedType := normalizeStateToken(stateType)
+	normalizedName := normalizeStateToken(stateName)
+
+	switch status {
+	case contracts.TaskStatusOpen:
+		if normalizedType == "backlog" || normalizedType == "unstarted" {
+			score = 5
+		} else if normalizedType == "triage" {
+			score = 4
+		} else if strings.Contains(normalizedName, "open") || strings.Contains(normalizedName, "todo") {
+			score = 3
+		}
+	case contracts.TaskStatusInProgress:
+		if normalizedType == "started" || normalizedType == "inprogress" || normalizedType == "inprogressstate" {
+			score = 5
+		} else if strings.Contains(normalizedName, "progress") || strings.Contains(normalizedName, "doing") || strings.Contains(normalizedName, "started") {
+			score = 4
+		}
+	case contracts.TaskStatusClosed:
+		if normalizedType == "completed" || normalizedType == "done" || normalizedType == "closed" {
+			score = 5
+		} else if normalizedType == "canceled" || normalizedType == "cancelled" {
+			score = 4
+		}
+	case contracts.TaskStatusBlocked:
+		if normalizedType == "blocked" {
+			score = 5
+		} else if strings.Contains(normalizedName, "block") {
+			score = 4
+		}
+	case contracts.TaskStatusFailed:
+		if normalizedType == "failed" {
+			score = 5
+		} else if strings.Contains(normalizedName, "fail") {
+			score = 4
+		}
+	}
+
+	return score
 }
 
 func (m *TaskManager) loadTaskGraphForParent(ctx context.Context, parentID string) (TaskGraph, map[string]contracts.TaskStatus, error) {
@@ -443,8 +649,8 @@ func (m *TaskManager) runGraphQLQuery(ctx context.Context, query string, out any
 	bodyText := strings.TrimSpace(string(body))
 
 	var graphQLResp struct {
-		Data   json.RawMessage `json:"data"`
-		Errors []graphQLError  `json:"errors"`
+		Data   json.RawMessage           `json:"data"`
+		Errors []taskManagerGraphQLError `json:"errors"`
 	}
 	if bodyText != "" {
 		if err := json.Unmarshal(body, &graphQLResp); err != nil {
