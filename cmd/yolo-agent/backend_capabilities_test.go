@@ -64,3 +64,40 @@ func TestSelectBackendReturnsCapabilitiesWhenSupported(t *testing.T) {
 		t.Fatalf("expected codex SupportsStream=true")
 	}
 }
+
+func TestResolveBackendSelectionPolicyPrefersAgentBackendFlag(t *testing.T) {
+	got := resolveBackendSelectionPolicy(backendSelectionPolicyInput{
+		AgentBackendFlag:      backendCodex,
+		LegacyBackendFlag:     backendClaude,
+		ProfileDefaultBackend: backendKimi,
+	})
+	if got != backendCodex {
+		t.Fatalf("expected agent backend flag to win, got %q", got)
+	}
+}
+
+func TestResolveBackendSelectionPolicyFallsBackToLegacyBackendFlag(t *testing.T) {
+	got := resolveBackendSelectionPolicy(backendSelectionPolicyInput{
+		LegacyBackendFlag:     backendClaude,
+		ProfileDefaultBackend: backendKimi,
+	})
+	if got != backendClaude {
+		t.Fatalf("expected legacy backend flag to be used, got %q", got)
+	}
+}
+
+func TestResolveBackendSelectionPolicyFallsBackToProfileDefault(t *testing.T) {
+	got := resolveBackendSelectionPolicy(backendSelectionPolicyInput{
+		ProfileDefaultBackend: backendKimi,
+	})
+	if got != backendKimi {
+		t.Fatalf("expected profile default backend, got %q", got)
+	}
+}
+
+func TestResolveBackendSelectionPolicyDefaultsToOpenCode(t *testing.T) {
+	got := resolveBackendSelectionPolicy(backendSelectionPolicyInput{})
+	if got != backendOpenCode {
+		t.Fatalf("expected fallback backend %q, got %q", backendOpenCode, got)
+	}
+}

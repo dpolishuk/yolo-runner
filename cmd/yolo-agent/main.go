@@ -51,7 +51,8 @@ func RunMain(args []string, run func(context.Context, runConfig) error) int {
 	fs := flag.NewFlagSet("yolo-agent", flag.ContinueOnError)
 	repo := fs.String("repo", ".", "Repository root")
 	root := fs.String("root", "", "Root task ID")
-	backend := fs.String("backend", backendOpenCode, "Runner backend (opencode|codex|claude|kimi)")
+	backend := fs.String("backend", "", "DEPRECATED: use --agent-backend (opencode|codex|claude|kimi)")
+	agentBackend := fs.String("agent-backend", "", "Runner backend (opencode|codex|claude|kimi)")
 	model := fs.String("model", "", "Model for CLI agent")
 	max := fs.Int("max", 0, "Maximum tasks to execute")
 	concurrency := fs.Int("concurrency", 1, "Maximum number of active task workers")
@@ -71,7 +72,12 @@ func RunMain(args []string, run func(context.Context, runConfig) error) int {
 		fmt.Fprintln(os.Stderr, "--root is required")
 		return 1
 	}
-	selectedBackend, _, err := selectBackend(*backend, backendSelectionOptions{
+	selectedBackendRaw := resolveBackendSelectionPolicy(backendSelectionPolicyInput{
+		AgentBackendFlag:      *agentBackend,
+		LegacyBackendFlag:     *backend,
+		ProfileDefaultBackend: os.Getenv("YOLO_AGENT_BACKEND"),
+	})
+	selectedBackend, _, err := selectBackend(selectedBackendRaw, backendSelectionOptions{
 		RequireReview: true,
 		Stream:        *stream,
 	}, defaultBackendCapabilityMatrix())
