@@ -36,3 +36,21 @@ triage_reason=git checkout main failed: error: you need to resolve your current 
 **2026-02-15T20:08:17Z**
 
 triage_status=blocked
+
+**2026-02-16T08:22:51Z**
+
+tdd_red_command=`go test ./cmd/yolo-agent -run 'TestRunMainRoutesConfig(Validate|Init)Subcommand|TestRunMainConfigCommandRequiresSubcommand|TestRunMainRejectsUnknownConfigSubcommand' -count=1`
+tdd_red_exit=1
+tdd_red_result=failed as expected when config routing guard was temporarily broken (`--root is required`; config subcommand routing tests failed).
+
+**2026-02-16T08:22:51Z**
+
+tdd_green_command=`go test ./cmd/yolo-agent -run 'TestRunMainRoutesConfig(Validate|Init)Subcommand|TestRunMainConfigCommandRequiresSubcommand|TestRunMainRejectsUnknownConfigSubcommand' -count=1`
+tdd_green_exit=0
+tdd_green_result=pass after restoring minimal routing condition to `args[0] == "config"`.
+
+**2026-02-16T08:22:51Z**
+
+tdd_broader_command=`go test ./cmd/yolo-agent -count=1`
+tdd_broader_exit=0
+tdd_refactor_confirmation=no additional refactor required; minimal routing implementation remains unchanged and broader relevant suite passed.
