@@ -17,3 +17,22 @@ Centralize .yolo-runner/config.yaml load, parse, and semantic validation for reu
 
 Missing file, invalid YAML, unknown fields, bad durations/numbers, unsupported backend, and profile/auth validation are covered via strict TDD and passing tests are recorded in notes.
 
+
+## Notes
+
+**2026-02-15T20:19:30Z**
+
+auto_commit_sha=ee045275ca03f43120382f46bc5899e6b0e8bf37
+
+**2026-02-15T20:19:30Z**
+
+landing_status=blocked
+
+**2026-02-15T20:19:30Z**
+
+triage_reason=git checkout main failed: error: you need to resolve your current index first
+.tickets/yr-94xu.md: needs merge: exit status 1
+
+**2026-02-15T20:19:30Z**
+
+triage_status=blocked
