@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 
@@ -11,7 +10,6 @@ import (
 	githubtracker "github.com/anomalyco/yolo-runner/internal/github"
 	"github.com/anomalyco/yolo-runner/internal/linear"
 	"github.com/anomalyco/yolo-runner/internal/tk"
-	"gopkg.in/yaml.v3"
 )
 
 const (
@@ -119,33 +117,7 @@ func resolveProfileSelectionPolicy(input profileSelectionInput) string {
 }
 
 func resolveTrackerProfile(repoRoot string, selectedProfile string, rootID string, getenv func(string) string) (resolvedTrackerProfile, error) {
-	configPath := filepath.Join(repoRoot, trackerConfigRelPath)
-	model, err := loadTrackerProfilesModel(configPath)
-	if err != nil {
-		return resolvedTrackerProfile{}, err
-	}
-
-	profileName := strings.TrimSpace(selectedProfile)
-	if profileName == "" {
-		profileName = strings.TrimSpace(model.DefaultProfile)
-	}
-	if profileName == "" {
-		profileName = defaultProfileName
-	}
-
-	profile, ok := model.Profiles[profileName]
-	if !ok {
-		return resolvedTrackerProfile{}, fmt.Errorf("tracker profile %q not found (available: %s)", profileName, strings.Join(sortedProfileNames(model.Profiles), ", "))
-	}
-
-	validated, err := validateTrackerModel(profileName, profile.Tracker, rootID, getenv)
-	if err != nil {
-		return resolvedTrackerProfile{}, err
-	}
-	return resolvedTrackerProfile{
-		Name:    profileName,
-		Tracker: validated,
-	}, nil
+	return newTrackerConfigService().ResolveTrackerProfile(repoRoot, selectedProfile, rootID, getenv)
 }
 
 func buildTaskManagerForTracker(repoRoot string, profile resolvedTrackerProfile) (contracts.TaskManager, error) {
@@ -208,34 +180,6 @@ func buildTaskManagerForTracker(repoRoot string, profile resolvedTrackerProfile)
 	default:
 		return nil, fmt.Errorf("tracker type %q is not supported yet", profile.Tracker.Type)
 	}
-}
-
-func loadTrackerProfilesModel(path string) (trackerProfilesModel, error) {
-	content, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return defaultTrackerProfilesModel(), nil
-		}
-		return trackerProfilesModel{}, fmt.Errorf("cannot read config file at %s: %w", trackerConfigRelPath, err)
-	}
-
-	var model trackerProfilesModel
-	decoder := yaml.NewDecoder(strings.NewReader(string(content)))
-	decoder.KnownFields(true)
-	if err := decoder.Decode(&model); err != nil {
-		return trackerProfilesModel{}, fmt.Errorf("cannot parse config file at %s: %w", trackerConfigRelPath, err)
-	}
-
-	if len(model.Profiles) == 0 && strings.TrimSpace(model.Tracker.Type) != "" {
-		model.Profiles = map[string]trackerProfileDef{
-			defaultProfileName: {Tracker: model.Tracker},
-		}
-	}
-
-	if len(model.Profiles) == 0 {
-		return trackerProfilesModel{}, fmt.Errorf("config file at %s must define at least one profile", trackerConfigRelPath)
-	}
-	return model, nil
 }
 
 func defaultTrackerProfilesModel() trackerProfilesModel {
