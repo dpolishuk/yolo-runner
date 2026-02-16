@@ -50,6 +50,10 @@ type runConfig struct {
 }
 
 func RunMain(args []string, run func(context.Context, runConfig) error) int {
+	if len(args) > 0 && args[0] == "config" {
+		return runConfigCommand(args[1:])
+	}
+
 	fs := flag.NewFlagSet("yolo-agent", flag.ContinueOnError)
 	repo := fs.String("repo", ".", "Repository root")
 	root := fs.String("root", "", "Root task ID")
