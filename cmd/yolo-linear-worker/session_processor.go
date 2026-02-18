@@ -1,10 +1,15 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -36,12 +41,17 @@ type linearSessionActivityEmitter interface {
 	EmitResponse(context.Context, linear.ResponseActivityInput) (string, error)
 }
 
+type linearIssueStatusStarter interface {
+	EnsureIssueStarted(context.Context, string) error
+}
+
 type linearSessionJobProcessor struct {
 	repoRoot      string
 	model         string
 	runnerTimeout time.Duration
 	runner        contracts.AgentRunner
 	activities    linearSessionActivityEmitter
+	issueStarter  linearIssueStatusStarter
 }
 
 func defaultProcessLinearSessionJob(ctx context.Context, job webhook.Job) error {
@@ -101,6 +111,7 @@ func newLinearSessionJobProcessorFromEnv() (*linearSessionJobProcessor, error) {
 		runnerTimeout: runnerTimeout,
 		runner:        runner,
 		activities:    activityClient,
+		issueStarter:  &linearIssueStarterClient{endpoint: endpoint, token: token, httpClient: http.DefaultClient},
 	}, nil
 }
 
@@ -155,6 +166,11 @@ func (p *linearSessionJobProcessor) Process(ctx context.Context, job webhook.Job
 		IdempotencyKey: baseKey + ":thought",
 	}); err != nil {
 		return fmt.Errorf("emit linear thought activity: %w", err)
+	}
+	if issueID := resolveDelegatedLinearIssueID(job); issueID != "" && p.issueStarter != nil {
+		if err := p.issueStarter.EnsureIssueStarted(ctx, issueID); err != nil {
+			return fmt.Errorf("transition delegated Linear issue %q to started: %w", issueID, err)
+		}
 	}
 
 	result, runErr := p.runner.Run(ctx, contracts.RunnerRequest{
@@ -220,6 +236,13 @@ func resolveLinearIdempotencyBase(job webhook.Job, sessionID string) string {
 	}
 
 	return sessionID + ":queued"
+}
+
+func resolveDelegatedLinearIssueID(job webhook.Job) string {
+	if job.Event.AgentSession.Issue == nil {
+		return ""
+	}
+	return strings.TrimSpace(job.Event.AgentSession.Issue.ID)
 }
 
 func normalizeLinearJobTaskID(job webhook.Job) string {
@@ -342,6 +365,238 @@ func buildLinearJobPrompt(job webhook.Job) string {
 		parts = append(parts, "Continue handling the Linear AgentSession request.")
 	}
 	return strings.Join(parts, "\n\n")
+}
+
+type linearIssueStarterClient struct {
+	endpoint   string
+	token      string
+	httpClient *http.Client
+}
+
+func (c *linearIssueStarterClient) EnsureIssueStarted(ctx context.Context, issueID string) error {
+	if c == nil {
+		return fmt.Errorf("linear issue starter client is nil")
+	}
+
+	issueID = strings.TrimSpace(issueID)
+	if issueID == "" {
+		return nil
+	}
+
+	query := fmt.Sprintf(`query ReadIssueWorkflowForDelegatedRun {
+  issue(id: %s) {
+    id
+    state {
+      type
+      name
+    }
+    team {
+      states {
+        nodes {
+          id
+          type
+          name
+        }
+      }
+    }
+  }
+}`, graphQLQuote(issueID))
+
+	var payload struct {
+		Issue *struct {
+			ID    string `json:"id"`
+			State *struct {
+				Type string `json:"type"`
+				Name string `json:"name"`
+			} `json:"state"`
+			Team *struct {
+				States struct {
+					Nodes []struct {
+						ID   string `json:"id"`
+						Type string `json:"type"`
+						Name string `json:"name"`
+					} `json:"nodes"`
+				} `json:"states"`
+			} `json:"team"`
+		} `json:"issue"`
+	}
+	if err := c.runGraphQLQuery(ctx, query, &payload); err != nil {
+		return fmt.Errorf("query delegated issue workflow state: %w", err)
+	}
+	if payload.Issue == nil {
+		return fmt.Errorf("delegated issue %q not found", issueID)
+	}
+	if payload.Issue.Team == nil {
+		return fmt.Errorf("delegated issue %q has no team workflow states", issueID)
+	}
+	if isStartedOrTerminalState(payload.Issue.State) {
+		return nil
+	}
+
+	startedStateID, ok := firstStartedWorkflowStateID(payload.Issue.Team.States.Nodes)
+	if !ok {
+		return fmt.Errorf("no started workflow state available for delegated issue %q", issueID)
+	}
+
+	mutation := fmt.Sprintf(`mutation UpdateIssueWorkflowStateForDelegatedRun {
+  issueUpdate(id: %s, input: { stateId: %s }) {
+    success
+  }
+}`, graphQLQuote(issueID), graphQLQuote(startedStateID))
+
+	var mutationPayload struct {
+		IssueUpdate *struct {
+			Success bool `json:"success"`
+		} `json:"issueUpdate"`
+	}
+	if err := c.runGraphQLQuery(ctx, mutation, &mutationPayload); err != nil {
+		return fmt.Errorf("update delegated issue workflow state: %w", err)
+	}
+	if mutationPayload.IssueUpdate == nil || !mutationPayload.IssueUpdate.Success {
+		return fmt.Errorf("update delegated issue workflow state unsuccessful")
+	}
+	return nil
+}
+
+func (c *linearIssueStarterClient) runGraphQLQuery(ctx context.Context, query string, out any) error {
+	if strings.TrimSpace(query) == "" {
+		return fmt.Errorf("graphql query is required")
+	}
+	if strings.TrimSpace(c.endpoint) == "" {
+		return fmt.Errorf("graphql endpoint is required")
+	}
+	if strings.TrimSpace(c.token) == "" {
+		return fmt.Errorf("graphql token is required")
+	}
+
+	body, err := json.Marshal(map[string]string{"query": query})
+	if err != nil {
+		return fmt.Errorf("marshal GraphQL request: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("build GraphQL request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	client := c.httpClient
+	if client == nil {
+		client = http.DefaultClient
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("send GraphQL request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return fmt.Errorf("read GraphQL response: %w", err)
+	}
+
+	var envelope struct {
+		Data   json.RawMessage `json:"data"`
+		Errors []struct {
+			Message string `json:"message"`
+		} `json:"errors"`
+	}
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &envelope); err != nil {
+			return fmt.Errorf("decode GraphQL response: %w", err)
+		}
+	}
+	if len(envelope.Errors) > 0 {
+		return fmt.Errorf("graphql errors: %s", joinLinearGraphQLErrors(envelope.Errors))
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		msg := strings.TrimSpace(string(raw))
+		if msg == "" {
+			msg = http.StatusText(resp.StatusCode)
+		}
+		return fmt.Errorf("graphql http %d: %s", resp.StatusCode, msg)
+	}
+	if out == nil {
+		return nil
+	}
+	if len(envelope.Data) == 0 || string(envelope.Data) == "null" {
+		return fmt.Errorf("graphql response missing data")
+	}
+	if err := json.Unmarshal(envelope.Data, out); err != nil {
+		return fmt.Errorf("decode GraphQL data payload: %w", err)
+	}
+	return nil
+}
+
+func isStartedOrTerminalState(state *struct {
+	Type string `json:"type"`
+	Name string `json:"name"`
+}) bool {
+	if state == nil {
+		return false
+	}
+	normalizedType := normalizeLinearStateToken(state.Type)
+	switch normalizedType {
+	case "started", "inprogress", "inprogressstate",
+		"completed", "done", "closed", "canceled", "cancelled":
+		return true
+	}
+	normalizedName := strings.ToLower(strings.TrimSpace(state.Name))
+	return strings.Contains(normalizedName, "progress") ||
+		strings.Contains(normalizedName, "doing") ||
+		strings.Contains(normalizedName, "started") ||
+		strings.Contains(normalizedName, "done") ||
+		strings.Contains(normalizedName, "complete") ||
+		strings.Contains(normalizedName, "cancel") ||
+		strings.Contains(normalizedName, "close")
+}
+
+func firstStartedWorkflowStateID(states []struct {
+	ID   string `json:"id"`
+	Type string `json:"type"`
+	Name string `json:"name"`
+}) (string, bool) {
+	for _, state := range states {
+		stateID := strings.TrimSpace(state.ID)
+		if stateID == "" {
+			continue
+		}
+		normalizedType := normalizeLinearStateToken(state.Type)
+		if normalizedType == "started" || normalizedType == "inprogress" || normalizedType == "inprogressstate" {
+			return stateID, true
+		}
+	}
+	return "", false
+}
+
+func normalizeLinearStateToken(raw string) string {
+	token := strings.ToLower(strings.TrimSpace(raw))
+	token = strings.ReplaceAll(token, "_", "")
+	token = strings.ReplaceAll(token, "-", "")
+	token = strings.ReplaceAll(token, " ", "")
+	return token
+}
+
+func joinLinearGraphQLErrors(errors []struct {
+	Message string `json:"message"`
+}) string {
+	messages := make([]string, 0, len(errors))
+	for _, entry := range errors {
+		msg := strings.TrimSpace(entry.Message)
+		if msg == "" {
+			continue
+		}
+		messages = append(messages, msg)
+	}
+	if len(messages) == 0 {
+		return "unknown graphql error"
+	}
+	return strings.Join(messages, "; ")
+}
+
+func graphQLQuote(value string) string {
+	return strconv.Quote(strings.TrimSpace(value))
 }
 
 func firstNonEmptyEnv(keys ...string) string {

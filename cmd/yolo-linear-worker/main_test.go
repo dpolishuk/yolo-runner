@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -121,28 +122,57 @@ func TestDefaultRunProcessesQueuedCreatedAndPromptedJobsOutsideWebhookHandler(t 
 	dispatcher := webhook.NewAsyncDispatcher(queue, 8)
 
 	var activityCalls int32
+	var workflowCalls int32
 	activityServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := r.Header.Get("Authorization"); got != "Bearer lin_api_test" {
 			t.Fatalf("expected Authorization header, got %q", got)
 		}
 
-		var payload map[string]any
+		var payload struct {
+			Query string `json:"query"`
+		}
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-			t.Fatalf("decode activity mutation payload: %v", err)
+			t.Fatalf("decode GraphQL payload: %v", err)
 		}
 
-		call := atomic.AddInt32(&activityCalls, 1)
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"data": map[string]any{
-				"agentActivityCreate": map[string]any{
-					"success": true,
-					"agentActivity": map[string]any{
-						"id": fmt.Sprintf("activity-%d", call),
+		switch {
+		case strings.Contains(payload.Query, "agentActivityCreate"):
+			call := atomic.AddInt32(&activityCalls, 1)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": map[string]any{
+					"agentActivityCreate": map[string]any{
+						"success": true,
+						"agentActivity": map[string]any{
+							"id": fmt.Sprintf("activity-%d", call),
+						},
 					},
 				},
-			},
-		})
+			})
+		case strings.Contains(payload.Query, "ReadIssueWorkflowForDelegatedRun"):
+			atomic.AddInt32(&workflowCalls, 1)
+			_, _ = w.Write([]byte(`{
+  "data": {
+    "issue": {
+      "id": "issue-1",
+      "state": {"type": "backlog", "name": "Backlog"},
+      "team": {
+        "states": {
+          "nodes": [
+            {"id": "st-started-1", "type": "started", "name": "In Progress"},
+            {"id": "st-done", "type": "completed", "name": "Done"}
+          ]
+        }
+      }
+    }
+  }
+}`))
+		case strings.Contains(payload.Query, "UpdateIssueWorkflowStateForDelegatedRun"):
+			atomic.AddInt32(&workflowCalls, 1)
+			_, _ = w.Write([]byte(`{"data":{"issueUpdate":{"success":true}}}`))
+		default:
+			t.Fatalf("unexpected GraphQL query: %q", payload.Query)
+		}
 	}))
 	t.Cleanup(activityServer.Close)
 
@@ -200,6 +230,9 @@ func TestDefaultRunProcessesQueuedCreatedAndPromptedJobsOutsideWebhookHandler(t 
 
 	if got := atomic.LoadInt32(&activityCalls); got != 4 {
 		t.Fatalf("expected thought+response activity emission for created+prompted jobs (4 calls), got %d", got)
+	}
+	if got := atomic.LoadInt32(&workflowCalls); got != 2 {
+		t.Fatalf("expected delegated issue workflow read+update for created job (2 calls), got %d", got)
 	}
 }
 

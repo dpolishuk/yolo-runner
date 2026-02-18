@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -117,5 +120,201 @@ func TestLinearSessionJobProcessorCreatedThenPrompted_ContinuesWithFollowUpInput
 	finalResponse := activities.responses[len(activities.responses)-1].Body
 	if !strings.Contains(finalResponse, "Finished processing Linear session prompted step.") {
 		t.Fatalf("expected prompted step final response, got %q", finalResponse)
+	}
+}
+
+func TestLinearSessionJobProcessorCreated_AutoTransitionsDelegatedIssueToFirstStartedState(t *testing.T) {
+	var (
+		sawReadIssueWorkflowStates bool
+		updatedStateID             string
+	)
+
+	activityAndWorkflowServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Helper()
+		if got := strings.TrimSpace(r.Header.Get("Authorization")); got != "Bearer lin_api_test" {
+			t.Fatalf("expected Authorization header with bearer token, got %q", got)
+		}
+
+		var payload struct {
+			Query string `json:"query"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode GraphQL request body: %v", err)
+		}
+		query := payload.Query
+
+		switch {
+		case strings.Contains(query, "agentActivityCreate"):
+			_, _ = w.Write([]byte(`{"data":{"agentActivityCreate":{"success":true,"agentActivity":{"id":"activity-1"}}}}`))
+		case strings.Contains(query, `issue(id: "iss-delegated-1")`) && strings.Contains(query, "states") && !strings.Contains(query, "issueUpdate"):
+			sawReadIssueWorkflowStates = true
+			_, _ = w.Write([]byte(`{
+  "data": {
+    "issue": {
+      "id": "iss-delegated-1",
+      "state": {"type": "backlog", "name": "Backlog"},
+      "team": {
+        "states": {
+          "nodes": [
+            {"id": "st-started-b", "type": "started", "name": "In Progress B"},
+            {"id": "st-started-a", "type": "started", "name": "In Progress A"},
+            {"id": "st-done", "type": "completed", "name": "Done"}
+          ]
+        }
+      }
+    }
+  }
+}`))
+		case strings.Contains(query, "issueUpdate"):
+			switch {
+			case strings.Contains(query, `stateId: "st-started-b"`):
+				updatedStateID = "st-started-b"
+			case strings.Contains(query, `stateId: "st-started-a"`):
+				updatedStateID = "st-started-a"
+			case strings.Contains(query, `stateId: "st-done"`):
+				updatedStateID = "st-done"
+			default:
+				t.Fatalf("unexpected issueUpdate query: %q", query)
+			}
+			_, _ = w.Write([]byte(`{"data":{"issueUpdate":{"success":true}}}`))
+		default:
+			t.Fatalf("unexpected GraphQL query: %q", query)
+		}
+	}))
+	t.Cleanup(activityAndWorkflowServer.Close)
+
+	repoRoot := t.TempDir()
+	t.Setenv(envLinearWorkerBackend, "codex")
+	t.Setenv(envLinearWorkerBinary, writeFakeCodexBinary(t))
+	t.Setenv(envLinearWorkerRepoRoot, repoRoot)
+	t.Setenv(envLinearWorkerModel, "openai/gpt-5.3-codex")
+	t.Setenv(envLinearToken, "lin_api_test")
+	t.Setenv(envLinearAPIEndpoint, activityAndWorkflowServer.URL)
+
+	processor, err := newLinearSessionJobProcessorFromEnv()
+	if err != nil {
+		t.Fatalf("build processor from env: %v", err)
+	}
+
+	job := webhook.Job{
+		ID:             "evt-created-1",
+		IdempotencyKey: "session-1:created:event:evt-created-1",
+		SessionID:      "session-1",
+		StepAction:     linear.AgentSessionEventActionCreated,
+		Event: linear.AgentSessionEvent{
+			Action: linear.AgentSessionEventActionCreated,
+			AgentSession: linear.AgentSession{
+				ID:            "session-1",
+				PromptContext: "<issue identifier=\"YR-O96Q\"><title>Define Linear agent protocol contract</title></issue>",
+				Issue: &linear.AgentIssue{
+					ID:         "iss-delegated-1",
+					Identifier: "YR-O96Q",
+				},
+				Comment: &linear.AgentComment{
+					ID:   "comment-1",
+					Body: "@yolo-agent implement this task",
+				},
+			},
+		},
+	}
+
+	if err := processor.Process(context.Background(), job); err != nil {
+		t.Fatalf("process created job: %v", err)
+	}
+
+	if !sawReadIssueWorkflowStates {
+		t.Fatalf("expected delegated issue workflow states to be read before run")
+	}
+	if updatedStateID != "st-started-b" {
+		t.Fatalf("expected transition to first started workflow state, got %q", updatedStateID)
+	}
+}
+
+func TestFirstStartedWorkflowStateIDUsesWorkflowOrder(t *testing.T) {
+	states := []struct {
+		ID   string `json:"id"`
+		Type string `json:"type"`
+		Name string `json:"name"`
+	}{
+		{ID: "st-started-z", Type: "started", Name: "In Progress Z"},
+		{ID: "st-started-a", Type: "started", Name: "In Progress A"},
+		{ID: "st-done", Type: "completed", Name: "Done"},
+	}
+
+	stateID, ok := firstStartedWorkflowStateID(states)
+	if !ok {
+		t.Fatalf("expected started workflow state to be found")
+	}
+	if stateID != "st-started-z" {
+		t.Fatalf("expected first started workflow state by position, got %q", stateID)
+	}
+}
+
+func TestLinearIssueStarterClientSkipsTransitionWhenIssueAlreadyStartedOrTerminal(t *testing.T) {
+	testCases := []struct {
+		name      string
+		stateType string
+		stateName string
+	}{
+		{name: "started", stateType: "started", stateName: "In Progress"},
+		{name: "completed", stateType: "completed", stateName: "Done"},
+		{name: "canceled", stateType: "canceled", stateName: "Canceled"},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			var updateCalls int
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				t.Helper()
+				if got := strings.TrimSpace(r.Header.Get("Authorization")); got != "Bearer lin_api_test" {
+					t.Fatalf("expected Authorization header with bearer token, got %q", got)
+				}
+
+				var payload struct {
+					Query string `json:"query"`
+				}
+				if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+					t.Fatalf("decode GraphQL request body: %v", err)
+				}
+
+				switch {
+				case strings.Contains(payload.Query, "ReadIssueWorkflowForDelegatedRun"):
+					_, _ = w.Write([]byte(`{
+  "data": {
+    "issue": {
+      "id": "iss-delegated-2",
+      "state": {"type": "` + tc.stateType + `", "name": "` + tc.stateName + `"},
+      "team": {
+        "states": {
+          "nodes": [
+            {"id": "st-started-1", "type": "started", "name": "In Progress"},
+            {"id": "st-done", "type": "completed", "name": "Done"}
+          ]
+        }
+      }
+    }
+  }
+}`))
+				case strings.Contains(payload.Query, "UpdateIssueWorkflowStateForDelegatedRun"):
+					updateCalls++
+					_, _ = w.Write([]byte(`{"data":{"issueUpdate":{"success":true}}}`))
+				default:
+					t.Fatalf("unexpected GraphQL query: %q", payload.Query)
+				}
+			}))
+			t.Cleanup(server.Close)
+
+			client := &linearIssueStarterClient{
+				endpoint:   server.URL,
+				token:      "lin_api_test",
+				httpClient: server.Client(),
+			}
+			if err := client.EnsureIssueStarted(context.Background(), "iss-delegated-2"); err != nil {
+				t.Fatalf("EnsureIssueStarted returned error: %v", err)
+			}
+			if updateCalls != 0 {
+				t.Fatalf("expected no state transition mutation for %s state, got %d updates", tc.name, updateCalls)
+			}
+		})
 	}
 }
