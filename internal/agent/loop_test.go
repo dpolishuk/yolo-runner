@@ -76,6 +76,24 @@ func TestBuildPromptImplementIncludesCommandContractAndTDDChecklist(t *testing.T
 	}
 }
 
+func TestBuildImplementPromptIncludesReviewFeedbackWhenRetrying(t *testing.T) {
+	prompt := buildImplementPrompt(
+		contracts.Task{ID: "t-1", Title: "Task 1", Description: "Implement behavior"},
+		"add RED/GREEN note evidence to ticket",
+		1,
+	)
+
+	if !strings.Contains(prompt, "Review Remediation Loop: Attempt 1") {
+		t.Fatalf("expected remediation loop attempt marker, got %q", prompt)
+	}
+	if !strings.Contains(prompt, "REVIEW_FAIL_FEEDBACK:") {
+		t.Fatalf("expected structured review feedback marker, got %q", prompt)
+	}
+	if !strings.Contains(prompt, "add RED/GREEN note evidence to ticket") {
+		t.Fatalf("expected review feedback body in prompt, got %q", prompt)
+	}
+}
+
 func TestLoopRetriesReviewFailThenCompletes(t *testing.T) {
 	mgr := newFakeTaskManager(contracts.Task{ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen})
 	run := &fakeRunner{results: []contracts.RunnerResult{
@@ -752,6 +770,92 @@ func TestLoopUsesStructuredReviewFailFeedbackAsTriageReason(t *testing.T) {
 	}
 }
 
+func TestLoopRetriesReviewFailAndInjectsFeedbackIntoImplementPrompt(t *testing.T) {
+	mgr := newFakeTaskManager(contracts.Task{ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen})
+	run := &fakeRunner{results: []contracts.RunnerResult{
+		{Status: contracts.RunnerResultCompleted},
+		{
+			Status:      contracts.RunnerResultCompleted,
+			ReviewReady: false,
+			Artifacts: map[string]string{
+				"review_verdict":       "fail",
+				"review_fail_feedback": "add missing RED->GREEN ticket notes",
+			},
+		},
+		{Status: contracts.RunnerResultCompleted},
+		{Status: contracts.RunnerResultCompleted, ReviewReady: true},
+	}}
+	loop := NewLoop(mgr, run, nil, LoopOptions{ParentID: "root", MaxRetries: 1, RequireReview: true})
+
+	summary, err := loop.Run(context.Background())
+	if err != nil {
+		t.Fatalf("loop failed: %v", err)
+	}
+	if summary.Completed != 1 {
+		t.Fatalf("expected completed summary after review remediation retry, got %#v", summary)
+	}
+	if len(run.requests) != 4 {
+		t.Fatalf("expected implement+review then implement+review, got %d requests", len(run.requests))
+	}
+	if run.requests[2].Mode != contracts.RunnerModeImplement {
+		t.Fatalf("expected third request to be implement retry, got %s", run.requests[2].Mode)
+	}
+	if !strings.Contains(run.requests[2].Prompt, "Review Remediation Loop: Attempt 1") {
+		t.Fatalf("expected remediation attempt marker in retry prompt, got %q", run.requests[2].Prompt)
+	}
+	if !strings.Contains(run.requests[2].Prompt, "add missing RED->GREEN ticket notes") {
+		t.Fatalf("expected review fail feedback in retry prompt, got %q", run.requests[2].Prompt)
+	}
+	if got := mgr.dataByID["t-1"]["review_retry_count"]; got != "1" {
+		t.Fatalf("expected review_retry_count=1, got %q", got)
+	}
+	if got := mgr.dataByID["t-1"]["review_feedback"]; got != "add missing RED->GREEN ticket notes" {
+		t.Fatalf("expected review_feedback persisted, got %q", got)
+	}
+}
+
+func TestLoopMarksFailedWhenReviewRetryBudgetExhausted(t *testing.T) {
+	mgr := newFakeTaskManager(contracts.Task{ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen})
+	run := &fakeRunner{results: []contracts.RunnerResult{
+		{Status: contracts.RunnerResultCompleted},
+		{
+			Status:      contracts.RunnerResultCompleted,
+			ReviewReady: false,
+			Artifacts: map[string]string{
+				"review_verdict":       "fail",
+				"review_fail_feedback": "first remediation request",
+			},
+		},
+		{Status: contracts.RunnerResultCompleted},
+		{
+			Status:      contracts.RunnerResultCompleted,
+			ReviewReady: false,
+			Artifacts: map[string]string{
+				"review_verdict":       "fail",
+				"review_fail_feedback": "second remediation request still failing",
+			},
+		},
+	}}
+	loop := NewLoop(mgr, run, nil, LoopOptions{ParentID: "root", MaxRetries: 1, RequireReview: true})
+
+	summary, err := loop.Run(context.Background())
+	if err != nil {
+		t.Fatalf("loop failed: %v", err)
+	}
+	if summary.Failed != 1 {
+		t.Fatalf("expected failed summary after retry exhaustion, got %#v", summary)
+	}
+	if mgr.statusByID["t-1"] != contracts.TaskStatusFailed {
+		t.Fatalf("expected failed status after retry exhaustion, got %s", mgr.statusByID["t-1"])
+	}
+	if got := mgr.dataByID["t-1"]["triage_reason"]; got != "review rejected: second remediation request still failing" {
+		t.Fatalf("unexpected triage_reason after retry exhaustion: %q", got)
+	}
+	if got := mgr.dataByID["t-1"]["review_retry_count"]; got != "1" {
+		t.Fatalf("expected review_retry_count to remain 1 after one retry, got %q", got)
+	}
+}
+
 func TestLoopMergesAndPushesAfterSuccessfulReview(t *testing.T) {
 	mgr := newFakeTaskManager(contracts.Task{ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen})
 	run := &fakeRunner{results: []contracts.RunnerResult{
@@ -1388,7 +1492,7 @@ func TestLoopEmitsLandingQueueLifecycleEventsOnAutoLandSuccess(t *testing.T) {
 func TestLoopMarksLandingQueueBlockedOnMergeFailure(t *testing.T) {
 	mgr := newFakeTaskManager(contracts.Task{ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen})
 	run := &fakeRunner{results: []contracts.RunnerResult{{Status: contracts.RunnerResultCompleted}, {Status: contracts.RunnerResultCompleted, ReviewReady: true}}}
-	vcs := &fakeVCS{mergeErrs: []error{errors.New("merge conflict first"), errors.New("merge conflict second")}}
+	vcs := &fakeVCS{mergeErrs: []error{errors.New("landing failure first"), errors.New("landing failure second")}}
 	sink := &recordingSink{}
 	loop := NewLoop(mgr, run, sink, LoopOptions{ParentID: "root", VCS: vcs, MergeOnSuccess: true, RequireReview: true})
 
@@ -1408,7 +1512,7 @@ func TestLoopMarksLandingQueueBlockedOnMergeFailure(t *testing.T) {
 	if got := mgr.dataByID["t-1"]["triage_status"]; got != "blocked" {
 		t.Fatalf("expected triage_status=blocked, got %q", got)
 	}
-	if got := mgr.dataByID["t-1"]["triage_reason"]; !strings.Contains(got, "merge conflict second") {
+	if got := mgr.dataByID["t-1"]["triage_reason"]; !strings.Contains(got, "landing failure second") {
 		t.Fatalf("expected triage reason with final conflict, got %q", got)
 	}
 	if got := mgr.dataByID["t-1"]["auto_commit_sha"]; got != "abc123" {
@@ -1436,7 +1540,7 @@ func TestLoopMarksLandingQueueBlockedOnMergeFailure(t *testing.T) {
 func TestLoopAutoLandRetriesOnceThenSucceeds(t *testing.T) {
 	mgr := newFakeTaskManager(contracts.Task{ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen})
 	run := &fakeRunner{results: []contracts.RunnerResult{{Status: contracts.RunnerResultCompleted}, {Status: contracts.RunnerResultCompleted, ReviewReady: true}}}
-	vcs := &fakeVCS{mergeErrs: []error{errors.New("merge conflict"), nil}}
+	vcs := &fakeVCS{mergeErrs: []error{errors.New("temporary merge failure"), nil}}
 	sink := &recordingSink{}
 	loop := NewLoop(mgr, run, sink, LoopOptions{ParentID: "root", VCS: vcs, MergeOnSuccess: true, RequireReview: true})
 
@@ -1468,6 +1572,79 @@ func TestLoopAutoLandRetriesOnceThenSucceeds(t *testing.T) {
 	}
 	if indexOfEventType(sink.events, contracts.EventTypeMergeRetry) >= indexOfEventType(sink.events, contracts.EventTypeMergeLanded) {
 		t.Fatalf("expected merge_retry before merge_landed, got events=%#v", sink.events)
+	}
+}
+
+func TestLoopRunsMergeConflictRemediationBeforeLandingRetry(t *testing.T) {
+	mgr := newFakeTaskManager(contracts.Task{ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen})
+	run := &fakeRunner{results: []contracts.RunnerResult{
+		{Status: contracts.RunnerResultCompleted},
+		{Status: contracts.RunnerResultCompleted, ReviewReady: true},
+		{Status: contracts.RunnerResultCompleted},
+	}}
+	vcs := &fakeVCS{mergeErrs: []error{errors.New("git merge --no-ff task/t-1 failed: CONFLICT (content): Merge conflict"), nil}}
+	sink := &recordingSink{}
+	loop := NewLoop(mgr, run, sink, LoopOptions{ParentID: "root", VCS: vcs, MergeOnSuccess: true, RequireReview: true})
+
+	summary, err := loop.Run(context.Background())
+	if err != nil {
+		t.Fatalf("loop failed: %v", err)
+	}
+	if summary.Completed != 1 {
+		t.Fatalf("expected task to complete after remediation retry, got %#v", summary)
+	}
+	if vcs.mergeCalls != 2 {
+		t.Fatalf("expected two merge attempts, got %d", vcs.mergeCalls)
+	}
+	if len(run.modes) != 3 {
+		t.Fatalf("expected implement+review+remediation implement runs, got %d", len(run.modes))
+	}
+	if run.modes[2] != contracts.RunnerModeImplement {
+		t.Fatalf("expected remediation mode implement, got %s", run.modes[2])
+	}
+	if !strings.Contains(run.requests[2].Prompt, "Landing Merge Remediation:") {
+		t.Fatalf("expected merge remediation prompt, got %q", run.requests[2].Prompt)
+	}
+	if !strings.Contains(run.requests[2].Prompt, "Merge Failure Details:") {
+		t.Fatalf("expected merge failure details in remediation prompt, got %q", run.requests[2].Prompt)
+	}
+	if !hasEventType(sink.events, contracts.EventTypeMergeRetry) {
+		t.Fatalf("expected merge_retry event")
+	}
+	if !hasEventType(sink.events, contracts.EventTypeMergeLanded) {
+		t.Fatalf("expected merge_landed event")
+	}
+}
+
+func TestLoopBlocksTaskWhenMergeConflictRemediationFails(t *testing.T) {
+	mgr := newFakeTaskManager(contracts.Task{ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen})
+	run := &fakeRunner{results: []contracts.RunnerResult{
+		{Status: contracts.RunnerResultCompleted},
+		{Status: contracts.RunnerResultCompleted, ReviewReady: true},
+		{Status: contracts.RunnerResultFailed, Reason: "unable to resolve conflicts automatically"},
+	}}
+	vcs := &fakeVCS{mergeErrs: []error{errors.New("git merge --no-ff task/t-1 failed: CONFLICT (content): Merge conflict")}}
+	sink := &recordingSink{}
+	loop := NewLoop(mgr, run, sink, LoopOptions{ParentID: "root", VCS: vcs, MergeOnSuccess: true, RequireReview: true})
+
+	summary, err := loop.Run(context.Background())
+	if err != nil {
+		t.Fatalf("loop failed: %v", err)
+	}
+	if summary.Blocked != 1 {
+		t.Fatalf("expected blocked summary after remediation failure, got %#v", summary)
+	}
+	if vcs.mergeCalls != 1 {
+		t.Fatalf("expected no second merge attempt after remediation failure, got %d", vcs.mergeCalls)
+	}
+	if mgr.statusByID["t-1"] != contracts.TaskStatusBlocked {
+		t.Fatalf("expected blocked status, got %s", mgr.statusByID["t-1"])
+	}
+	if got := mgr.dataByID["t-1"]["triage_reason"]; !strings.Contains(got, "merge conflict remediation failed") {
+		t.Fatalf("expected remediation failure triage reason, got %q", got)
+	}
+	if hasEventType(sink.events, contracts.EventTypeMergeLanded) {
+		t.Fatalf("did not expect merge_landed on remediation failure")
 	}
 }
 

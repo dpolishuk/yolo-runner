@@ -244,6 +244,7 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 	}
 
 	reviewRetries := 0
+	reviewRetryFeedback := ""
 	for {
 		reviewFailed := false
 		if err := l.tasks.SetTaskStatus(ctx, task.ID, contracts.TaskStatusInProgress); err != nil {
@@ -268,7 +269,7 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 			RepoRoot: taskRepoRoot,
 			Model:    l.options.Model,
 			Timeout:  l.options.RunnerTimeout,
-			Prompt:   buildPrompt(task, contracts.RunnerModeImplement),
+			Prompt:   buildImplementPrompt(task, reviewRetryFeedback, reviewRetries),
 			Metadata: requestMetadata,
 		}, task.ID, task.Title, worker, taskRepoRoot, queuePos)
 		if err != nil {
@@ -455,6 +456,20 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 								"landing_attempt": fmt.Sprintf("%d", attempt),
 								"triage_reason":   landingReason,
 							})
+							if isMergeConflictError(landingReason) {
+								remediationResult := l.runLandingMergeConflictRemediation(ctx, task, taskVCS, taskBranch, worker, taskRepoRoot, queuePos, landingReason)
+								if remediationResult.Status != contracts.RunnerResultCompleted {
+									remediationReason := strings.TrimSpace(remediationResult.Reason)
+									if remediationReason == "" {
+										remediationReason = "runner did not complete successfully"
+									}
+									landingReason = "merge conflict remediation failed: " + remediationReason
+									landingBlocked = true
+									break
+								}
+								autoCommitDone = false
+								autoCommitSHA = ""
+							}
 							_ = landingState.Apply(scheduler.LandingEventRequeued)
 							_ = l.emit(ctx, contracts.Event{Type: contracts.EventTypeTaskDataUpdated, TaskID: task.ID, TaskTitle: task.Title, WorkerID: worker, ClonePath: taskRepoRoot, QueuePos: queuePos, Metadata: buildLandingMetadata(string(landingState.State()), 0, ""), Timestamp: time.Now().UTC()})
 							emitMergeQueueEvent(contracts.EventTypeMergeQueued, map[string]string{
@@ -570,34 +585,44 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 			summary.Blocked++
 			return summary, nil
 		case contracts.RunnerResultFailed:
-			if reviewFailed && reviewRetries < l.options.MaxRetries {
-				reviewRetries++
-				retryData := map[string]string{
-					"review_retry_count": fmt.Sprintf("%d", reviewRetries),
+			reviewFail := reviewFailed || isReviewFailResult(result)
+			if reviewFail {
+				feedback := strings.TrimSpace(reviewFailFeedbackFromArtifacts(result))
+				if feedback == "" {
+					feedback = strings.TrimSpace(result.Reason)
 				}
-				retryData = appendReviewOutcomeMetadata(retryData, result)
-				if strings.TrimSpace(result.Reason) != "" {
-					retryData["triage_reason"] = strings.TrimSpace(result.Reason)
+				reviewRetryFeedback = feedback
+				if reviewRetries < l.options.MaxRetries {
+					reviewRetries++
+					retryData := map[string]string{"review_retry_count": fmt.Sprintf("%d", reviewRetries)}
+					if reviewRetryFeedback != "" {
+						retryData["review_feedback"] = reviewRetryFeedback
+					}
+					retryData = appendReviewOutcomeMetadata(retryData, result)
+					if strings.TrimSpace(result.Reason) != "" {
+						retryData["triage_reason"] = strings.TrimSpace(result.Reason)
+					}
+					if err := l.tasks.SetTaskData(ctx, task.ID, retryData); err != nil {
+						return summary, err
+					}
+					if task.Metadata == nil {
+						task.Metadata = map[string]string{}
+					}
+					for key, value := range retryData {
+						task.Metadata[key] = value
+					}
+					_ = l.emit(ctx, contracts.Event{Type: contracts.EventTypeTaskDataUpdated, TaskID: task.ID, TaskTitle: task.Title, WorkerID: worker, ClonePath: taskRepoRoot, QueuePos: queuePos, Metadata: retryData, Timestamp: time.Now().UTC()})
+					if err := l.tasks.SetTaskStatus(ctx, task.ID, contracts.TaskStatusOpen); err != nil {
+						return summary, err
+					}
+					continue
 				}
-				if err := l.tasks.SetTaskData(ctx, task.ID, retryData); err != nil {
-					return summary, err
-				}
-				if err := l.tasks.SetTaskStatus(ctx, task.ID, contracts.TaskStatusOpen); err != nil {
-					return summary, err
-				}
-				if task.Metadata == nil {
-					task.Metadata = map[string]string{}
-				}
-				for key, value := range retryData {
-					task.Metadata[key] = value
-				}
-				continue
 			}
 			failedData := map[string]string{"triage_status": "failed"}
 			if result.Reason != "" {
 				failedData["triage_reason"] = result.Reason
 			}
-			if reviewFailed || reviewRetries > 0 {
+			if reviewFail || reviewRetries > 0 {
 				failedData["review_retry_count"] = fmt.Sprintf("%d", reviewRetries)
 			}
 			failedData = appendReviewOutcomeMetadata(failedData, result)
@@ -769,6 +794,44 @@ func (l *Loop) runRunnerWithMonitoring(ctx context.Context, request contracts.Ru
 	return result, err
 }
 
+func (l *Loop) runLandingMergeConflictRemediation(ctx context.Context, task contracts.Task, taskVCS contracts.VCS, taskBranch string, worker string, taskRepoRoot string, queuePos int, mergeFailureReason string) contracts.RunnerResult {
+	if taskVCS != nil && strings.TrimSpace(taskBranch) != "" {
+		if err := taskVCS.Checkout(ctx, taskBranch); err != nil {
+			return contracts.RunnerResult{Status: contracts.RunnerResultFailed, Reason: fmt.Sprintf("git checkout %s failed: %v", taskBranch, err)}
+		}
+	}
+
+	remediationLogPath := defaultRunnerLogPath(taskRepoRoot, task.ID, l.options.Backend)
+	remediationStartMeta := buildRunnerStartedMetadata(contracts.RunnerModeImplement, l.options.Backend, l.options.Model, taskRepoRoot, remediationLogPath, time.Now().UTC())
+	remediationStartMeta["landing_phase"] = "merge_conflict_remediation"
+	_ = l.emit(ctx, contracts.Event{Type: contracts.EventTypeRunnerStarted, TaskID: task.ID, TaskTitle: task.Title, WorkerID: worker, ClonePath: taskRepoRoot, QueuePos: queuePos, Message: string(contracts.RunnerModeImplement), Metadata: remediationStartMeta, Timestamp: time.Now().UTC()})
+
+	remediationMetadata := map[string]string{"log_path": remediationLogPath, "clone_path": taskRepoRoot, "landing_phase": "merge_conflict_remediation"}
+	if l.options.WatchdogTimeout > 0 {
+		remediationMetadata["watchdog_timeout"] = l.options.WatchdogTimeout.String()
+	}
+	if l.options.WatchdogInterval > 0 {
+		remediationMetadata["watchdog_interval"] = l.options.WatchdogInterval.String()
+	}
+
+	result, err := l.runRunnerWithMonitoring(ctx, contracts.RunnerRequest{
+		TaskID:   task.ID,
+		ParentID: l.options.ParentID,
+		Mode:     contracts.RunnerModeImplement,
+		RepoRoot: taskRepoRoot,
+		Model:    l.options.Model,
+		Timeout:  l.options.RunnerTimeout,
+		Prompt:   buildMergeConflictRemediationPrompt(task, taskBranch, mergeFailureReason),
+		Metadata: remediationMetadata,
+	}, task.ID, task.Title, worker, taskRepoRoot, queuePos)
+	if err != nil {
+		result = contracts.RunnerResult{Status: contracts.RunnerResultFailed, Reason: err.Error()}
+	}
+
+	_ = l.emit(ctx, contracts.Event{Type: contracts.EventTypeRunnerFinished, TaskID: task.ID, TaskTitle: task.Title, WorkerID: worker, ClonePath: taskRepoRoot, QueuePos: queuePos, Message: string(result.Status), Metadata: buildRunnerFinishedMetadata(result), Timestamp: time.Now().UTC()})
+	return result
+}
+
 func buildPrompt(task contracts.Task, mode contracts.RunnerMode) string {
 	modeLine := "Implementation"
 	if mode == contracts.RunnerModeReview {
@@ -842,6 +905,71 @@ func reviewRetryBlockersFromMetadata(metadata map[string]string) string {
 		}
 	}
 	return ""
+}
+
+func buildImplementPrompt(task contracts.Task, reviewFeedback string, reviewRetryCount int) string {
+	prompt := buildPrompt(task, contracts.RunnerModeImplement)
+	feedback := strings.TrimSpace(reviewFeedback)
+	if feedback == "" || reviewRetryCount <= 0 {
+		return prompt
+	}
+	sections := []string{
+		prompt,
+		strings.Join([]string{
+			fmt.Sprintf("Review Remediation Loop: Attempt %d", reviewRetryCount),
+			"A previous review run failed. Address all blocking review comments before requesting review again.",
+			"REVIEW_FAIL_FEEDBACK:",
+			feedback,
+		}, "\n"),
+	}
+	return strings.Join(sections, "\n\n")
+}
+
+func buildMergeConflictRemediationPrompt(task contracts.Task, taskBranch string, mergeFailureReason string) string {
+	base := buildImplementPrompt(task, "", 0)
+	sections := []string{
+		base,
+		strings.Join([]string{
+			"Landing Merge Remediation:",
+			"- Auto-landing failed while merging the task branch into main.",
+			"- Resolve merge conflicts on the task branch so merge-to-main can succeed.",
+			"- Keep accepted behavior intact; do not discard required changes.",
+			"- Run relevant tests after conflict resolution.",
+			"- Commit conflict-resolution changes on the task branch.",
+		}, "\n"),
+	}
+	if strings.TrimSpace(taskBranch) != "" {
+		sections = append(sections, "Target Branch: "+strings.TrimSpace(taskBranch))
+	}
+	if strings.TrimSpace(mergeFailureReason) != "" {
+		sections = append(sections, "Merge Failure Details:\n"+strings.TrimSpace(mergeFailureReason))
+	}
+	return strings.Join(sections, "\n\n")
+}
+
+func isMergeConflictError(reason string) bool {
+	lower := strings.ToLower(strings.TrimSpace(reason))
+	if lower == "" {
+		return false
+	}
+	for _, needle := range []string{"automatic merge failed", "merge conflict", "conflict (", "needs merge"} {
+		if strings.Contains(lower, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+func isReviewFailResult(result contracts.RunnerResult) bool {
+	if verdict := reviewVerdictFromArtifacts(result); verdict == "fail" {
+		return true
+	}
+	reason := strings.TrimSpace(result.Reason)
+	if reason == "" {
+		return false
+	}
+	lower := strings.ToLower(reason)
+	return strings.HasPrefix(lower, "review rejected") || strings.Contains(lower, "review verdict returned fail")
 }
 
 func autoLandingCommitMessage(task contracts.Task) string {
