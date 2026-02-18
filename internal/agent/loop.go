@@ -242,8 +242,9 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 		}
 	}
 
-	retries := 0
+	reviewRetries := 0
 	for {
+		reviewFailed := false
 		if err := l.tasks.SetTaskStatus(ctx, task.ID, contracts.TaskStatusInProgress); err != nil {
 			return summary, err
 		}
@@ -360,6 +361,9 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 			_ = l.emit(ctx, contracts.Event{Type: contracts.EventTypeReviewFinished, TaskID: task.ID, TaskTitle: task.Title, WorkerID: worker, ClonePath: taskRepoRoot, QueuePos: queuePos, Message: string(finalReviewResult.Status), Metadata: reviewFinishedMetadata, Timestamp: time.Now().UTC()})
 			if finalReviewResult.Status != contracts.RunnerResultCompleted {
 				result = finalReviewResult
+				if finalReviewResult.Status == contracts.RunnerResultFailed {
+					reviewFailed = true
+				}
 			}
 		}
 
@@ -557,9 +561,16 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 			summary.Blocked++
 			return summary, nil
 		case contracts.RunnerResultFailed:
-			retries++
-			if retries <= l.options.MaxRetries {
-				if err := l.tasks.SetTaskData(ctx, task.ID, map[string]string{"retry_count": fmt.Sprintf("%d", retries)}); err != nil {
+			if reviewFailed && reviewRetries < l.options.MaxRetries {
+				reviewRetries++
+				retryData := map[string]string{
+					"review_retry_count": fmt.Sprintf("%d", reviewRetries),
+				}
+				retryData = appendReviewOutcomeMetadata(retryData, result)
+				if strings.TrimSpace(result.Reason) != "" {
+					retryData["triage_reason"] = strings.TrimSpace(result.Reason)
+				}
+				if err := l.tasks.SetTaskData(ctx, task.ID, retryData); err != nil {
 					return summary, err
 				}
 				if err := l.tasks.SetTaskStatus(ctx, task.ID, contracts.TaskStatusOpen); err != nil {
@@ -570,6 +581,9 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 			failedData := map[string]string{"triage_status": "failed"}
 			if result.Reason != "" {
 				failedData["triage_reason"] = result.Reason
+			}
+			if reviewFailed || reviewRetries > 0 {
+				failedData["review_retry_count"] = fmt.Sprintf("%d", reviewRetries)
 			}
 			failedData = appendReviewOutcomeMetadata(failedData, result)
 			if err := l.tasks.SetTaskData(ctx, task.ID, failedData); err != nil {

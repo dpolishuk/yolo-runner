@@ -76,13 +76,22 @@ func TestBuildPromptImplementIncludesCommandContractAndTDDChecklist(t *testing.T
 	}
 }
 
-func TestLoopRetriesFailedTaskThenCompletes(t *testing.T) {
+func TestLoopRetriesReviewFailThenCompletes(t *testing.T) {
 	mgr := newFakeTaskManager(contracts.Task{ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen})
 	run := &fakeRunner{results: []contracts.RunnerResult{
-		{Status: contracts.RunnerResultFailed, Reason: "first failure"},
 		{Status: contracts.RunnerResultCompleted},
+		{
+			Status:      contracts.RunnerResultCompleted,
+			ReviewReady: false,
+			Artifacts: map[string]string{
+				"review_verdict":       "fail",
+				"review_fail_feedback": "missing regression test",
+			},
+		},
+		{Status: contracts.RunnerResultCompleted},
+		{Status: contracts.RunnerResultCompleted, ReviewReady: true},
 	}}
-	loop := NewLoop(mgr, run, nil, LoopOptions{ParentID: "root", MaxRetries: 2})
+	loop := NewLoop(mgr, run, nil, LoopOptions{ParentID: "root", MaxRetries: 2, RequireReview: true})
 
 	summary, err := loop.Run(context.Background())
 	if err != nil {
@@ -91,18 +100,29 @@ func TestLoopRetriesFailedTaskThenCompletes(t *testing.T) {
 	if summary.Completed != 1 {
 		t.Fatalf("expected completion after retry, got %#v", summary)
 	}
-	if got := mgr.dataByID["t-1"]["retry_count"]; got != "1" {
-		t.Fatalf("expected retry_count=1, got %q", got)
+	if got := mgr.dataByID["t-1"]["review_retry_count"]; got != "1" {
+		t.Fatalf("expected review_retry_count=1, got %q", got)
+	}
+	if len(run.modes) != 4 {
+		t.Fatalf("expected implement+review to rerun after review fail, got modes=%#v", run.modes)
+	}
+	if run.modes[0] != contracts.RunnerModeImplement ||
+		run.modes[1] != contracts.RunnerModeReview ||
+		run.modes[2] != contracts.RunnerModeImplement ||
+		run.modes[3] != contracts.RunnerModeReview {
+		t.Fatalf("unexpected runner mode sequence: %#v", run.modes)
 	}
 }
 
 func TestLoopMarksFailedAfterRetryExhausted(t *testing.T) {
 	mgr := newFakeTaskManager(contracts.Task{ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen})
 	run := &fakeRunner{results: []contracts.RunnerResult{
-		{Status: contracts.RunnerResultFailed, Reason: "first"},
-		{Status: contracts.RunnerResultFailed, Reason: "second"},
+		{Status: contracts.RunnerResultCompleted},
+		{Status: contracts.RunnerResultFailed, Reason: "review rejected: first"},
+		{Status: contracts.RunnerResultCompleted},
+		{Status: contracts.RunnerResultFailed, Reason: "review rejected: second"},
 	}}
-	loop := NewLoop(mgr, run, nil, LoopOptions{ParentID: "root", MaxRetries: 1})
+	loop := NewLoop(mgr, run, nil, LoopOptions{ParentID: "root", MaxRetries: 1, RequireReview: true})
 
 	summary, err := loop.Run(context.Background())
 	if err != nil {
@@ -117,8 +137,34 @@ func TestLoopMarksFailedAfterRetryExhausted(t *testing.T) {
 	if got := mgr.dataByID["t-1"]["triage_status"]; got != "failed" {
 		t.Fatalf("expected triage_status=failed, got %q", got)
 	}
-	if got := mgr.dataByID["t-1"]["triage_reason"]; got != "second" {
-		t.Fatalf("expected triage_reason=second, got %q", got)
+	if got := mgr.dataByID["t-1"]["triage_reason"]; got != "review rejected: second" {
+		t.Fatalf("expected triage_reason from final review failure, got %q", got)
+	}
+	if got := mgr.dataByID["t-1"]["review_retry_count"]; got != "1" {
+		t.Fatalf("expected review_retry_count=1 after retry exhaustion, got %q", got)
+	}
+}
+
+func TestLoopDoesNotRetryNonReviewFailureWhenRetryBudgetRemains(t *testing.T) {
+	mgr := newFakeTaskManager(contracts.Task{ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen})
+	run := &fakeRunner{results: []contracts.RunnerResult{
+		{Status: contracts.RunnerResultFailed, Reason: "lint failed"},
+		{Status: contracts.RunnerResultCompleted},
+	}}
+	loop := NewLoop(mgr, run, nil, LoopOptions{ParentID: "root", MaxRetries: 2})
+
+	summary, err := loop.Run(context.Background())
+	if err != nil {
+		t.Fatalf("loop failed: %v", err)
+	}
+	if summary.Failed != 1 {
+		t.Fatalf("expected non-review failure to fail immediately, got %#v", summary)
+	}
+	if len(run.modes) != 1 || run.modes[0] != contracts.RunnerModeImplement {
+		t.Fatalf("expected exactly one implement run with no retry, got modes=%#v", run.modes)
+	}
+	if got := mgr.dataByID["t-1"]["review_retry_count"]; got != "" {
+		t.Fatalf("expected no review_retry_count for non-review failure, got %q", got)
 	}
 }
 
