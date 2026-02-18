@@ -1,6 +1,6 @@
 ---
 id: yr-qxrw
-status: open
+status: closed
 deps: [yr-o0jm]
 links: []
 created: 2026-02-10T00:12:26Z
