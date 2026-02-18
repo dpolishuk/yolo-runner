@@ -54,10 +54,12 @@ func TestLinearSessionJobProcessorCreatedThenPrompted_ContinuesWithFollowUpInput
 	}
 
 	createdJob := webhook.Job{
-		ID:             "evt-created-1",
-		IdempotencyKey: "session-1:created:event:evt-created-1",
-		SessionID:      "session-1",
-		StepAction:     linear.AgentSessionEventActionCreated,
+		ContractVersion: webhook.JobContractVersion1,
+		ID:              "evt-created-1",
+		IdempotencyKey:  "session-1:created:event:evt-created-1",
+		SessionID:       "session-1",
+		StepID:          "step-created-1",
+		StepAction:      linear.AgentSessionEventActionCreated,
 		Event: linear.AgentSessionEvent{
 			Action: linear.AgentSessionEventActionCreated,
 			AgentSession: linear.AgentSession{
@@ -72,10 +74,12 @@ func TestLinearSessionJobProcessorCreatedThenPrompted_ContinuesWithFollowUpInput
 	}
 
 	promptedJob := webhook.Job{
-		ID:             "evt-prompted-1",
-		IdempotencyKey: "session-1:prompted:activity:activity-1",
-		SessionID:      "session-1",
-		StepAction:     linear.AgentSessionEventActionPrompted,
+		ContractVersion: webhook.JobContractVersion1,
+		ID:              "evt-prompted-1",
+		IdempotencyKey:  "session-1:prompted:activity:activity-1",
+		SessionID:       "session-1",
+		StepID:          "step-prompted-1",
+		StepAction:      linear.AgentSessionEventActionPrompted,
 		Event: linear.AgentSessionEvent{
 			Action: linear.AgentSessionEventActionPrompted,
 			AgentSession: linear.AgentSession{
@@ -197,10 +201,12 @@ func TestLinearSessionJobProcessorCreated_AutoTransitionsDelegatedIssueToFirstSt
 	}
 
 	job := webhook.Job{
-		ID:             "evt-created-1",
-		IdempotencyKey: "session-1:created:event:evt-created-1",
-		SessionID:      "session-1",
-		StepAction:     linear.AgentSessionEventActionCreated,
+		ContractVersion: webhook.JobContractVersion1,
+		ID:              "evt-created-1",
+		IdempotencyKey:  "session-1:created:event:evt-created-1",
+		SessionID:       "session-1",
+		StepID:          "step-created-1",
+		StepAction:      linear.AgentSessionEventActionCreated,
 		Event: linear.AgentSessionEvent{
 			Action: linear.AgentSessionEventActionCreated,
 			AgentSession: linear.AgentSession{
@@ -227,6 +233,57 @@ func TestLinearSessionJobProcessorCreated_AutoTransitionsDelegatedIssueToFirstSt
 	}
 	if updatedStateID != "st-started-b" {
 		t.Fatalf("expected transition to first started workflow state, got %q", updatedStateID)
+	}
+}
+
+func TestLinearSessionJobProcessorProcessTreatsFailedAndBlockedResultsAsErrors(t *testing.T) {
+	testCases := []struct {
+		name           string
+		status         contracts.RunnerResultStatus
+		reason         string
+		expectCategory string
+	}{
+		{name: "failed status", status: contracts.RunnerResultFailed, reason: "opencode stall waiting for output", expectCategory: "runtime"},
+		{name: "blocked status", status: contracts.RunnerResultBlocked, reason: "runner timeout after 5m", expectCategory: "runtime"},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			runner := &captureLinearRunner{
+				result: contracts.RunnerResult{
+					Status: tc.status,
+					Reason: tc.reason,
+				},
+			}
+			activities := &captureLinearActivities{}
+			processor := &linearSessionJobProcessor{
+				repoRoot:   t.TempDir(),
+				runner:     runner,
+				activities: activities,
+			}
+
+			err := processor.Process(context.Background(), queuedLinearJobFixture(linear.AgentSessionEventActionCreated))
+			if err == nil {
+				t.Fatalf("expected non-completed runner status to return an error")
+			}
+			if !strings.Contains(err.Error(), tc.reason) {
+				t.Fatalf("expected returned error to include runner reason %q, got %q", tc.reason, err.Error())
+			}
+
+			if len(activities.responses) != 1 {
+				t.Fatalf("expected response activity to be emitted once, got %d", len(activities.responses))
+			}
+			responseBody := activities.responses[0].Body
+			if !strings.Contains(responseBody, "Failed processing Linear session") {
+				t.Fatalf("expected failure preface in response activity body, got %q", responseBody)
+			}
+			if !strings.Contains(responseBody, "Category: "+tc.expectCategory) {
+				t.Fatalf("expected actionable category in response activity body, got %q", responseBody)
+			}
+			if !strings.Contains(responseBody, "Next step:") {
+				t.Fatalf("expected remediation guidance in response activity body, got %q", responseBody)
+			}
+		})
 	}
 }
 
@@ -316,5 +373,27 @@ func TestLinearIssueStarterClientSkipsTransitionWhenIssueAlreadyStartedOrTermina
 				t.Fatalf("expected no state transition mutation for %s state, got %d updates", tc.name, updateCalls)
 			}
 		})
+	}
+}
+
+func queuedLinearJobFixture(action linear.AgentSessionEventAction) webhook.Job {
+	return webhook.Job{
+		ContractVersion: webhook.JobContractVersion1,
+		ID:              "evt-created-1",
+		IdempotencyKey:  "session-1:created:event:evt-created-1",
+		SessionID:       "session-1",
+		StepID:          "step-created-1",
+		StepAction:      action,
+		Event: linear.AgentSessionEvent{
+			Action: action,
+			AgentSession: linear.AgentSession{
+				ID:            "session-1",
+				PromptContext: "<issue identifier=\"YR-O96Q\"><title>Define Linear agent protocol contract</title></issue>",
+				Comment: &linear.AgentComment{
+					ID:   "comment-1",
+					Body: "@yolo-agent implement this task",
+				},
+			},
+		},
 	}
 }

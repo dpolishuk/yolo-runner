@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -61,11 +62,22 @@ func TestRunMainRejectsInvalidPollInterval(t *testing.T) {
 }
 
 func TestRunMainReturnsErrorWhenRunFails(t *testing.T) {
-	code := RunMain([]string{}, func(context.Context, runConfig) error {
-		return errors.New("boom")
+	stderr := captureWorkerStderr(t, func() {
+		code := RunMain([]string{}, func(context.Context, runConfig) error {
+			return errors.New("process queued job \"job-1\": run linear session job: opencode stall while waiting for output")
+		})
+		if code != 1 {
+			t.Fatalf("expected exit code 1, got %d", code)
+		}
 	})
-	if code != 1 {
-		t.Fatalf("expected exit code 1, got %d", code)
+	if !strings.Contains(stderr, "Category: runtime") {
+		t.Fatalf("expected runtime category in stderr, got %q", stderr)
+	}
+	if strings.Contains(stderr, "Category: webhook") {
+		t.Fatalf("expected stderr classification to avoid webhook for wrapped runtime errors, got %q", stderr)
+	}
+	if !strings.Contains(stderr, "Next step:") {
+		t.Fatalf("expected remediation guidance in stderr output, got %q", stderr)
 	}
 }
 
@@ -254,4 +266,31 @@ func readLinearFixture(t *testing.T, name string) []byte {
 		t.Fatalf("read fixture %q: %v", path, err)
 	}
 	return data
+}
+
+func captureWorkerStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	original := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	os.Stderr = w
+	defer func() {
+		os.Stderr = original
+	}()
+
+	fn()
+
+	if err := w.Close(); err != nil {
+		t.Fatalf("close writer: %v", err)
+	}
+	data, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("read stderr: %v", err)
+	}
+	if err := r.Close(); err != nil {
+		t.Fatalf("close reader: %v", err)
+	}
+	return string(data)
 }
