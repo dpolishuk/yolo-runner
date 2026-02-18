@@ -33,11 +33,13 @@ Validate current config in JSON mode:
 - Profile: `--profile > YOLO_PROFILE > default_profile > default`
 - Root scope for tracker validation: `--root > profiles.<selected>.tracker.tk.scope.root (when tracker.type=tk) > empty`
 - Backend and other `agent.*` values are validated from `.yolo-runner/config.yaml` as written.
-- `--agent-backend`, `--backend`, and `YOLO_AGENT_BACKEND` are ignored by `config validate`.
+- `--agent-backend` and `--backend` are not supported by `config validate`; passing either flag fails with `flag provided but not defined`.
+- `YOLO_AGENT_BACKEND` is not read by `config validate`.
 
 ## Common Failures
 
 - `config file at .yolo-runner/config.yaml already exists; rerun with --force to overwrite`
+- `flag provided but not defined: -backend` (same for `-agent-backend`)
 - `unsupported --format value "<value>" (supported: text, json)`
 - `tracker profile "<name>" not found (available: ...)`
 - `missing auth token from <ENV_VAR>`
@@ -50,3 +52,4 @@ Validate current config in JSON mode:
 3. Run `./bin/yolo-agent config validate --repo .` and fix the reported `field` using the included remediation text.
 4. For token failures (`missing auth token from <ENV_VAR>`), export the named variable in your shell, then rerun validation.
 5. For profile failures, set `default_profile` to a key that exists under `profiles`, or pass `--profile` explicitly.
+6. For `flag provided but not defined` on `-backend`/`-agent-backend`, remove those flags from `config validate` and set `agent.backend` in `.yolo-runner/config.yaml`.

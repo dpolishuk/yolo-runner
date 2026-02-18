@@ -161,6 +161,7 @@ func TestConfigWorkflowDocsCoverValidateInitAndTroubleshooting(t *testing.T) {
 		"yolo-agent config init",
 		"yolo-agent config validate",
 		"already exists; rerun with --force to overwrite",
+		"flag provided but not defined",
 		"unsupported --format value",
 		"missing auth token from",
 	}
@@ -188,7 +189,8 @@ func TestConfigWorkflowRunbookPrecedenceMatchesConfigValidateBehavior(t *testing
 		"Profile: `--profile > YOLO_PROFILE > default_profile > default`",
 		"Root scope for tracker validation: `--root > profiles.<selected>.tracker.tk.scope.root (when tracker.type=tk) > empty`",
 		"Backend and other `agent.*` values are validated from `.yolo-runner/config.yaml` as written.",
-		"`--agent-backend`, `--backend`, and `YOLO_AGENT_BACKEND` are ignored by `config validate`.",
+		"`--agent-backend` and `--backend` are not supported by `config validate`; passing either flag fails with `flag provided but not defined`.",
+		"`YOLO_AGENT_BACKEND` is not read by `config validate`.",
 	}
 	for _, needle := range required {
 		if !strings.Contains(runbook, needle) {
