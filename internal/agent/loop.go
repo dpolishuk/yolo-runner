@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -576,6 +577,12 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 				if err := l.tasks.SetTaskStatus(ctx, task.ID, contracts.TaskStatusOpen); err != nil {
 					return summary, err
 				}
+				if task.Metadata == nil {
+					task.Metadata = map[string]string{}
+				}
+				for key, value := range retryData {
+					task.Metadata[key] = value
+				}
 				continue
 			}
 			failedData := map[string]string{"triage_status": "failed"}
@@ -786,11 +793,47 @@ func buildPrompt(task contracts.Task, mode contracts.RunnerMode) string {
 			"[ ] Re-run targeted tests, then run broader relevant tests.",
 			"[ ] Stop only when all tests pass and acceptance criteria are covered.",
 		}, "\n"))
+		if retryAttempt, blockers := reviewRetryPromptContext(task.Metadata); retryAttempt > 0 {
+			retrySection := []string{
+				"Retry Context:",
+				fmt.Sprintf("- Review retry attempt: %d", retryAttempt),
+				"Prior Review Blockers:",
+			}
+			if blockers != "" {
+				retrySection = append(retrySection, "- "+blockers)
+			} else {
+				retrySection = append(retrySection, "- Previous review failed; address blockers before requesting review again.")
+			}
+			sections = append(sections, strings.Join(retrySection, "\n"))
+		}
 	}
 	if strings.TrimSpace(task.Description) != "" {
 		sections = append(sections, "Description:\n"+task.Description)
 	}
 	return strings.Join(sections, "\n\n")
+}
+
+func reviewRetryPromptContext(metadata map[string]string) (int, string) {
+	if len(metadata) == 0 {
+		return 0, ""
+	}
+	retryAttempt, err := strconv.Atoi(strings.TrimSpace(metadata["review_retry_count"]))
+	if err != nil || retryAttempt <= 0 {
+		return 0, ""
+	}
+	return retryAttempt, reviewRetryBlockersFromMetadata(metadata)
+}
+
+func reviewRetryBlockersFromMetadata(metadata map[string]string) string {
+	if len(metadata) == 0 {
+		return ""
+	}
+	for _, key := range []string{"review_fail_feedback", "review_feedback", "triage_reason"} {
+		if blocker := strings.TrimSpace(metadata[key]); blocker != "" {
+			return blocker
+		}
+	}
+	return ""
 }
 
 func autoLandingCommitMessage(task contracts.Task) string {
