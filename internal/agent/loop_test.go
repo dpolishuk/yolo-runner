@@ -114,6 +114,46 @@ func TestLoopRetriesReviewFailThenCompletes(t *testing.T) {
 	}
 }
 
+func TestLoopInjectsPriorReviewBlockersIntoRetryImplementPrompt(t *testing.T) {
+	mgr := newFakeTaskManager(contracts.Task{ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen})
+	run := &fakeRunner{results: []contracts.RunnerResult{
+		{Status: contracts.RunnerResultCompleted},
+		{
+			Status:      contracts.RunnerResultCompleted,
+			ReviewReady: false,
+			Artifacts: map[string]string{
+				"review_verdict":       "fail",
+				"review_fail_feedback": "missing regression test for retry/backoff flow",
+			},
+		},
+		{Status: contracts.RunnerResultCompleted},
+		{Status: contracts.RunnerResultCompleted, ReviewReady: true},
+	}}
+	loop := NewLoop(mgr, run, nil, LoopOptions{ParentID: "root", MaxRetries: 1, RequireReview: true})
+
+	summary, err := loop.Run(context.Background())
+	if err != nil {
+		t.Fatalf("loop failed: %v", err)
+	}
+	if summary.Completed != 1 {
+		t.Fatalf("expected completed summary after retry, got %#v", summary)
+	}
+	if len(run.requests) != 4 {
+		t.Fatalf("expected implement+review+implement+review requests, got %d", len(run.requests))
+	}
+	initialPrompt := run.requests[0].Prompt
+	if strings.Contains(initialPrompt, "Prior Review Blockers:") {
+		t.Fatalf("did not expect initial implementation prompt to include retry blockers, got %q", initialPrompt)
+	}
+	retryPrompt := run.requests[2].Prompt
+	if !strings.Contains(retryPrompt, "Prior Review Blockers:") {
+		t.Fatalf("expected retry implementation prompt to include prior blockers section, got %q", retryPrompt)
+	}
+	if !strings.Contains(retryPrompt, "missing regression test for retry/backoff flow") {
+		t.Fatalf("expected retry implementation prompt to include prior blocker feedback, got %q", retryPrompt)
+	}
+}
+
 func TestLoopMarksFailedAfterRetryExhausted(t *testing.T) {
 	mgr := newFakeTaskManager(contracts.Task{ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen})
 	run := &fakeRunner{results: []contracts.RunnerResult{
