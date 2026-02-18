@@ -191,22 +191,37 @@ func (p *linearSessionJobProcessor) Process(ctx context.Context, job webhook.Job
 		OnProgress: nil,
 	})
 
-	responseBody := responseBodyForLinearJob(job, result, runErr)
+	executionErr := linearSessionRunnerError(result, runErr)
+	responseBody := responseBodyForLinearJob(job, executionErr)
 	if _, err := p.activities.EmitResponse(ctx, linear.ResponseActivityInput{
 		AgentSessionID: sessionID,
 		Body:           responseBody,
 		IdempotencyKey: baseKey + ":response",
 	}); err != nil {
-		if runErr != nil {
-			return fmt.Errorf("run linear session job: %v; emit linear response activity: %w", runErr, err)
+		if executionErr != nil {
+			return fmt.Errorf("run linear session job: %v; emit linear response activity: %w", executionErr, err)
 		}
 		return fmt.Errorf("emit linear response activity: %w", err)
 	}
 
-	if runErr != nil {
-		return fmt.Errorf("run linear session job: %w", runErr)
+	if executionErr != nil {
+		return fmt.Errorf("run linear session job: %w", executionErr)
 	}
 	return nil
+}
+
+func linearSessionRunnerError(result contracts.RunnerResult, runErr error) error {
+	if runErr != nil {
+		return runErr
+	}
+	if result.Status == "" || result.Status == contracts.RunnerResultCompleted {
+		return nil
+	}
+	reason := strings.TrimSpace(result.Reason)
+	if reason == "" {
+		reason = fmt.Sprintf("runner returned %s status", result.Status)
+	}
+	return fmt.Errorf("%s", reason)
 }
 
 func resolveLinearSessionID(job webhook.Job) string {
@@ -317,19 +332,16 @@ func thoughtBodyForLinearJob(job webhook.Job) string {
 	}
 }
 
-func responseBodyForLinearJob(job webhook.Job, result contracts.RunnerResult, runErr error) string {
+func responseBodyForLinearJob(job webhook.Job, runErr error) string {
 	action := linearJobAction(job)
 	if action == "" {
 		action = "queued"
 	}
 	if runErr != nil {
-		return fmt.Sprintf("Failed processing Linear session %s step: %s", action, strings.TrimSpace(runErr.Error()))
+		return fmt.Sprintf("Failed processing Linear session %s step.\n%s", action, FormatLinearSessionActionableError(runErr))
 	}
 
 	message := fmt.Sprintf("Finished processing Linear session %s step.", action)
-	if reason := strings.TrimSpace(result.Reason); reason != "" {
-		message += " " + reason
-	}
 	return message
 }
 
