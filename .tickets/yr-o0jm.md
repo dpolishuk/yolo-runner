@@ -1,6 +1,6 @@
 ---
 id: yr-o0jm
-status: open
+status: closed
 deps: []
 links: []
 created: 2026-02-09T23:07:07Z
