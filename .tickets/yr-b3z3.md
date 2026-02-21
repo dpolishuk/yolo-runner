@@ -34,3 +34,10 @@ None - foundation task
 - Epic: yr-abz7
 - ADR: docs/adr/ADR-001-task-subsystem-refactoring.md
 
+## Run Command
+```bash
+./bin/yolo-agent --repo . --root yr-b3z3 --stream 2>&1 | tee runner-logs/yr-b3z3-$(date +%Y%m%d-%H%M%S).jsonl | ./bin/yolo-tui
+```
+
+**Note:** Uses tk tracker (local markdown), no GitHub token needed. Logs saved for observability.
+
