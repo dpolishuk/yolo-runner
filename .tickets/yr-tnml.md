@@ -1,5 +1,6 @@
 ---
 id: yr-tnml
+parent: yr-abz7
 status: open
 deps: [yr-2w58, yr-z92y]
 links: []
