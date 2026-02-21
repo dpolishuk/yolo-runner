@@ -114,7 +114,7 @@ func (e *TaskEngine) BuildGraph(tree *contracts.TaskTree) (*contracts.TaskGraph,
 
 func (e *TaskEngine) GetNextAvailable(graph *contracts.TaskGraph) []contracts.TaskSummary {
 	if graph == nil || len(graph.Nodes) == 0 {
-		return nil
+		return []contracts.TaskSummary{}
 	}
 
 	ids := make([]string, 0, len(graph.Nodes))
