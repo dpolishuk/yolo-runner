@@ -9,3 +9,6 @@ profiles:
           repo: yolo-runner
         auth:
           token_env: GITHUB_TOKEN
+    agent:
+      backend: codex
+      model: gpt-5.3-codex
