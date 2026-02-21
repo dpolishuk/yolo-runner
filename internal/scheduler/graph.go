@@ -3,6 +3,7 @@ package scheduler
 import (
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 )
 
@@ -80,6 +81,10 @@ func NewTaskGraph(nodes []TaskNode) (TaskGraph, error) {
 			}
 			graph.dependents[depID] = append(graph.dependents[depID], id)
 		}
+	}
+
+	if cycle := graph.findDependencyCycle(); len(cycle) > 0 {
+		return TaskGraph{}, fmt.Errorf("circular dependency detected: %s", strings.Join(cycle, " -> "))
 	}
 
 	for id, dependents := range graph.dependents {
@@ -195,4 +200,61 @@ func (g TaskGraph) InspectNode(taskID string) (NodeInspection, error) {
 		DependsOn:  append([]string(nil), g.dependencies[taskID]...),
 		Dependents: append([]string(nil), g.dependents[taskID]...),
 	}, nil
+}
+
+func (g TaskGraph) findDependencyCycle() []string {
+	const (
+		visitUnseen = iota
+		visitPending
+		visitDone
+	)
+
+	visitState := make(map[string]int, len(g.nodes))
+	stack := make([]string, 0, len(g.nodes))
+	ids := make([]string, 0, len(g.nodes))
+	for id := range g.nodes {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+
+	var cycle []string
+	var dfs func(taskID string) bool
+	dfs = func(taskID string) bool {
+		switch visitState[taskID] {
+		case visitDone:
+			return false
+		case visitPending:
+			start := 0
+			for i := len(stack) - 1; i >= 0; i-- {
+				if stack[i] == taskID {
+					start = i
+					break
+				}
+			}
+			cycle = append(cycle, stack[start:]...)
+			cycle = append(cycle, taskID)
+			return true
+		}
+
+		visitState[taskID] = visitPending
+		stack = append(stack, taskID)
+		for _, depID := range g.dependencies[taskID] {
+			if dfs(depID) {
+				return true
+			}
+		}
+		stack = stack[:len(stack)-1]
+		visitState[taskID] = visitDone
+		return false
+	}
+
+	for _, id := range ids {
+		if visitState[id] != visitUnseen {
+			continue
+		}
+		if dfs(id) {
+			return cycle
+		}
+	}
+	return nil
 }

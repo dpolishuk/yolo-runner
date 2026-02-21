@@ -3,6 +3,7 @@ package scheduler
 import (
 	"reflect"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -255,6 +256,23 @@ func TestTaskGraphReserveReadyStress_RespectsDAGDependencies(t *testing.T) {
 
 	if len(order) != 6 {
 		t.Fatalf("expected 6 tasks reserved, got %d (%v)", len(order), order)
+	}
+}
+
+func TestTaskGraphRejectsCircularDependenciesWithCyclePath(t *testing.T) {
+	_, err := NewTaskGraph([]TaskNode{
+		{ID: "a", State: TaskStatePending, DependsOn: []string{"c"}},
+		{ID: "b", State: TaskStatePending, DependsOn: []string{"a"}},
+		{ID: "c", State: TaskStatePending, DependsOn: []string{"b"}},
+	})
+	if err == nil {
+		t.Fatalf("expected circular dependency error, got nil")
+	}
+	if !strings.Contains(err.Error(), "circular dependency") {
+		t.Fatalf("expected circular dependency error, got %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), "a -> c -> b -> a") {
+		t.Fatalf("expected cycle path in error, got %q", err.Error())
 	}
 }
 
