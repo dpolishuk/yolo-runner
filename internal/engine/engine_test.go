@@ -209,6 +209,91 @@ func TestTaskEngineBuildGraphPerformance1000TasksUnder100ms(t *testing.T) {
 	}
 }
 
+func TestTaskEngineGetNextAvailableReturnsDependencySatisfiedOpenTasks(t *testing.T) {
+	engine := NewTaskEngine()
+	tree := &contracts.TaskTree{
+		Root: contracts.Task{ID: "root", Status: contracts.TaskStatusClosed},
+		Tasks: map[string]contracts.Task{
+			"root": {ID: "root", Status: contracts.TaskStatusClosed},
+			"a":    {ID: "a", Title: "A", Status: contracts.TaskStatusOpen},
+			"b":    {ID: "b", Title: "B", Status: contracts.TaskStatusOpen},
+			"c":    {ID: "c", Title: "C", Status: contracts.TaskStatusOpen},
+			"d":    {ID: "d", Title: "D", Status: contracts.TaskStatusClosed},
+			"e":    {ID: "e", Title: "E", Status: contracts.TaskStatusInProgress},
+			"f":    {ID: "f", Title: "F", Status: contracts.TaskStatusClosed},
+		},
+		Relations: []contracts.TaskRelation{
+			{FromID: "b", ToID: "a", Type: contracts.RelationDependsOn},
+			{FromID: "c", ToID: "d", Type: contracts.RelationDependsOn},
+		},
+	}
+
+	graph, err := engine.BuildGraph(tree)
+	if err != nil {
+		t.Fatalf("BuildGraph() error = %v", err)
+	}
+
+	got := summaryIDs(engine.GetNextAvailable(graph))
+	want := []string{"a", "c"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("GetNextAvailable() = %v, want %v", got, want)
+	}
+}
+
+func TestTaskEngineGetNextAvailableReflectsDependencyCompletionOnNextCall(t *testing.T) {
+	engine := NewTaskEngine()
+	tree := &contracts.TaskTree{
+		Root: contracts.Task{ID: "root", Status: contracts.TaskStatusClosed},
+		Tasks: map[string]contracts.Task{
+			"root":    {ID: "root", Status: contracts.TaskStatusClosed},
+			"dep":     {ID: "dep", Title: "Dependency", Status: contracts.TaskStatusOpen},
+			"blocked": {ID: "blocked", Title: "Blocked", Status: contracts.TaskStatusOpen},
+		},
+		Relations: []contracts.TaskRelation{
+			{FromID: "blocked", ToID: "dep", Type: contracts.RelationDependsOn},
+		},
+	}
+
+	graph, err := engine.BuildGraph(tree)
+	if err != nil {
+		t.Fatalf("BuildGraph() error = %v", err)
+	}
+
+	if got := summaryIDs(engine.GetNextAvailable(graph)); !reflect.DeepEqual(got, []string{"dep"}) {
+		t.Fatalf("GetNextAvailable() before dependency completion = %v, want [dep]", got)
+	}
+
+	engine.UpdateTaskStatus(graph, "dep", contracts.TaskStatusClosed)
+	if got := summaryIDs(engine.GetNextAvailable(graph)); !reflect.DeepEqual(got, []string{"blocked"}) {
+		t.Fatalf("GetNextAvailable() after dependency completion = %v, want [blocked]", got)
+	}
+}
+
+func TestTaskEngineGetNextAvailableReturnsEmptySliceForNilOrEmptyGraph(t *testing.T) {
+	engine := NewTaskEngine()
+
+	testCases := []struct {
+		name  string
+		graph *contracts.TaskGraph
+	}{
+		{name: "nil graph", graph: nil},
+		{name: "empty graph", graph: &contracts.TaskGraph{}},
+		{name: "graph with empty node map", graph: &contracts.TaskGraph{Nodes: map[string]*contracts.TaskNode{}}},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := engine.GetNextAvailable(tc.graph)
+			if got == nil {
+				t.Fatalf("GetNextAvailable() returned nil, want empty slice")
+			}
+			if len(got) != 0 {
+				t.Fatalf("len(GetNextAvailable()) = %d, want 0", len(got))
+			}
+		})
+	}
+}
+
 func childIDs(nodes []*contracts.TaskNode) []string {
 	ids := make([]string, 0, len(nodes))
 	for _, node := range nodes {
@@ -221,6 +306,14 @@ func depIDs(nodes []*contracts.TaskNode) []string {
 	ids := make([]string, 0, len(nodes))
 	for _, node := range nodes {
 		ids = append(ids, node.ID)
+	}
+	return ids
+}
+
+func summaryIDs(tasks []contracts.TaskSummary) []string {
+	ids := make([]string, 0, len(tasks))
+	for _, task := range tasks {
+		ids = append(ids, task.ID)
 	}
 	return ids
 }
