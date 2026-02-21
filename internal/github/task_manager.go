@@ -48,13 +48,14 @@ type TaskManager struct {
 }
 
 type githubIssuePayload struct {
-	Number        int                  `json:"number"`
-	Title         string               `json:"title"`
-	Body          string               `json:"body"`
-	State         string               `json:"state"`
-	ParentIssueID *int                 `json:"parent_issue_id"`
-	Labels        []githubLabelPayload `json:"labels"`
-	PullRequest   *struct {
+	Number         int                  `json:"number"`
+	Title          string               `json:"title"`
+	Body           string               `json:"body"`
+	State          string               `json:"state"`
+	ParentIssueURL string               `json:"parent_issue_url"`
+	ParentIssueID  *int                 `json:"parent_issue_id"`
+	Labels         []githubLabelPayload `json:"labels"`
+	PullRequest    *struct {
 		URL string `json:"url"`
 	} `json:"pull_request"`
 }

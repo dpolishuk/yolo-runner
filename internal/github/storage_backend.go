@@ -276,6 +276,9 @@ func sortTaskRelations(relations []contracts.TaskRelation) {
 }
 
 func parentIssueNumber(issue githubIssuePayload) int {
+	if parentNumber := issueNumberFromURL(issue.ParentIssueURL); parentNumber > 0 {
+		return parentNumber
+	}
 	if issue.ParentIssueID == nil {
 		return 0
 	}
@@ -283,4 +286,26 @@ func parentIssueNumber(issue githubIssuePayload) int {
 		return 0
 	}
 	return *issue.ParentIssueID
+}
+
+func issueNumberFromURL(rawURL string) int {
+	trimmed := strings.TrimSpace(rawURL)
+	if trimmed == "" {
+		return 0
+	}
+
+	if idx := strings.IndexAny(trimmed, "?#"); idx >= 0 {
+		trimmed = trimmed[:idx]
+	}
+	trimmed = strings.TrimRight(trimmed, "/")
+	lastSlash := strings.LastIndexByte(trimmed, '/')
+	if lastSlash < 0 || lastSlash == len(trimmed)-1 {
+		return 0
+	}
+
+	number, err := strconv.Atoi(trimmed[lastSlash+1:])
+	if err != nil || number <= 0 {
+		return 0
+	}
+	return number
 }
