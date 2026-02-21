@@ -442,7 +442,7 @@ func TestTaskGraphCalculateConcurrencyAcrossTopologies(t *testing.T) {
 			if err != nil {
 				t.Fatalf("NewTaskGraph() error = %v", err)
 			}
-			if got := graph.CalculateConcurrency(); got != tc.want {
+			if got := callTaskGraphCalculateConcurrency(t, &graph); got != tc.want {
 				t.Fatalf("CalculateConcurrency() = %d, want %d", got, tc.want)
 			}
 		})
@@ -459,7 +459,7 @@ func TestTaskGraphIsCompleteReturnsTrueWhenAllTasksFinished(t *testing.T) {
 		t.Fatalf("NewTaskGraph() error = %v", err)
 	}
 
-	if graph.IsComplete() {
+	if callTaskGraphIsComplete(t, &graph) {
 		t.Fatalf("IsComplete() = true for pending graph, want false")
 	}
 
@@ -472,16 +472,42 @@ func TestTaskGraphIsCompleteReturnsTrueWhenAllTasksFinished(t *testing.T) {
 	if err := graph.SetState("c", TaskStateRunning); err != nil {
 		t.Fatalf("SetState(c) error = %v", err)
 	}
-	if graph.IsComplete() {
+	if callTaskGraphIsComplete(t, &graph) {
 		t.Fatalf("IsComplete() = true with running task, want false")
 	}
 
 	if err := graph.SetState("c", TaskStateCanceled); err != nil {
 		t.Fatalf("SetState(c) error = %v", err)
 	}
-	if !graph.IsComplete() {
+	if !callTaskGraphIsComplete(t, &graph) {
 		t.Fatalf("IsComplete() = false after all tasks reached terminal states, want true")
 	}
+}
+
+func callTaskGraphCalculateConcurrency(t *testing.T, graph *TaskGraph) int {
+	t.Helper()
+	method := reflect.ValueOf(graph).MethodByName("CalculateConcurrency")
+	if !method.IsValid() {
+		t.Fatalf("TaskGraph.CalculateConcurrency is not implemented")
+	}
+	results := method.Call(nil)
+	if len(results) != 1 || results[0].Kind() != reflect.Int {
+		t.Fatalf("TaskGraph.CalculateConcurrency() returned unexpected signature")
+	}
+	return int(results[0].Int())
+}
+
+func callTaskGraphIsComplete(t *testing.T, graph *TaskGraph) bool {
+	t.Helper()
+	method := reflect.ValueOf(graph).MethodByName("IsComplete")
+	if !method.IsValid() {
+		t.Fatalf("TaskGraph.IsComplete is not implemented")
+	}
+	results := method.Call(nil)
+	if len(results) != 1 || results[0].Kind() != reflect.Bool {
+		t.Fatalf("TaskGraph.IsComplete() returned unexpected signature")
+	}
+	return results[0].Bool()
 }
 
 func taskID(i int) string {
