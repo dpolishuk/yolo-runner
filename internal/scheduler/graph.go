@@ -172,6 +172,70 @@ func (g *TaskGraph) SetState(taskID string, state TaskState) error {
 	return nil
 }
 
+func (g *TaskGraph) IsComplete() bool {
+	if g == nil {
+		return true
+	}
+
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+
+	for _, node := range g.nodes {
+		if !node.State.IsTerminal() {
+			return false
+		}
+	}
+	return true
+}
+
+func (g *TaskGraph) CalculateConcurrency() int {
+	if g == nil {
+		return 0
+	}
+
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+
+	if len(g.nodes) == 0 {
+		return 0
+	}
+
+	indegree := make(map[string]int, len(g.nodes))
+	frontier := make([]string, 0, len(g.nodes))
+	ids := make([]string, 0, len(g.nodes))
+	for id := range g.nodes {
+		ids = append(ids, id)
+		indegree[id] = len(g.dependencies[id])
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		if indegree[id] == 0 {
+			frontier = append(frontier, id)
+		}
+	}
+
+	maxParallel := 0
+	for len(frontier) > 0 {
+		if len(frontier) > maxParallel {
+			maxParallel = len(frontier)
+		}
+
+		next := make([]string, 0, len(frontier))
+		for _, id := range frontier {
+			for _, dependentID := range g.dependents[id] {
+				indegree[dependentID]--
+				if indegree[dependentID] == 0 {
+					next = append(next, dependentID)
+				}
+			}
+		}
+		sort.Strings(next)
+		frontier = next
+	}
+
+	return maxParallel
+}
+
 func (g TaskGraph) InspectNode(taskID string) (NodeInspection, error) {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
