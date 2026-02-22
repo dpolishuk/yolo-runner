@@ -1159,12 +1159,12 @@ profiles:
 			installMock: func(t *testing.T, manager contracts.TaskManager) {
 				t.Helper()
 				t.Setenv("LINEAR_TOKEN", "lin_api_test")
-				originalFactory := newLinearTaskManager
+				originalFactory := newLinearStorageBackend
 				t.Cleanup(func() {
-					newLinearTaskManager = originalFactory
+					newLinearStorageBackend = originalFactory
 				})
-				newLinearTaskManager = func(linear.Config) (contracts.TaskManager, error) {
-					return manager, nil
+				newLinearStorageBackend = func(linear.Config) (contracts.StorageBackend, error) {
+					return taskManagerStorageBackend{taskManager: manager}, nil
 				}
 			},
 		},
