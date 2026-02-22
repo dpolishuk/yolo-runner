@@ -1,6 +1,6 @@
 ---
 id: yr-9sc7
-status: open
+status: closed
 deps: []
 links: []
 created: 2026-02-21T20:49:52Z

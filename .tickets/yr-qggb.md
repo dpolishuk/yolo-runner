@@ -1,6 +1,6 @@
 ---
 id: yr-qggb
-status: open
+status: closed
 deps: []
 links: []
 created: 2026-02-11T14:13:21Z
