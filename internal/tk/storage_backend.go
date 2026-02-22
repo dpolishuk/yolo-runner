@@ -23,6 +23,14 @@ func (b *StorageBackend) GetTaskTree(ctx context.Context, rootID string) (*contr
 	if b == nil || b.manager == nil {
 		return nil, fmt.Errorf("tk storage backend is not initialized")
 	}
+	rootID = strings.TrimSpace(rootID)
+	rootTask, err := b.manager.GetTask(ctx, rootID)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(rootTask.ID) == "" {
+		return nil, fmt.Errorf("root task %q not found", rootID)
+	}
 	return b.manager.GetTaskTree(ctx, rootID)
 }
 
@@ -36,7 +44,7 @@ func (b *StorageBackend) GetTask(ctx context.Context, taskID string) (*contracts
 		return nil, err
 	}
 	if strings.TrimSpace(task.ID) == "" {
-		return nil, nil
+		return nil, fmt.Errorf("task %q not found", strings.TrimSpace(taskID))
 	}
 	return &task, nil
 }
