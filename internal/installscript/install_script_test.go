@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -296,6 +297,93 @@ func TestInstallScriptInstallModeFailsOnChecksumMismatch(t *testing.T) {
 	)
 	if err == nil {
 		t.Fatal("expected checksum mismatch to fail install")
+	}
+}
+
+func TestInstallScriptInstallModeInstallsRunnableBinaryForCleanEnvironment(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("clean environment install execution is validated on Unix-family environments only")
+	}
+
+	repoRoot := testRepoRoot(t)
+
+	repoHome := t.TempDir()
+	tmpArtifacts := t.TempDir()
+	releaseBase := "https://example.invalid/releases/latest"
+
+	osInput := "Linux"
+	archInput := "amd64"
+	artifactName := "yolo-runner_linux_amd64.tar.gz"
+	if runtime.GOARCH == "arm64" {
+		archInput = "arm64"
+		artifactName = "yolo-runner_linux_arm64.tar.gz"
+	}
+	if runtime.GOOS == "darwin" {
+		osInput = "Darwin"
+		artifactName = "yolo-runner_darwin_" + archInput + ".tar.gz"
+	}
+
+	artifactURL := releaseBase + "/" + artifactName
+	checksumFilename := "checksums-" + artifactName + ".txt"
+	checksumURL := releaseBase + "/" + checksumFilename
+
+	artifactPath := writeArtifactTarGz(
+		t,
+		tmpArtifacts,
+		artifactName,
+		"yolo-runner",
+		[]byte("#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n\techo clean-install-version\n\texit 0\nfi\n"),
+	)
+	artifactData, err := os.ReadFile(artifactPath)
+	if err != nil {
+		t.Fatalf("read artifact fixture: %v", err)
+	}
+	sum := sha256.Sum256(artifactData)
+	checksumPath := filepath.Join(tmpArtifacts, checksumFilename)
+	if err := os.WriteFile(
+		checksumPath,
+		[]byte(fmt.Sprintf("%s  dist/%s\n", hex.EncodeToString(sum[:]), artifactName)),
+		0o600,
+	); err != nil {
+		t.Fatalf("write checksum fixture: %v", err)
+	}
+
+	fakeCurlLog := filepath.Join(tmpArtifacts, "clean.curl.calls")
+	fakeCurlDir := filepath.Join(tmpArtifacts, "bin")
+	writeFakeCurl(t, fakeCurlDir, fakeCurlLog)
+
+	_, err = runInstallScript(
+		repoRoot,
+		[]string{
+			"--os", osInput,
+			"--arch", archInput,
+			"--release-base", releaseBase,
+		},
+		repoHome,
+		"PATH="+fakeCurlDir+":"+os.Getenv("PATH"),
+		"YOLO_FAKE_ARTIFACT_PATH="+artifactPath,
+		"YOLO_FAKE_CHECKSUM_PATH="+checksumPath,
+		"YOLO_FAKE_ARTIFACT_URL="+artifactURL,
+		"YOLO_FAKE_CHECKSUM_URL="+checksumURL,
+		"YOLO_FAKE_CURL_LOG="+fakeCurlLog,
+	)
+	if err != nil {
+		installOutput, _ := os.ReadFile(fakeCurlLog)
+		t.Fatalf("install should succeed: %v\ncurl log: %s", err, installOutput)
+	}
+
+	installedPath := filepath.Join(repoHome, ".local", "bin", "yolo-runner")
+	_, err = os.Stat(installedPath)
+	if err != nil {
+		t.Fatalf("expected installed binary at %s: %v", installedPath, err)
+	}
+
+	versionOutput, err := exec.Command(installedPath, "--version").CombinedOutput()
+	if err != nil {
+		t.Fatalf("installed binary --version should execute successfully: %v (%s)", err, versionOutput)
+	}
+	if strings.TrimSpace(string(versionOutput)) != "clean-install-version" {
+		t.Fatalf("unexpected version output: %q", strings.TrimSpace(string(versionOutput)))
 	}
 }
 
