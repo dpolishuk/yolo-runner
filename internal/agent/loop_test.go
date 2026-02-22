@@ -99,6 +99,26 @@ func TestBuildImplementPromptIncludesReviewFeedbackWhenRetrying(t *testing.T) {
 	}
 }
 
+func TestBuildPromptRetryContextOmitsGenericReviewVerdictFailureReason(t *testing.T) {
+	task := contracts.Task{
+		ID:     "t-1",
+		Title:  "Task 1",
+		Status: contracts.TaskStatusOpen,
+		Metadata: map[string]string{
+			"review_retry_count": "1",
+			"triage_reason":      "review verdict returned fail",
+		},
+	}
+
+	prompt := buildPrompt(task, contracts.RunnerModeImplement)
+	if strings.Contains(prompt, "- review verdict returned fail") {
+		t.Fatalf("expected generic review failure placeholder to be omitted from retry blockers, got %q", prompt)
+	}
+	if !strings.Contains(prompt, "- Previous review failed; address blockers before requesting review again.") {
+		t.Fatalf("expected fallback retry blocker guidance, got %q", prompt)
+	}
+}
+
 func TestLoopRetriesReviewFailThenCompletes(t *testing.T) {
 	mgr := newFakeTaskManager(contracts.Task{ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen})
 	run := &fakeRunner{results: []contracts.RunnerResult{

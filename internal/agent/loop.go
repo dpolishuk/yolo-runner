@@ -960,6 +960,9 @@ func reviewRetryBlockersFromMetadata(metadata map[string]string) string {
 	}
 	for _, key := range []string{"review_fail_feedback", "review_feedback", "triage_reason"} {
 		if blocker := strings.TrimSpace(metadata[key]); blocker != "" {
+			if strings.EqualFold(blocker, "review verdict returned fail") {
+				continue
+			}
 			return blocker
 		}
 	}
