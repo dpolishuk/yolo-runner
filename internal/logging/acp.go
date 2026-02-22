@@ -13,6 +13,8 @@ type ACPRequestEntry struct {
 	Decision    string `json:"decision"`
 	Message     string `json:"message,omitempty"`
 	RequestID   string `json:"request_id,omitempty"`
+	Reason      string `json:"reason,omitempty"`
+	Context     string `json:"context,omitempty"`
 }
 
 func AppendACPRequest(logPath string, entry ACPRequestEntry) error {
