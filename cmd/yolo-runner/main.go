@@ -100,6 +100,12 @@ var isTerminal = func(writer io.Writer) bool {
 	return false
 }
 
+var yoloRunnerVersion = "dev"
+
+func isVersionRequest(args []string) bool {
+	return len(args) == 1 && (args[0] == "--version" || args[0] == "-version")
+}
+
 var newTUIProgram = func(model tea.Model, stdout io.Writer, input io.Reader) tuiProgram {
 	if input == nil {
 		input = os.Stdin
@@ -144,6 +150,17 @@ func (o openCodeAdapter) RunWithContext(ctx context.Context, issueID string, rep
 }
 
 func RunOnceMain(args []string, runOnce runOnceFunc, exit exitFunc, stdout io.Writer, stderr io.Writer, beadsRunner beadsRunner, gitRunner gitRunner) int {
+	if isVersionRequest(args) {
+		if stdout == nil {
+			stdout = io.Discard
+		}
+		fmt.Fprintf(stdout, "yolo-runner %s\n", yoloRunnerVersion)
+		if exit != nil {
+			exit(0)
+		}
+		return 0
+	}
+
 	if stderr != nil {
 		fmt.Fprintln(stderr, compatibilityNotice())
 	}
