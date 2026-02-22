@@ -220,8 +220,14 @@ func main() {
 }
 
 func defaultRun(ctx context.Context, cfg runConfig) error {
+	originalWD, originalWDErr := os.Getwd()
 	if err := os.Chdir(cfg.repoRoot); err != nil {
 		return err
+	}
+	if originalWDErr == nil {
+		defer func() {
+			_ = os.Chdir(originalWD)
+		}()
 	}
 	cfg.eventsPath = resolveEventsPath(cfg)
 

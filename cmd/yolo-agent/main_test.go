@@ -1118,6 +1118,57 @@ profiles:
 	}
 }
 
+func TestDefaultRunRestoresWorkingDirectory(t *testing.T) {
+	repoRoot := initGitRepo(t)
+	writeTrackerConfigYAML(t, repoRoot, `
+profiles:
+  default:
+    tracker:
+      type: tk
+`)
+
+	originalFactory := newTKStorageBackend
+	t.Cleanup(func() {
+		newTKStorageBackend = originalFactory
+	})
+	manager := &countingNoReadyTaskManager{
+		rootTask: contracts.Task{
+			ID:     "root",
+			Title:  "Root",
+			Status: contracts.TaskStatusClosed,
+		},
+	}
+	newTKStorageBackend = func(string) (contracts.StorageBackend, error) {
+		return taskManagerStorageBackend{taskManager: manager}, nil
+	}
+
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd before defaultRun: %v", err)
+	}
+
+	runErr := defaultRun(context.Background(), runConfig{
+		repoRoot:         repoRoot,
+		rootID:           "root",
+		backend:          backendCodex,
+		concurrency:      1,
+		dryRun:           true,
+		watchdogTimeout:  10 * time.Minute,
+		watchdogInterval: 5 * time.Second,
+	})
+	if runErr != nil {
+		t.Fatalf("defaultRun failed: %v", runErr)
+	}
+
+	restoredWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd after defaultRun: %v", err)
+	}
+	if restoredWD != originalWD {
+		t.Fatalf("expected defaultRun to restore cwd to %q, got %q", originalWD, restoredWD)
+	}
+}
+
 func TestDefaultRunTrackerProfilesUseStorageBackendPathWhenNoReadyChildren(t *testing.T) {
 	tests := []struct {
 		name        string
