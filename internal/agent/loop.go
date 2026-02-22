@@ -276,13 +276,16 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 
 	reviewRetries := 0
 	reviewRetryFeedback := ""
+	epicID := strings.TrimSpace(task.ParentID)
+	if epicID == "" {
+		epicID = strings.TrimSpace(l.options.ParentID)
+	}
 	for {
 		reviewFailed := false
 		if err := l.tasks.SetTaskStatus(ctx, task.ID, contracts.TaskStatusInProgress); err != nil {
 			return summary, err
 		}
-
-		implementLogPath := defaultRunnerLogPath(taskRepoRoot, task.ID, l.options.Backend)
+		implementLogPath := defaultRunnerLogPath(taskRepoRoot, task.ID, epicID, l.options.Backend)
 		implementStartMeta := buildRunnerStartedMetadata(contracts.RunnerModeImplement, l.options.Backend, l.options.Model, taskRepoRoot, implementLogPath, time.Now().UTC())
 		_ = l.emit(ctx, contracts.Event{Type: contracts.EventTypeRunnerStarted, TaskID: task.ID, TaskTitle: task.Title, WorkerID: worker, ClonePath: taskRepoRoot, QueuePos: queuePos, Message: string(contracts.RunnerModeImplement), Metadata: implementStartMeta, Timestamp: time.Now().UTC()})
 		requestMetadata := map[string]string{"log_path": implementLogPath, "clone_path": taskRepoRoot}
@@ -315,7 +318,7 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 				"review_retry_count": fmt.Sprintf("%d", reviewRetries),
 			}
 			_ = l.emit(ctx, contracts.Event{Type: contracts.EventTypeReviewStarted, TaskID: task.ID, TaskTitle: task.Title, WorkerID: worker, ClonePath: taskRepoRoot, QueuePos: queuePos, Metadata: reviewTelemetry, Timestamp: time.Now().UTC()})
-			reviewLogPath := defaultRunnerLogPath(taskRepoRoot, task.ID, l.options.Backend)
+			reviewLogPath := defaultRunnerLogPath(taskRepoRoot, task.ID, epicID, l.options.Backend)
 			reviewStartMeta := buildRunnerStartedMetadata(contracts.RunnerModeReview, l.options.Backend, l.options.Model, taskRepoRoot, reviewLogPath, time.Now().UTC())
 			_ = l.emit(ctx, contracts.Event{Type: contracts.EventTypeRunnerStarted, TaskID: task.ID, TaskTitle: task.Title, WorkerID: worker, ClonePath: taskRepoRoot, QueuePos: queuePos, Message: string(contracts.RunnerModeReview), Metadata: reviewStartMeta, Timestamp: time.Now().UTC()})
 			reviewMetadata := map[string]string{"log_path": reviewLogPath, "clone_path": taskRepoRoot}
@@ -832,7 +835,12 @@ func (l *Loop) runLandingMergeConflictRemediation(ctx context.Context, task cont
 		}
 	}
 
-	remediationLogPath := defaultRunnerLogPath(taskRepoRoot, task.ID, l.options.Backend)
+	epicID := strings.TrimSpace(task.ParentID)
+	if epicID == "" {
+		epicID = strings.TrimSpace(l.options.ParentID)
+	}
+
+	remediationLogPath := defaultRunnerLogPath(taskRepoRoot, task.ID, epicID, l.options.Backend)
 	remediationStartMeta := buildRunnerStartedMetadata(contracts.RunnerModeImplement, l.options.Backend, l.options.Model, taskRepoRoot, remediationLogPath, time.Now().UTC())
 	remediationStartMeta["landing_phase"] = "merge_conflict_remediation"
 	_ = l.emit(ctx, contracts.Event{Type: contracts.EventTypeRunnerStarted, TaskID: task.ID, TaskTitle: task.Title, WorkerID: worker, ClonePath: taskRepoRoot, QueuePos: queuePos, Message: string(contracts.RunnerModeImplement), Metadata: remediationStartMeta, Timestamp: time.Now().UTC()})
@@ -1026,11 +1034,16 @@ func buildReviewVerdictPrompt(task contracts.Task) string {
 	return strings.Join(sections, "\n")
 }
 
-func defaultRunnerLogPath(repoRoot string, taskID string, backend string) string {
+func defaultRunnerLogPath(repoRoot string, taskID string, epicID string, backend string) string {
 	if strings.TrimSpace(repoRoot) == "" || strings.TrimSpace(taskID) == "" {
 		return ""
 	}
-	return filepath.Join(repoRoot, "runner-logs", runnerLogBackendDir(backend), taskID+".jsonl")
+	parts := []string{repoRoot, "runner-logs", strings.TrimSpace(taskID)}
+	if epicID = strings.TrimSpace(epicID); epicID != "" {
+		parts = append(parts, epicID)
+	}
+	parts = append(parts, runnerLogBackendDir(backend), taskID+".jsonl")
+	return filepath.Join(parts...)
 }
 
 func runnerLogBackendDir(backend string) string {

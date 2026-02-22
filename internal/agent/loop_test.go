@@ -1307,7 +1307,7 @@ func TestLoopEmitsRunnerStartedMetadata(t *testing.T) {
 	if event.Metadata["model"] != "openai/gpt-5.3-codex" {
 		t.Fatalf("expected model metadata, got %#v", event.Metadata)
 	}
-	if event.Metadata["log_path"] != "/repo/runner-logs/opencode/t-1.jsonl" {
+	if event.Metadata["log_path"] != "/repo/runner-logs/t-1/root/opencode/t-1.jsonl" {
 		t.Fatalf("expected log_path metadata, got %#v", event.Metadata)
 	}
 	if event.Metadata["clone_path"] != "/repo" {
@@ -1336,8 +1336,38 @@ func TestLoopEmitsRunnerStartedMetadataWithConfiguredBackend(t *testing.T) {
 	if event.Metadata["backend"] != "codex" {
 		t.Fatalf("expected backend metadata=codex, got %#v", event.Metadata)
 	}
-	if event.Metadata["log_path"] != "/repo/runner-logs/codex/t-1.jsonl" {
+	if event.Metadata["log_path"] != "/repo/runner-logs/t-1/root/codex/t-1.jsonl" {
 		t.Fatalf("expected codex log path metadata, got %#v", event.Metadata)
+	}
+}
+
+func TestLoopEmitsSeparatedLogPathsForMultipleTasks(t *testing.T) {
+	mgr := newFakeTaskManager(
+		contracts.Task{ID: "t-1", Title: "Task 1", ParentID: "epic-1", Status: contracts.TaskStatusOpen},
+		contracts.Task{ID: "t-2", Title: "Task 2", ParentID: "epic-2", Status: contracts.TaskStatusOpen},
+	)
+	run := &fakeRunner{results: []contracts.RunnerResult{
+		{Status: contracts.RunnerResultCompleted},
+		{Status: contracts.RunnerResultCompleted},
+	}}
+	sink := &recordingSink{}
+	loop := NewLoop(mgr, run, sink, LoopOptions{ParentID: "roadmap", RepoRoot: "/repo", Model: "openai/gpt-5.3-codex"})
+
+	_, err := loop.Run(context.Background())
+	if err != nil {
+		t.Fatalf("loop failed: %v", err)
+	}
+
+	runnerStarted := eventsByType(sink.events, contracts.EventTypeRunnerStarted)
+	if len(runnerStarted) != 2 {
+		t.Fatalf("expected two runner_started events, got %d", len(runnerStarted))
+	}
+
+	if runnerStarted[0].Metadata["log_path"] != "/repo/runner-logs/t-1/epic-1/opencode/t-1.jsonl" {
+		t.Fatalf("unexpected log path for first task, got %#v", runnerStarted[0].Metadata)
+	}
+	if runnerStarted[1].Metadata["log_path"] != "/repo/runner-logs/t-2/epic-2/opencode/t-2.jsonl" {
+		t.Fatalf("unexpected log path for second task, got %#v", runnerStarted[1].Metadata)
 	}
 }
 
