@@ -2,6 +2,7 @@ package installscript
 
 import (
 	"archive/tar"
+	"archive/zip"
 	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
@@ -39,9 +40,9 @@ func TestInstallScriptPlanModeReportsPlatformAndInstallCoordinates(t *testing.T)
 			wantPlatform: "linux",
 			wantArch:     "amd64",
 			wantArtifact: "yolo-runner_linux_amd64.tar.gz",
-			wantBinary:   "yolo-agent",
-			wantChecksum: "yolo-runner_linux_amd64.tar.gz.sha256",
-			wantInstall:  filepath.Join(tmpInstallDir, "yolo-agent"),
+			wantBinary:   "yolo-runner",
+			wantChecksum: "checksums-yolo-runner_linux_amd64.tar.gz.txt",
+			wantInstall:  filepath.Join(tmpInstallDir, "yolo-runner"),
 		},
 		{
 			name:         "darwin arm64",
@@ -50,9 +51,20 @@ func TestInstallScriptPlanModeReportsPlatformAndInstallCoordinates(t *testing.T)
 			wantPlatform: "darwin",
 			wantArch:     "arm64",
 			wantArtifact: "yolo-runner_darwin_arm64.tar.gz",
-			wantBinary:   "yolo-agent",
-			wantChecksum: "yolo-runner_darwin_arm64.tar.gz.sha256",
-			wantInstall:  filepath.Join(tmpInstallDir, "yolo-agent"),
+			wantBinary:   "yolo-runner",
+			wantChecksum: "checksums-yolo-runner_darwin_arm64.tar.gz.txt",
+			wantInstall:  filepath.Join(tmpInstallDir, "yolo-runner"),
+		},
+		{
+			name:         "windows amd64",
+			osInput:      "Windows",
+			archInput:    "amd64",
+			wantPlatform: "windows",
+			wantArch:     "amd64",
+			wantArtifact: "yolo-runner_windows_amd64.zip",
+			wantBinary:   "yolo-runner.exe",
+			wantChecksum: "checksums-yolo-runner_windows_amd64.zip.txt",
+			wantInstall:  filepath.Join(tmpInstallDir, "yolo-runner.exe"),
 		},
 	}
 
@@ -120,76 +132,130 @@ func TestInstallScriptRejectsUnsupportedPlatforms(t *testing.T) {
 	}
 }
 
-func TestInstallScriptInstallModeUsesExpectedUrlsAndInstallPath(t *testing.T) {
+func TestInstallScriptInstallModeUsesExpectedBinaryAndInstallPath(t *testing.T) {
 	repoRoot := testRepoRoot(t)
 
 	tmpHome := t.TempDir()
 	tmpArtifacts := t.TempDir()
+	tmpLocalAppData := filepath.Join(tmpArtifacts, "localappdata")
 	releaseBase := "https://example.invalid/releases/latest"
-	installPath := filepath.Join(tmpHome, ".local", "bin", "yolo-agent")
-	artifactName := "yolo-runner_linux_amd64.tar.gz"
-	artifactURL := releaseBase + "/" + artifactName
-	checksumURL := artifactURL + ".sha256"
 
-	artifactPath := writeArtifactTarGz(t, tmpArtifacts, artifactName, "yolo-agent", []byte("#!/bin/sh\necho ok\n"))
-	artifactData, err := os.ReadFile(artifactPath)
-	if err != nil {
-		t.Fatalf("read artifact fixture: %v", err)
-	}
-	sum := sha256.Sum256(artifactData)
-	checksumPath := artifactPath + ".sha256"
-	if err := os.WriteFile(
-		checksumPath,
-		[]byte(fmt.Sprintf("%s  %s\n", hex.EncodeToString(sum[:]), artifactName)),
-		0o600,
-	); err != nil {
-		t.Fatalf("write checksum fixture: %v", err)
-	}
-
-	fakeCurlLog := filepath.Join(tmpArtifacts, "curl.calls")
-	fakeCurlDir := filepath.Join(tmpArtifacts, "bin")
-	writeFakeCurl(t, fakeCurlDir, fakeCurlLog)
-	out, err := runInstallScript(
-		repoRoot,
-		[]string{
-			"--os", "Linux",
-			"--arch", "x86_64",
-			"--release-base", releaseBase,
+	tests := []struct {
+		name        string
+		osInput     string
+		archInput   string
+			artifact    string
+			binaryName  string
+			installPath string
+	}{
+		{
+			name:        "linux amd64",
+			osInput:     "Linux",
+			archInput:   "x86_64",
+			artifact:    "yolo-runner_linux_amd64.tar.gz",
+			binaryName:  "yolo-runner",
+			installPath: filepath.Join(tmpHome, ".local", "bin", "yolo-runner"),
 		},
-		tmpHome,
-		"PATH="+fakeCurlDir+":"+os.Getenv("PATH"),
-		"YOLO_FAKE_ARTIFACT_PATH="+artifactPath,
-		"YOLO_FAKE_CHECKSUM_PATH="+checksumPath,
-		"YOLO_FAKE_ARTIFACT_URL="+artifactURL,
-		"YOLO_FAKE_CHECKSUM_URL="+checksumURL,
-		"YOLO_FAKE_CURL_LOG="+fakeCurlLog,
-	)
-	if err != nil {
-		t.Fatalf("install should succeed: %v\noutput: %s", err, out)
+		{
+			name:        "darwin arm64",
+			osInput:     "Darwin",
+			archInput:   "arm64",
+			artifact:    "yolo-runner_darwin_arm64.tar.gz",
+			binaryName:  "yolo-runner",
+			installPath: filepath.Join(tmpHome, ".local", "bin", "yolo-runner"),
+		},
+		{
+			name:        "windows amd64",
+			osInput:     "Windows",
+			archInput:   "amd64",
+			artifact:    "yolo-runner_windows_amd64.zip",
+			binaryName:  "yolo-runner.exe",
+			installPath: filepath.Join(tmpLocalAppData, "yolo-runner", "bin", "yolo-runner.exe"),
+		},
 	}
 
-	calls := strings.Split(strings.TrimSpace(readFileString(t, fakeCurlLog)), "\n")
-	if len(calls) != 2 {
-		t.Fatalf("expected two downloads, got %d\ncalls: %q", len(calls), calls)
-	}
-	if calls[0] != artifactURL {
-		t.Fatalf("first download = %q, want %q", calls[0], artifactURL)
-	}
-	if calls[1] != checksumURL {
-		t.Fatalf("second download = %q, want %q", calls[1], checksumURL)
-	}
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			artifactURL := releaseBase + "/" + tc.artifact
+			checksumFilename := "checksums-" + tc.artifact + ".txt"
+			checksumURL := releaseBase + "/" + checksumFilename
 
-	if _, err := os.Stat(installPath); err != nil {
-		t.Fatalf("expected installed binary at %s: %v", installPath, err)
-	}
-	if _, err := os.Stat(filepath.Dir(installPath)); err != nil {
-		t.Fatalf("expected install directory %s to exist: %v", filepath.Dir(installPath), err)
-	}
-	if info, err := os.Stat(installPath); err == nil && info.Mode()&0o111 == 0 {
-		t.Fatalf("installed file is not executable: %s", installPath)
-	}
-	if !strings.Contains(out, "installed yolo-agent to "+filepath.Dir(installPath)) {
-		t.Fatalf("install output missing resolved target path:\n%s", out)
+			var artifactPath string
+			switch filepath.Ext(tc.artifact) {
+			case ".zip":
+				artifactPath = writeArtifactZip(t, tmpArtifacts, tc.artifact, tc.binaryName, []byte("#!/bin/sh\necho ok\n"))
+			default:
+				artifactPath = writeArtifactTarGz(t, tmpArtifacts, tc.artifact, tc.binaryName, []byte("#!/bin/sh\necho ok\n"))
+			}
+			artifactData, err := os.ReadFile(artifactPath)
+			if err != nil {
+				t.Fatalf("read artifact fixture: %v", err)
+			}
+			sum := sha256.Sum256(artifactData)
+			checksumPath := filepath.Join(tmpArtifacts, checksumFilename)
+			if err := os.WriteFile(
+				checksumPath,
+				[]byte(fmt.Sprintf("%s  dist/%s\n", hex.EncodeToString(sum[:]), tc.artifact)),
+				0o600,
+			); err != nil {
+				t.Fatalf("write checksum fixture: %v", err)
+			}
+
+			fakeCurlLog := filepath.Join(tmpArtifacts, tc.name+".curl.calls")
+			fakeCurlDir := filepath.Join(tmpArtifacts, tc.name, "bin")
+			writeFakeCurl(t, fakeCurlDir, fakeCurlLog)
+
+			cmdEnv := []string{
+				"PATH=" + fakeCurlDir + ":" + os.Getenv("PATH"),
+				"YOLO_FAKE_ARTIFACT_PATH=" + artifactPath,
+				"YOLO_FAKE_CHECKSUM_PATH=" + checksumPath,
+				"YOLO_FAKE_ARTIFACT_URL=" + artifactURL,
+				"YOLO_FAKE_CHECKSUM_URL=" + checksumURL,
+				"YOLO_FAKE_CURL_LOG=" + fakeCurlLog,
+			}
+			if tc.osInput == "Windows" {
+				cmdEnv = append(cmdEnv, "LOCALAPPDATA="+tmpLocalAppData)
+			}
+
+			out, err := runInstallScript(
+				repoRoot,
+				[]string{
+					"--os", tc.osInput,
+					"--arch", tc.archInput,
+					"--release-base", releaseBase,
+				},
+				tmpHome,
+				cmdEnv...,
+			)
+			if err != nil {
+				t.Fatalf("install should succeed: %v\noutput: %s", err, out)
+			}
+
+			calls := strings.Split(strings.TrimSpace(readFileString(t, fakeCurlLog)), "\n")
+			if len(calls) != 2 {
+				t.Fatalf("expected two downloads, got %d\ncalls: %q", len(calls), calls)
+			}
+			if calls[0] != artifactURL {
+				t.Fatalf("first download = %q, want %q", calls[0], artifactURL)
+			}
+			if calls[1] != checksumURL {
+				t.Fatalf("second download = %q, want %q", calls[1], checksumURL)
+			}
+
+			if _, err := os.Stat(tc.installPath); err != nil {
+				t.Fatalf("expected installed binary at %s: %v", tc.installPath, err)
+			}
+			if _, err := os.Stat(filepath.Dir(tc.installPath)); err != nil {
+				t.Fatalf("expected install directory %s to exist: %v", filepath.Dir(tc.installPath), err)
+			}
+			if info, err := os.Stat(tc.installPath); err == nil && info.Mode()&0o111 == 0 {
+				t.Fatalf("installed file is not executable: %s", tc.installPath)
+			}
+			if !strings.Contains(out, "installed "+tc.binaryName+" to "+filepath.Dir(tc.installPath)) {
+				t.Fatalf("install output missing resolved target path:\n%s", out)
+			}
+		})
 	}
 }
 
@@ -201,11 +267,12 @@ func TestInstallScriptInstallModeFailsOnChecksumMismatch(t *testing.T) {
 	releaseBase := "https://example.invalid/releases/latest"
 	artifactName := "yolo-runner_linux_amd64.tar.gz"
 	artifactURL := releaseBase + "/" + artifactName
-	checksumURL := artifactURL + ".sha256"
+	checksumFilename := "checksums-" + artifactName + ".txt"
+	checksumURL := releaseBase + "/" + checksumFilename
 
-	artifactPath := writeArtifactTarGz(t, tmpArtifacts, artifactName, "yolo-agent", []byte("#!/bin/sh\necho ok\n"))
-	checksumPath := artifactPath + ".sha256"
-	if err := os.WriteFile(checksumPath, []byte(fmt.Sprintf("%064s  %s\n", "0", artifactName)), 0o600); err != nil {
+	artifactPath := writeArtifactTarGz(t, tmpArtifacts, artifactName, "yolo-runner", []byte("#!/bin/sh\necho ok\n"))
+	checksumPath := filepath.Join(tmpArtifacts, checksumFilename)
+	if err := os.WriteFile(checksumPath, []byte(fmt.Sprintf("%064s  %s\n", "0", "dist/"+artifactName)), 0o600); err != nil {
 		t.Fatalf("write checksum fixture: %v", err)
 	}
 
@@ -246,7 +313,8 @@ func TestInstallScriptChecksumVerification(t *testing.T) {
 
 	sum := sha256.Sum256([]byte(artifactContents))
 	hash := hex.EncodeToString(sum[:])
-	if err := os.WriteFile(manifest, []byte(fmt.Sprintf("%s  %s\n", hash, filepath.Base(artifact))), 0o600); err != nil {
+	manifestEntry := fmt.Sprintf("%s  %s\n", hash, filepath.Join("dist", filepath.Base(artifact)))
+	if err := os.WriteFile(manifest, []byte(manifestEntry), 0o600); err != nil {
 		t.Fatalf("write checksum manifest: %v", err)
 	}
 
@@ -254,7 +322,8 @@ func TestInstallScriptChecksumVerification(t *testing.T) {
 		t.Fatalf("expected checksum to verify, got error: %v\nout: %s", err, out)
 	}
 
-	if err := os.WriteFile(manifest, []byte(fmt.Sprintf("%s  %s\n", strings.Repeat("0", len(hash)), filepath.Base(artifact))), 0o600); err != nil {
+	manifestEntry = fmt.Sprintf("%s  %s\n", strings.Repeat("0", len(hash)), filepath.Join("dist", filepath.Base(artifact)))
+	if err := os.WriteFile(manifest, []byte(manifestEntry), 0o600); err != nil {
 		t.Fatalf("rewrite checksum manifest: %v", err)
 	}
 
@@ -306,6 +375,36 @@ func writeArtifactTarGz(t *testing.T, dir, filename, binaryName string, binaryCo
 	}
 	if err := gw.Close(); err != nil {
 		t.Fatalf("close gzip: %v", err)
+	}
+
+	return artifactPath
+}
+
+func writeArtifactZip(t *testing.T, dir, filename, binaryName string, binaryContents []byte) string {
+	t.Helper()
+
+	artifactPath := filepath.Join(dir, filename)
+	artifact, err := os.Create(artifactPath)
+	if err != nil {
+		t.Fatalf("create artifact: %v", err)
+	}
+	defer artifact.Close()
+
+	zw := zip.NewWriter(artifact)
+	header := &zip.FileHeader{
+		Name:   binaryName,
+		Method: zip.Deflate,
+	}
+	header.SetMode(0o755)
+	writer, err := zw.CreateHeader(header)
+	if err != nil {
+		t.Fatalf("create zip header: %v", err)
+	}
+	if _, err := writer.Write(binaryContents); err != nil {
+		t.Fatalf("write zip content: %v", err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatalf("close zip: %v", err)
 	}
 
 	return artifactPath
