@@ -53,6 +53,16 @@ From repo root:
 make build
 ```
 
+## Installation matrix
+
+Installation verification lives in `docs/install-matrix.md`, which defines supported platform/architecture coverage and expected validation behavior for:
+
+- source install (`make install`)
+- release artifacts
+- installation script
+
+The matrix is the single source of truth for install-path CI checks and shell-specific command expectations.
+
 ## Test
 
 ```
