@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"strings"
 )
 
 func TestAppendACPRequestWritesJSONL(t *testing.T) {
@@ -19,6 +20,11 @@ func TestAppendACPRequestWritesJSONL(t *testing.T) {
 	content, err := os.ReadFile(logPath)
 	if err != nil {
 		t.Fatalf("read log: %v", err)
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(content)), "\n") {
+		if err := ValidateStructuredLogLine([]byte(line)); err != nil {
+			t.Fatalf("logged entry should conform to schema: %v", err)
+		}
 	}
 	if len(content) == 0 || content[len(content)-1] != '\n' {
 		t.Fatalf("expected newline-terminated jsonl")

@@ -6,11 +6,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"time"
 )
 
 type summaryEntry struct {
-	Timestamp string `json:"timestamp"`
+	LoggingSchemaFields
 	IssueID   string `json:"issue_id"`
 	Title     string `json:"title"`
 	Status    string `json:"status"`
@@ -26,7 +25,10 @@ func AppendRunnerSummary(repoRoot string, issueID string, title string, status s
 		commitSHA = readHeadSHA(repoRoot)
 	}
 	entry := summaryEntry{
-		Timestamp: time.Now().UTC().Format("2006-01-02T15:04:05Z"),
+		LoggingSchemaFields: populateRequiredLogFields(LoggingSchemaFields{
+			Component: "runner",
+			TaskID:    issueID,
+		}, issueID),
 		IssueID:   issueID,
 		Title:     title,
 		Status:    status,

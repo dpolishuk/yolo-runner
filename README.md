@@ -265,6 +265,7 @@ The YOLO agent must only work on the prompt provided. It must not call beads com
 
 - Runner summary log: `runner-logs/beads_yolo_runner.jsonl`
 - Per-task OpenCode logs: `runner-logs/opencode/<issue-id>.jsonl`
+- Log line schema requirements are documented in `docs/logging-schema.md`
 
 ## Sample output
 
