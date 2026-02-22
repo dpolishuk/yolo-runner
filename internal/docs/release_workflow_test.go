@@ -20,9 +20,10 @@ type releaseWorkflowJob struct {
 }
 
 type releaseWorkflowStep struct {
-	Name string `yaml:"name"`
-	Run  string `yaml:"run"`
-	Uses string `yaml:"uses"`
+	Name string            `yaml:"name"`
+	Run  string            `yaml:"run"`
+	Uses string            `yaml:"uses"`
+	With map[string]string `yaml:"with"`
 }
 
 func TestReleaseWorkflowDefinesBuildMatrixAndChecksumArtifacts(t *testing.T) {
@@ -68,8 +69,8 @@ func TestReleaseWorkflowDefinesBuildMatrixAndChecksumArtifacts(t *testing.T) {
 	if !strings.Contains(strings.ToLower(runContent), "sha256sum") {
 		t.Fatalf("release workflow missing checksum generation (expected sha256sum usage)")
 	}
-	if !strings.Contains(runContent, "checksums.txt") {
-		t.Fatalf("release workflow missing checksum artifact generation (expected checksums.txt)")
+	if !strings.Contains(runContent, "checksums-${{ matrix.artifact }}.txt") {
+		t.Fatalf("release workflow missing checksum artifact generation (expected checksums-${{ matrix.artifact }}.txt)")
 	}
 }
 
@@ -86,6 +87,79 @@ func TestReleaseWorkflowContainsSupportedPlatformsInArtifactNaming(t *testing.T)
 	unsupported := "yolo-runner_windows_arm64"
 	if strings.Contains(workflow, unsupported) {
 		t.Fatalf("release workflow includes unsupported matrix artifact %q", unsupported)
+	}
+}
+
+func TestReleaseWorkflowDefinesCrossPlatformBuildAndPublishSteps(t *testing.T) {
+	workflow := readRepoFile(t, ".github", "workflows", "release.yml")
+
+	if !strings.Contains(workflow, "actions/checkout@v4") {
+		t.Fatalf("release workflow missing checkout step")
+	}
+	if !strings.Contains(workflow, "actions/setup-go@") {
+		t.Fatalf("release workflow missing setup-go step")
+	}
+
+	var parsed releaseWorkflow
+	if err := yaml.Unmarshal([]byte(workflow), &parsed); err != nil {
+		t.Fatalf("unmarshal workflow YAML: %v", err)
+	}
+	job := findReleaseMatrixJob(t, parsed)
+
+	buildStepFound := false
+	publishStepFound := false
+	packageStepFound := false
+	checksumStepFound := false
+
+	for _, step := range job.Steps {
+		run := strings.ToLower(step.Run)
+		if !buildStepFound && strings.Contains(run, "go build") && strings.Contains(run, "${{ matrix.os }}") && strings.Contains(run, "${{ matrix.arch }}") {
+			buildStepFound = true
+		}
+		if !packageStepFound && strings.Contains(run, "${{ matrix.artifact }}") &&
+			(strings.Contains(run, "tar -czf") || strings.Contains(run, "zip")) {
+			packageStepFound = true
+		}
+		if !checksumStepFound && strings.Contains(run, "sha256sum") && strings.Contains(run, "checksums-${{ matrix.artifact }}.txt") {
+			checksumStepFound = true
+		}
+		if strings.Contains(step.Uses, "softprops/action-gh-release") {
+			files, ok := step.With["files"]
+			if !ok {
+				t.Fatalf("release workflow publish step missing files input")
+			}
+			if !strings.Contains(files, "dist/${{ matrix.artifact }}") {
+				t.Fatalf("release workflow publish step must include matrix artifact")
+			}
+			if !strings.Contains(files, "dist/checksums-${{ matrix.artifact }}.txt") {
+				t.Fatalf("release workflow publish step must include matching checksum artifact path")
+			}
+			publishStepFound = true
+		}
+	}
+
+	if !buildStepFound {
+		t.Fatalf("release workflow missing matrix-aware go build step")
+	}
+	if !packageStepFound {
+		t.Fatalf("release workflow missing matrix artifact packaging step")
+	}
+	if !checksumStepFound {
+		t.Fatalf("release workflow missing checksum generation step for checksums-${{ matrix.artifact }}.txt")
+	}
+	if !publishStepFound {
+		t.Fatalf("release workflow missing artifact publish step using softprops/action-gh-release")
+	}
+}
+
+func TestReleaseWorkflowUsesChecksumFilenamePerArtifact(t *testing.T) {
+	workflow := readRepoFile(t, ".github", "workflows", "release.yml")
+
+	if !strings.Contains(workflow, "dist/checksums-${{ matrix.artifact }}.txt") {
+		t.Fatalf("release workflow must use per-artifact checksum filename with matrix artifact placeholder")
+	}
+	if strings.Contains(workflow, "dist/checksums.txt") {
+		t.Fatalf("release workflow must not use shared checksum filename dist/checksums.txt in matrix release jobs")
 	}
 }
 
