@@ -97,3 +97,58 @@ func TestLogBrowserSelectionUpdatesDisplayedLogContent(t *testing.T) {
 		t.Fatalf("expected secondary file output after file selection, got %q", browser.View())
 	}
 }
+
+func TestLogBrowserNavigationHelpersMoveBetweenEntries(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	if err := os.WriteFile(filepath.Join(tmpDir, "task-1.jsonl"), []byte("primary output\n"), 0o600); err != nil {
+		t.Fatalf("write task-1 log: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "task-1.stderr.log"), []byte("secondary output\n"), 0o600); err != nil {
+		t.Fatalf("write task-1 stderr log: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "task-2.jsonl"), []byte("task-2 output\n"), 0o600); err != nil {
+		t.Fatalf("write task-2 log: %v", err)
+	}
+
+	browser, err := NewLogBrowser(tmpDir)
+	if err != nil {
+		t.Fatalf("new log browser: %v", err)
+	}
+
+	if got := browser.CurrentTask(); got != "task-1" {
+		t.Fatalf("expected initial selected task task-1, got %q", got)
+	}
+	if !strings.Contains(browser.View(), "primary output") {
+		t.Fatalf("expected primary output initially, got %q", browser.View())
+	}
+
+	browser.NextTask()
+	if got := browser.CurrentTask(); got != "task-2" {
+		t.Fatalf("expected next task task-2, got %q", got)
+	}
+	if !strings.Contains(browser.View(), "task-2 output") {
+		t.Fatalf("expected task-2 log output after NextTask, got %q", browser.View())
+	}
+
+	browser.PrevTask()
+	if got := browser.CurrentTask(); got != "task-1" {
+		t.Fatalf("expected previous task task-1 after PrevTask, got %q", got)
+	}
+	if !strings.Contains(browser.View(), "primary output") {
+		t.Fatalf("expected task-1 primary output after PrevTask, got %q", browser.View())
+	}
+
+	browser.NextLogFile()
+	if !strings.Contains(browser.View(), "secondary output") {
+		t.Fatalf("expected secondary output after NextLogFile, got %q", browser.View())
+	}
+	if browser.CurrentLogFile() != filepath.Join(tmpDir, "task-1.stderr.log") {
+		t.Fatalf("expected stderr file selected, got %q", browser.CurrentLogFile())
+	}
+
+	browser.PrevLogFile()
+	if !strings.Contains(browser.View(), "primary output") {
+		t.Fatalf("expected primary output after PrevLogFile, got %q", browser.View())
+	}
+}

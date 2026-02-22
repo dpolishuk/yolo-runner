@@ -165,6 +165,79 @@ func (b *LogBrowser) SelectLogFile(index int) {
 	b.refreshSelectedLogContent()
 }
 
+// NextTask advances the selected task in the list, clamped to the final item.
+func (b *LogBrowser) NextTask() {
+	if b == nil || len(b.taskIDs) == 0 {
+		return
+	}
+	if b.selectedTaskIndex < 0 {
+		b.selectedTaskIndex = 0
+		b.selectedFileIndex = 0
+		b.refreshSelectedLogContent()
+		return
+	}
+	b.selectedTaskIndex++
+	b.selectedFileIndex = 0
+	b.clampSelection()
+	b.refreshSelectedLogContent()
+}
+
+// PrevTask moves the selected task backward in the list.
+func (b *LogBrowser) PrevTask() {
+	if b == nil || len(b.taskIDs) == 0 {
+		return
+	}
+	if b.selectedTaskIndex < 0 {
+		b.selectedTaskIndex = 0
+		b.selectedFileIndex = 0
+		b.refreshSelectedLogContent()
+		return
+	}
+	if b.selectedTaskIndex == 0 {
+		return
+	}
+	b.selectedTaskIndex--
+	b.selectedFileIndex = 0
+	b.clampSelection()
+	b.refreshSelectedLogContent()
+}
+
+// NextLogFile selects the next log file for the active task.
+func (b *LogBrowser) NextLogFile() {
+	if b == nil || len(b.taskIDs) == 0 {
+		return
+	}
+	if b.selectedTaskIndex < 0 || b.selectedTaskIndex >= len(b.taskIDs) {
+		b.clampSelection()
+	}
+	files := b.logFilesByTaskID[b.taskIDs[b.selectedTaskIndex]]
+	if len(files) == 0 {
+		return
+	}
+	b.selectedFileIndex++
+	b.clampSelection()
+	b.refreshSelectedLogContent()
+}
+
+// PrevLogFile selects the previous log file for the active task.
+func (b *LogBrowser) PrevLogFile() {
+	if b == nil || len(b.taskIDs) == 0 {
+		return
+	}
+	if b.selectedTaskIndex < 0 || b.selectedTaskIndex >= len(b.taskIDs) {
+		b.clampSelection()
+	}
+	files := b.logFilesByTaskID[b.taskIDs[b.selectedTaskIndex]]
+	if len(files) == 0 {
+		return
+	}
+	if b.selectedFileIndex > 0 {
+		b.selectedFileIndex--
+	}
+	b.clampSelection()
+	b.refreshSelectedLogContent()
+}
+
 // CurrentTask returns the currently selected task id.
 func (b *LogBrowser) CurrentTask() string {
 	if b == nil || len(b.taskIDs) == 0 {
