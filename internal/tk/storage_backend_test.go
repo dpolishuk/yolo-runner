@@ -2,6 +2,7 @@ package tk
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/anomalyco/yolo-runner/internal/contracts"
@@ -38,7 +39,26 @@ func TestStorageBackendGetTaskTreeReturnsHierarchyWithDependencies(t *testing.T)
 	assertTaskRelation(t, tree.Relations, contracts.TaskRelation{FromID: "root.2", ToID: "root.1", Type: contracts.RelationBlocks})
 }
 
-func TestStorageBackendGetTaskReturnsNilWhenMissing(t *testing.T) {
+func TestStorageBackendGetTaskTreeReturnsErrorWhenRootMissing(t *testing.T) {
+	r := &fakeRunner{responses: map[string]string{
+		"tk show missing-root": "# Missing root\n",
+		"tk query":             `{"id":"root.1","status":"open","type":"task","title":"Task"}`,
+	}}
+	backend := NewStorageBackend(r)
+
+	tree, err := backend.GetTaskTree(context.Background(), "missing-root")
+	if err == nil {
+		t.Fatalf("expected missing root lookup to return error")
+	}
+	if tree != nil {
+		t.Fatalf("expected nil task tree for missing root, got %#v", tree)
+	}
+	if !strings.Contains(err.Error(), `root task "missing-root" not found`) {
+		t.Fatalf("expected missing root error, got %q", err)
+	}
+}
+
+func TestStorageBackendGetTaskReturnsErrorWhenMissing(t *testing.T) {
 	r := &fakeRunner{responses: map[string]string{
 		"tk show missing": "# Missing task\n",
 		"tk query":        `{"id":"root.1","status":"open","type":"task","title":"Task"}`,
@@ -46,11 +66,14 @@ func TestStorageBackendGetTaskReturnsNilWhenMissing(t *testing.T) {
 	backend := NewStorageBackend(r)
 
 	task, err := backend.GetTask(context.Background(), "missing")
-	if err != nil {
-		t.Fatalf("GetTask failed: %v", err)
+	if err == nil {
+		t.Fatalf("expected missing task lookup to return error")
 	}
 	if task != nil {
-		t.Fatalf("expected missing task lookup to return nil task, got %#v", task)
+		t.Fatalf("expected nil task for missing lookup, got %#v", task)
+	}
+	if !strings.Contains(err.Error(), `task "missing" not found`) {
+		t.Fatalf("expected missing task error, got %q", err)
 	}
 }
 
