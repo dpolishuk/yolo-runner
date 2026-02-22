@@ -130,6 +130,9 @@ func TestTaskEngineContractCanBeImplementedByFakes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildGraph returned error: %v", err)
 	}
+	if graph.Edges == nil {
+		t.Fatalf("expected BuildGraph to initialize graph edges")
+	}
 
 	available := engine.GetNextAvailable(graph)
 	if len(available) != 1 || available[0].ID != "root" {
@@ -160,6 +163,7 @@ func (fakeTaskEngine) BuildGraph(tree *TaskTree) (*TaskGraph, error) {
 		Nodes: map[string]*TaskNode{
 			tree.Root.ID: rootNode,
 		},
+		Edges: []TaskEdge{},
 	}
 	return graph, nil
 }
