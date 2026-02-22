@@ -9,6 +9,8 @@ on:
 jobs:
   release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:
@@ -29,13 +31,37 @@ jobs:
             arch: amd64
             artifact: yolo-runner_windows_amd64.zip
     steps:
-      - name: Package artifact
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+      - name: Build release artifact
         run: |
           mkdir -p dist
-          echo "artifact placeholder" > "dist/${{ matrix.artifact }}"
+          if [[ "${{ matrix.os }}" == "windows" ]]; then
+            binary="yolo-runner.exe"
+          else
+            binary="yolo-runner"
+          fi
+
+          GOOS="${{ matrix.os }}" GOARCH="${{ matrix.arch }}" \
+            go build -trimpath -o "dist/${binary}" ./cmd/yolo-runner
+
+          if [[ "${{ matrix.os }}" == "windows" ]]; then
+            zip -j "dist/${{ matrix.artifact }}" "dist/${binary}"
+          else
+            tar -czf "dist/${{ matrix.artifact }}" -C dist "${binary}"
+          fi
       - name: Generate checksum artifact
         run: |
-          sha256sum "dist/${{ matrix.artifact }}" > dist/checksums.txt
+          sha256sum "dist/${{ matrix.artifact }}" > "dist/checksums-${{ matrix.artifact }}.txt"
       - name: Publish release artifacts
-        run: |
-          echo "uploading ${{ matrix.artifact }} and checksums.txt"
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/${{ matrix.artifact }}
+            dist/checksums-${{ matrix.artifact }}.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
