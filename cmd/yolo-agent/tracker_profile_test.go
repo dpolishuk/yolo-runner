@@ -542,6 +542,43 @@ func TestBuildStorageBackendForTrackerSupportsTK(t *testing.T) {
 	}
 }
 
+func TestBuildStorageBackendForTrackerSupportsLinear(t *testing.T) {
+	t.Setenv("LINEAR_TOKEN", "lin_api_test")
+	originalFactory := newLinearStorageBackend
+	t.Cleanup(func() {
+		newLinearStorageBackend = originalFactory
+	})
+
+	var got linear.Config
+	newLinearStorageBackend = func(cfg linear.Config) (contracts.StorageBackend, error) {
+		got = cfg
+		return staticStorageBackend{}, nil
+	}
+
+	backend, err := buildStorageBackendForTracker(t.TempDir(), resolvedTrackerProfile{
+		Name: "linear",
+		Tracker: trackerModel{
+			Type: trackerTypeLinear,
+			Linear: &linearTrackerModel{
+				Scope: linearScopeModel{Workspace: "anomaly"},
+				Auth:  linearAuthModel{TokenEnv: "LINEAR_TOKEN"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("expected linear storage backend to build, got %v", err)
+	}
+	if backend == nil {
+		t.Fatalf("expected non-nil linear storage backend")
+	}
+	if got.Workspace != "anomaly" {
+		t.Fatalf("expected workspace to be wired, got %q", got.Workspace)
+	}
+	if got.Token != "lin_api_test" {
+		t.Fatalf("expected token to be loaded from env, got %q", got.Token)
+	}
+}
+
 func TestBuildTaskManagerForTrackerWrapsGitHubAuthErrors(t *testing.T) {
 	t.Setenv("GITHUB_TOKEN", "ghp_invalid")
 	originalFactory := newGitHubTaskManager
@@ -620,12 +657,12 @@ func TestBuildStorageBackendForTrackerTKSkipsDanglingDependencyRelations(t *test
 
 func TestBuildStorageBackendForTrackerLinearSkipsDanglingDependencyRelations(t *testing.T) {
 	t.Setenv("LINEAR_TOKEN", "lin_api_test")
-	originalFactory := newLinearTaskManager
+	originalFactory := newLinearStorageBackend
 	t.Cleanup(func() {
-		newLinearTaskManager = originalFactory
+		newLinearStorageBackend = originalFactory
 	})
-	newLinearTaskManager = func(linear.Config) (contracts.TaskManager, error) {
-		return newFallbackScenarioTaskManager(), nil
+	newLinearStorageBackend = func(linear.Config) (contracts.StorageBackend, error) {
+		return taskManagerStorageBackend{taskManager: newFallbackScenarioTaskManager()}, nil
 	}
 
 	backend, err := buildStorageBackendForTracker(t.TempDir(), resolvedTrackerProfile{
@@ -669,12 +706,12 @@ func TestBuildStorageBackendForTrackerTKUsesTaskManagerTreeForCompletion(t *test
 
 func TestBuildStorageBackendForTrackerLinearUsesTaskManagerTreeForCompletion(t *testing.T) {
 	t.Setenv("LINEAR_TOKEN", "lin_api_test")
-	originalFactory := newLinearTaskManager
+	originalFactory := newLinearStorageBackend
 	t.Cleanup(func() {
-		newLinearTaskManager = originalFactory
+		newLinearStorageBackend = originalFactory
 	})
-	newLinearTaskManager = func(linear.Config) (contracts.TaskManager, error) {
-		return newFallbackCompletionTaskManager(), nil
+	newLinearStorageBackend = func(linear.Config) (contracts.StorageBackend, error) {
+		return taskManagerStorageBackend{taskManager: newFallbackCompletionTaskManager()}, nil
 	}
 
 	backend, err := buildStorageBackendForTracker(t.TempDir(), resolvedTrackerProfile{
