@@ -135,15 +135,15 @@ artifact_name() {
 binary_name() {
 	local os="$1"
 	if [[ "$os" == "windows" ]]; then
-		echo "yolo-agent.exe"
+		echo "yolo-runner.exe"
 		return
 	fi
-	echo "yolo-agent"
+	echo "yolo-runner"
 }
 
 checksum_path() {
 	local artifact_path="$1"
-	echo "${artifact_path}.sha256"
+	echo "checksums-${artifact_path}.txt"
 }
 
 install_dir_for_os() {
@@ -169,7 +169,7 @@ build_urls() {
 	local arch="$2"
 	local artifact
 	artifact=$(artifact_name "$os" "$arch")
-	echo "$RELEASE_BASE_URL/$artifact $RELEASE_BASE_URL/$artifact.sha256"
+	echo "$RELEASE_BASE_URL/$artifact $RELEASE_BASE_URL/$(checksum_path "$artifact")"
 }
 
 plan() {
@@ -194,7 +194,14 @@ plan() {
 extract_expected_checksum() {
 	local manifest="$1"
 	local artifact="$2"
-	awk -v artifact="$artifact" '$2 == artifact { print $1; exit }' "$manifest"
+	local artifact_base
+	artifact_base=$(basename "$artifact")
+	while read -r expected path; do
+		if [[ "$path" == "$artifact_base" || "${path##*/}" == "$artifact_base" ]]; then
+			echo "$expected"
+			return
+		fi
+	done < "$manifest"
 }
 
 verify_checksum() {
@@ -252,7 +259,7 @@ install_release() {
 	trap '[[ -n "${tmpdir:-}" ]] && rm -rf "${tmpdir:-}"' EXIT
 
 	local artifact_path="$tmpdir/$artifact"
-	local checksum_path="$tmpdir/$artifact.sha256"
+	local checksum_path="$tmpdir/$(checksum_path "$artifact")"
 	download "$artifact_url" "$artifact_path"
 	download "$checksum_url" "$checksum_path"
 	verify_checksum "$artifact_path" "$checksum_path"
