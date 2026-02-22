@@ -12,12 +12,23 @@ import (
 func TestMakefileHasInstallTargetThatInstallsYoloAgent(t *testing.T) {
 	makefile := readRepoFile(t, "Makefile")
 
+	binaries := []string{
+		"yolo-agent",
+		"yolo-runner",
+		"yolo-task",
+		"yolo-tui",
+		"yolo-linear-webhook",
+		"yolo-linear-worker",
+	}
+
 	required := []string{
 		"install:",
 		"PREFIX ?=",
-		"bin/yolo-agent",
 		"mkdir -p",
-		"chmod +x",
+		"chmod 755",
+	}
+	for _, binary := range binaries {
+		required = append(required, "bin/"+binary)
 	}
 
 	for _, needle := range required {
@@ -44,27 +55,38 @@ func TestMakefileInstallTargetHonorsPrefixAndCreatesExecutable(t *testing.T) {
 		t.Fatalf("run make install: %v (%s)", err, output)
 	}
 
-	target := filepath.Join(prefix, "bin", "yolo-agent")
-	_, err = os.Stat(target)
-	if err != nil {
-		t.Fatalf("installed binary should exist at custom PREFIX location %q: %v", target, err)
+	binaries := []string{
+		"yolo-agent",
+		"yolo-runner",
+		"yolo-task",
+		"yolo-tui",
+		"yolo-linear-webhook",
+		"yolo-linear-worker",
 	}
 
-	binDir := filepath.Dir(target)
+	binDir := filepath.Join(prefix, "bin")
 	info, err := os.Stat(binDir)
 	if err != nil || !info.IsDir() {
 		t.Fatalf("install should create destination directory %q", binDir)
 	}
 
-	binInfo, err := os.Stat(target)
-	if err != nil {
-		t.Fatalf("inspect installed binary: %v", err)
-	}
-	if binInfo.Mode().Perm()&0111 == 0 {
-		t.Fatalf("installed binary should be executable, got mode %o", binInfo.Mode())
+	for _, binary := range binaries {
+		target := filepath.Join(binDir, binary)
+		_, err = os.Stat(target)
+		if err != nil {
+			t.Fatalf("installed binary should exist at custom PREFIX location %q: %v", target, err)
+		}
+
+		binInfo, err := os.Stat(target)
+		if err != nil {
+			t.Fatalf("inspect installed binary %q: %v", target, err)
+		}
+		if binInfo.Mode().Perm() != 0o755 {
+			t.Fatalf("installed binary %q should be 0755, got mode %o", target, binInfo.Mode().Perm())
+		}
 	}
 
-	helpOutput, err := exec.Command(target, "--help").CombinedOutput()
+	helpOutput, err := exec.Command(filepath.Join(binDir, "yolo-agent"), "--help").CombinedOutput()
 	if err != nil && !strings.Contains(string(helpOutput), "Usage of yolo-agent:") {
 		t.Fatalf("installed binary should expose usage text: %v (%s)", err, helpOutput)
 	}

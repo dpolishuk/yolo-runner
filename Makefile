@@ -28,5 +28,10 @@ PREFIX ?= /usr/local
 
 install: build
 	mkdir -p $(PREFIX)/bin
+	cp bin/yolo-runner $(PREFIX)/bin/yolo-runner
 	cp bin/yolo-agent $(PREFIX)/bin/yolo-agent
-	chmod +x $(PREFIX)/bin/yolo-agent
+	cp bin/yolo-task $(PREFIX)/bin/yolo-task
+	cp bin/yolo-tui $(PREFIX)/bin/yolo-tui
+	cp bin/yolo-linear-webhook $(PREFIX)/bin/yolo-linear-webhook
+	cp bin/yolo-linear-worker $(PREFIX)/bin/yolo-linear-worker
+	chmod 755 $(PREFIX)/bin/yolo-runner $(PREFIX)/bin/yolo-agent $(PREFIX)/bin/yolo-task $(PREFIX)/bin/yolo-tui $(PREFIX)/bin/yolo-linear-webhook $(PREFIX)/bin/yolo-linear-worker
