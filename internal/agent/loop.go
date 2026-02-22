@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -286,6 +287,9 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 			return summary, err
 		}
 		implementLogPath := defaultRunnerLogPath(taskRepoRoot, task.ID, epicID, l.options.Backend)
+		if err := ensureRunnerLogDirectory(taskRepoRoot, implementLogPath); err != nil {
+			return summary, err
+		}
 		implementStartMeta := buildRunnerStartedMetadata(contracts.RunnerModeImplement, l.options.Backend, l.options.Model, taskRepoRoot, implementLogPath, time.Now().UTC())
 		_ = l.emit(ctx, contracts.Event{Type: contracts.EventTypeRunnerStarted, TaskID: task.ID, TaskTitle: task.Title, WorkerID: worker, ClonePath: taskRepoRoot, QueuePos: queuePos, Message: string(contracts.RunnerModeImplement), Metadata: implementStartMeta, Timestamp: time.Now().UTC()})
 		requestMetadata := map[string]string{"log_path": implementLogPath, "clone_path": taskRepoRoot}
@@ -319,6 +323,9 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 			}
 			_ = l.emit(ctx, contracts.Event{Type: contracts.EventTypeReviewStarted, TaskID: task.ID, TaskTitle: task.Title, WorkerID: worker, ClonePath: taskRepoRoot, QueuePos: queuePos, Metadata: reviewTelemetry, Timestamp: time.Now().UTC()})
 			reviewLogPath := defaultRunnerLogPath(taskRepoRoot, task.ID, epicID, l.options.Backend)
+			if err := ensureRunnerLogDirectory(taskRepoRoot, reviewLogPath); err != nil {
+				return summary, err
+			}
 			reviewStartMeta := buildRunnerStartedMetadata(contracts.RunnerModeReview, l.options.Backend, l.options.Model, taskRepoRoot, reviewLogPath, time.Now().UTC())
 			_ = l.emit(ctx, contracts.Event{Type: contracts.EventTypeRunnerStarted, TaskID: task.ID, TaskTitle: task.Title, WorkerID: worker, ClonePath: taskRepoRoot, QueuePos: queuePos, Message: string(contracts.RunnerModeReview), Metadata: reviewStartMeta, Timestamp: time.Now().UTC()})
 			reviewMetadata := map[string]string{"log_path": reviewLogPath, "clone_path": taskRepoRoot}
@@ -841,6 +848,9 @@ func (l *Loop) runLandingMergeConflictRemediation(ctx context.Context, task cont
 	}
 
 	remediationLogPath := defaultRunnerLogPath(taskRepoRoot, task.ID, epicID, l.options.Backend)
+	if err := ensureRunnerLogDirectory(taskRepoRoot, remediationLogPath); err != nil {
+		return contracts.RunnerResult{Status: contracts.RunnerResultFailed, Reason: err.Error()}
+	}
 	remediationStartMeta := buildRunnerStartedMetadata(contracts.RunnerModeImplement, l.options.Backend, l.options.Model, taskRepoRoot, remediationLogPath, time.Now().UTC())
 	remediationStartMeta["landing_phase"] = "merge_conflict_remediation"
 	_ = l.emit(ctx, contracts.Event{Type: contracts.EventTypeRunnerStarted, TaskID: task.ID, TaskTitle: task.Title, WorkerID: worker, ClonePath: taskRepoRoot, QueuePos: queuePos, Message: string(contracts.RunnerModeImplement), Metadata: remediationStartMeta, Timestamp: time.Now().UTC()})
@@ -1038,12 +1048,28 @@ func defaultRunnerLogPath(repoRoot string, taskID string, epicID string, backend
 	if strings.TrimSpace(repoRoot) == "" || strings.TrimSpace(taskID) == "" {
 		return ""
 	}
-	parts := []string{repoRoot, "runner-logs", strings.TrimSpace(taskID)}
+	parts := []string{repoRoot, "runner-logs"}
 	if epicID = strings.TrimSpace(epicID); epicID != "" {
 		parts = append(parts, epicID)
 	}
-	parts = append(parts, runnerLogBackendDir(backend), taskID+".jsonl")
+	parts = append(parts, strings.TrimSpace(taskID))
+	parts = append(parts, runnerLogBackendDir(backend))
+	parts = append(parts, taskID+".jsonl")
 	return filepath.Join(parts...)
+}
+
+func ensureRunnerLogDirectory(repoRoot string, logPath string) error {
+	if strings.TrimSpace(repoRoot) == "" {
+		return nil
+	}
+	if _, err := os.Stat(repoRoot); err != nil {
+		return nil
+	}
+	logPath = strings.TrimSpace(logPath)
+	if logPath == "" {
+		return nil
+	}
+	return os.MkdirAll(filepath.Dir(logPath), 0o755)
 }
 
 func runnerLogBackendDir(backend string) string {

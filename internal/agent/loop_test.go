@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -750,6 +751,29 @@ func (f *fakeRunner) Run(_ context.Context, request contracts.RunnerRequest) (co
 	return result, nil
 }
 
+type logWritingRunner struct {
+	logPath string
+}
+
+func (r *logWritingRunner) Run(_ context.Context, request contracts.RunnerRequest) (contracts.RunnerResult, error) {
+	path := strings.TrimSpace(request.Metadata["log_path"])
+	if path == "" {
+		return contracts.RunnerResult{Status: contracts.RunnerResultFailed, Reason: "missing log_path metadata"}, nil
+	}
+	r.logPath = path
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return contracts.RunnerResult{Status: contracts.RunnerResultFailed, Reason: err.Error()}, nil
+	}
+	if err := os.WriteFile(path, []byte("ok\n"), 0o644); err != nil {
+		return contracts.RunnerResult{Status: contracts.RunnerResultFailed, Reason: err.Error()}, nil
+	}
+	return contracts.RunnerResult{Status: contracts.RunnerResultCompleted}, nil
+}
+
+func (r *logWritingRunner) LogPath() string {
+	return r.logPath
+}
+
 type noopSink struct{}
 
 func (noopSink) Emit(context.Context, contracts.Event) error { return nil }
@@ -1307,7 +1331,7 @@ func TestLoopEmitsRunnerStartedMetadata(t *testing.T) {
 	if event.Metadata["model"] != "openai/gpt-5.3-codex" {
 		t.Fatalf("expected model metadata, got %#v", event.Metadata)
 	}
-	if event.Metadata["log_path"] != "/repo/runner-logs/t-1/root/opencode/t-1.jsonl" {
+	if event.Metadata["log_path"] != "/repo/runner-logs/root/t-1/opencode/t-1.jsonl" {
 		t.Fatalf("expected log_path metadata, got %#v", event.Metadata)
 	}
 	if event.Metadata["clone_path"] != "/repo" {
@@ -1336,8 +1360,28 @@ func TestLoopEmitsRunnerStartedMetadataWithConfiguredBackend(t *testing.T) {
 	if event.Metadata["backend"] != "codex" {
 		t.Fatalf("expected backend metadata=codex, got %#v", event.Metadata)
 	}
-	if event.Metadata["log_path"] != "/repo/runner-logs/t-1/root/codex/t-1.jsonl" {
+	if event.Metadata["log_path"] != "/repo/runner-logs/root/t-1/codex/t-1.jsonl" {
 		t.Fatalf("expected codex log path metadata, got %#v", event.Metadata)
+	}
+}
+
+func TestLoopEmitsLogsUnderEpicTaskDirectory(t *testing.T) {
+	mgr := newFakeTaskManager(contracts.Task{ID: "t-1", Title: "Task 1", ParentID: "epic-1", Status: contracts.TaskStatusOpen})
+	runner := &logWritingRunner{}
+	sink := &recordingSink{}
+	repoRoot := t.TempDir()
+	loop := NewLoop(mgr, runner, sink, LoopOptions{ParentID: "root", RepoRoot: repoRoot, Model: "openai/gpt-5.3-codex"})
+
+	_, err := loop.Run(context.Background())
+	if err != nil {
+		t.Fatalf("loop failed: %v", err)
+	}
+	expected := filepath.Join(repoRoot, "runner-logs", "epic-1", "t-1", "opencode", "t-1.jsonl")
+	if got := runner.LogPath(); got != expected {
+		t.Fatalf("expected log to be written to %q, got %q", expected, got)
+	}
+	if _, err := os.Stat(expected); err != nil {
+		t.Fatalf("expected emitted log file %q, got err %v", expected, err)
 	}
 }
 
@@ -1363,10 +1407,10 @@ func TestLoopEmitsSeparatedLogPathsForMultipleTasks(t *testing.T) {
 		t.Fatalf("expected two runner_started events, got %d", len(runnerStarted))
 	}
 
-	if runnerStarted[0].Metadata["log_path"] != "/repo/runner-logs/t-1/epic-1/opencode/t-1.jsonl" {
+	if runnerStarted[0].Metadata["log_path"] != "/repo/runner-logs/epic-1/t-1/opencode/t-1.jsonl" {
 		t.Fatalf("unexpected log path for first task, got %#v", runnerStarted[0].Metadata)
 	}
-	if runnerStarted[1].Metadata["log_path"] != "/repo/runner-logs/t-2/epic-2/opencode/t-2.jsonl" {
+	if runnerStarted[1].Metadata["log_path"] != "/repo/runner-logs/epic-2/t-2/opencode/t-2.jsonl" {
 		t.Fatalf("unexpected log path for second task, got %#v", runnerStarted[1].Metadata)
 	}
 }
