@@ -165,6 +165,14 @@ func (b *StorageBackend) SetTaskData(ctx context.Context, taskID string, data ma
 	return b.manager.SetTaskData(ctx, taskID, data)
 }
 
+func (b *StorageBackend) PersistTaskStatusChange(context.Context, string, contracts.TaskStatus) error {
+	return nil
+}
+
+func (b *StorageBackend) PersistTaskDataChange(context.Context, string, map[string]string) error {
+	return nil
+}
+
 func taskFromIssuePayload(issue githubIssuePayload, inScope []githubIssuePayload) contracts.Task {
 	id := strconv.Itoa(issue.Number)
 	metadata := map[string]string{}

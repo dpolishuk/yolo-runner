@@ -110,7 +110,7 @@ var newTKTaskManager = func(repoRoot string) (contracts.TaskManager, error) {
 }
 
 var newTKStorageBackend = func(repoRoot string) (contracts.StorageBackend, error) {
-	return tk.NewStorageBackend(localRunner{dir: repoRoot}), nil
+	return tk.NewStorageBackendWithGitPersistence(localRunner{dir: repoRoot}), nil
 }
 
 var newGitHubTaskManager = func(cfg githubtracker.Config) (contracts.TaskManager, error) {

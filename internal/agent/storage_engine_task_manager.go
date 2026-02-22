@@ -17,6 +17,11 @@ type storageEngineTaskManager struct {
 	graph   *contracts.TaskGraph
 }
 
+type taskStatePersistenceBackend interface {
+	PersistTaskStatusChange(ctx context.Context, taskID string, status contracts.TaskStatus) error
+	PersistTaskDataChange(ctx context.Context, taskID string, data map[string]string) error
+}
+
 var _ contracts.TaskManager = (*storageEngineTaskManager)(nil)
 var _ taskConcurrencyCalculator = (*storageEngineTaskManager)(nil)
 var _ taskCompletionChecker = (*storageEngineTaskManager)(nil)
@@ -58,6 +63,11 @@ func (m *storageEngineTaskManager) SetTaskStatus(ctx context.Context, taskID str
 	if err := m.storage.SetTaskStatus(ctx, taskID, status); err != nil {
 		return err
 	}
+	if persister, ok := m.storage.(taskStatePersistenceBackend); ok {
+		if err := persister.PersistTaskStatusChange(ctx, taskID, status); err != nil {
+			return err
+		}
+	}
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -70,7 +80,15 @@ func (m *storageEngineTaskManager) SetTaskStatus(ctx context.Context, taskID str
 }
 
 func (m *storageEngineTaskManager) SetTaskData(ctx context.Context, taskID string, data map[string]string) error {
-	return m.storage.SetTaskData(ctx, taskID, data)
+	if err := m.storage.SetTaskData(ctx, taskID, data); err != nil {
+		return err
+	}
+	if persister, ok := m.storage.(taskStatePersistenceBackend); ok {
+		if err := persister.PersistTaskDataChange(ctx, taskID, data); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (m *storageEngineTaskManager) CalculateConcurrency(ctx context.Context, maxWorkers int) (int, error) {

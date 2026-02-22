@@ -505,6 +505,73 @@ func TestStorageEngineTaskManagerSetTaskStatusPropagatesTaskEngineErrors(t *test
 	}
 }
 
+func TestStorageEngineTaskManagerSetTaskStatusPersistsBackendStateChanges(t *testing.T) {
+	storage := newPersistingSpyStorageBackend([]contracts.Task{
+		{ID: "root", Title: "Root", Status: contracts.TaskStatusClosed},
+		{ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen, ParentID: "root"},
+	}, []contracts.TaskRelation{{FromID: "root", ToID: "t-1", Type: contracts.RelationParent}})
+	engine := newSpyTaskEngine(enginepkg.NewTaskEngine())
+	manager := newStorageEngineTaskManager(storage, engine, "root")
+
+	if _, err := manager.NextTasks(context.Background(), "root"); err != nil {
+		t.Fatalf("NextTasks failed: %v", err)
+	}
+
+	if err := manager.SetTaskStatus(context.Background(), "t-1", contracts.TaskStatusClosed); err != nil {
+		t.Fatalf("SetTaskStatus failed: %v", err)
+	}
+	if storage.persistStatusCount("t-1", contracts.TaskStatusClosed) == 0 {
+		t.Fatalf("expected persistence hook to record closed status")
+	}
+	if engine.updateTaskStatusCalls == 0 {
+		t.Fatalf("expected task engine graph update after persistence")
+	}
+}
+
+func TestStorageEngineTaskManagerSetTaskStatusReturnsPersistenceErrors(t *testing.T) {
+	storage := newPersistingSpyStorageBackend([]contracts.Task{
+		{ID: "root", Title: "Root", Status: contracts.TaskStatusClosed},
+		{ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen, ParentID: "root"},
+	}, []contracts.TaskRelation{{FromID: "root", ToID: "t-1", Type: contracts.RelationParent}})
+	storage.persistStatusErr = errors.New("persist failed")
+	engine := newSpyTaskEngine(enginepkg.NewTaskEngine())
+	manager := newStorageEngineTaskManager(storage, engine, "root")
+
+	if _, err := manager.NextTasks(context.Background(), "root"); err != nil {
+		t.Fatalf("NextTasks failed: %v", err)
+	}
+
+	err := manager.SetTaskStatus(context.Background(), "t-1", contracts.TaskStatusClosed)
+	if err == nil {
+		t.Fatalf("expected persistence failure")
+	}
+	if !strings.Contains(err.Error(), "persist failed") {
+		t.Fatalf("expected persistence error, got %q", err.Error())
+	}
+	if storage.statusSetCount("t-1", contracts.TaskStatusClosed) == 0 {
+		t.Fatalf("expected storage SetTaskStatus to occur before persistence error")
+	}
+	if engine.updateTaskStatusCalls != 0 {
+		t.Fatalf("expected graph update to be skipped after persistence failure")
+	}
+}
+
+func TestStorageEngineTaskManagerSetTaskDataPersistsBackendStateChanges(t *testing.T) {
+	storage := newPersistingSpyStorageBackend([]contracts.Task{
+		{ID: "root", Title: "Root", Status: contracts.TaskStatusClosed},
+		{ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen, ParentID: "root"},
+	}, []contracts.TaskRelation{{FromID: "root", ToID: "t-1", Type: contracts.RelationParent}})
+	engine := newSpyTaskEngine(enginepkg.NewTaskEngine())
+	manager := newStorageEngineTaskManager(storage, engine, "root")
+
+	if err := manager.SetTaskData(context.Background(), "t-1", map[string]string{"triage_status": "blocked"}); err != nil {
+		t.Fatalf("SetTaskData failed: %v", err)
+	}
+	if storage.persistDataCount("t-1") == 0 {
+		t.Fatalf("expected persistence hook to record task data change")
+	}
+}
+
 func TestLoopWithTaskEngineTreatsOpenRootWithTerminalChildrenAsComplete(t *testing.T) {
 	storage := newSpyStorageBackend([]contracts.Task{
 		{ID: "root", Title: "Root", Status: contracts.TaskStatusOpen},
@@ -2417,6 +2484,62 @@ func (s *spyStorageBackend) statusSetCount(taskID string, status contracts.TaskS
 	count := 0
 	for _, call := range s.setStatusCalls {
 		if call.taskID == taskID && call.status == status {
+			count++
+		}
+	}
+	return count
+}
+
+type persistingSpyStorageBackend struct {
+	*spyStorageBackend
+	persistStatusErr   error
+	persistDataErr     error
+	persistStatusCalls []statusTransition
+	persistDataCalls   []string
+}
+
+func newPersistingSpyStorageBackend(tasks []contracts.Task, relations []contracts.TaskRelation) *persistingSpyStorageBackend {
+	return &persistingSpyStorageBackend{spyStorageBackend: newSpyStorageBackend(tasks, relations)}
+}
+
+func (s *persistingSpyStorageBackend) PersistTaskStatusChange(_ context.Context, taskID string, status contracts.TaskStatus) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.persistStatusCalls = append(s.persistStatusCalls, statusTransition{taskID: taskID, status: status})
+	if s.persistStatusErr != nil {
+		return s.persistStatusErr
+	}
+	return nil
+}
+
+func (s *persistingSpyStorageBackend) PersistTaskDataChange(_ context.Context, taskID string, _ map[string]string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.persistDataCalls = append(s.persistDataCalls, taskID)
+	if s.persistDataErr != nil {
+		return s.persistDataErr
+	}
+	return nil
+}
+
+func (s *persistingSpyStorageBackend) persistStatusCount(taskID string, status contracts.TaskStatus) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	count := 0
+	for _, call := range s.persistStatusCalls {
+		if call.taskID == taskID && call.status == status {
+			count++
+		}
+	}
+	return count
+}
+
+func (s *persistingSpyStorageBackend) persistDataCount(taskID string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	count := 0
+	for _, persisted := range s.persistDataCalls {
+		if persisted == taskID {
 			count++
 		}
 	}

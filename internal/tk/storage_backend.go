@@ -10,13 +10,25 @@ import (
 
 // StorageBackend adapts tk tickets to the storage-only contracts.StorageBackend API.
 type StorageBackend struct {
-	manager *TaskManager
+	manager        *TaskManager
+	statePersister taskStatePersister
 }
 
 var _ contracts.StorageBackend = (*StorageBackend)(nil)
 
 func NewStorageBackend(runner Runner) *StorageBackend {
-	return &StorageBackend{manager: NewTaskManager(runner)}
+	return NewStorageBackendWithPersister(runner, noopTaskStatePersister{})
+}
+
+func NewStorageBackendWithGitPersistence(runner Runner) *StorageBackend {
+	return NewStorageBackendWithPersister(runner, NewGitStatePersister(runner))
+}
+
+func NewStorageBackendWithPersister(runner Runner, persister taskStatePersister) *StorageBackend {
+	if persister == nil {
+		persister = noopTaskStatePersister{}
+	}
+	return &StorageBackend{manager: NewTaskManager(runner), statePersister: persister}
 }
 
 func (b *StorageBackend) GetTaskTree(ctx context.Context, rootID string) (*contracts.TaskTree, error) {
@@ -61,4 +73,18 @@ func (b *StorageBackend) SetTaskData(ctx context.Context, taskID string, data ma
 		return fmt.Errorf("tk storage backend is not initialized")
 	}
 	return b.manager.SetTaskData(ctx, taskID, data)
+}
+
+func (b *StorageBackend) PersistTaskStatusChange(ctx context.Context, taskID string, status contracts.TaskStatus) error {
+	if b == nil || b.statePersister == nil {
+		return nil
+	}
+	return b.statePersister.PersistTaskStatusChange(ctx, taskID, status)
+}
+
+func (b *StorageBackend) PersistTaskDataChange(ctx context.Context, taskID string, data map[string]string) error {
+	if b == nil || b.statePersister == nil {
+		return nil
+	}
+	return b.statePersister.PersistTaskDataChange(ctx, taskID, data)
 }
