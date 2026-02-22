@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -14,6 +15,8 @@ import (
 
 	"github.com/anomalyco/yolo-runner/internal/contracts"
 	enginepkg "github.com/anomalyco/yolo-runner/internal/engine"
+	"github.com/anomalyco/yolo-runner/internal/logging"
+	"github.com/anomalyco/yolo-runner/internal/ui/tui"
 )
 
 func TestLoopCompletesTask(t *testing.T) {
@@ -774,6 +777,47 @@ func (r *logWritingRunner) LogPath() string {
 	return r.logPath
 }
 
+type structuredDecisionRunner struct {
+	result  contracts.RunnerResult
+	logPath string
+}
+
+func (r *structuredDecisionRunner) Run(_ context.Context, request contracts.RunnerRequest) (contracts.RunnerResult, error) {
+	path := strings.TrimSpace(request.Metadata["log_path"])
+	if path == "" {
+		return contracts.RunnerResult{Status: contracts.RunnerResultFailed, Reason: "missing log_path metadata"}, nil
+	}
+	r.logPath = path
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
+	if err != nil {
+		return contracts.RunnerResult{Status: contracts.RunnerResultFailed, Reason: err.Error()}, nil
+	}
+	defer file.Close()
+
+	logger := logging.NewStructuredLogger(file, "info", logging.LoggingSchemaFields{TaskID: request.TaskID})
+	if err := logger.Log("info", map[string]interface{}{
+		"message": "task execution started",
+		"outcome": "intentional failure",
+	}); err != nil {
+		return contracts.RunnerResult{Status: contracts.RunnerResultFailed, Reason: err.Error()}, nil
+	}
+	if err := logger.Log("warn", map[string]interface{}{
+		"message": "decision event",
+		"decision": "failed",
+	}); err != nil {
+		return contracts.RunnerResult{Status: contracts.RunnerResultFailed, Reason: err.Error()}, nil
+	}
+
+	if r.result.Status == "" {
+		return contracts.RunnerResult{Status: contracts.RunnerResultFailed, Reason: "missing configured result"}, nil
+	}
+	return r.result, nil
+}
+
+func (r *structuredDecisionRunner) LogPath() string {
+	return r.logPath
+}
+
 type noopSink struct{}
 
 func (noopSink) Emit(context.Context, contracts.Event) error { return nil }
@@ -1382,6 +1426,94 @@ func TestLoopEmitsLogsUnderEpicTaskDirectory(t *testing.T) {
 	}
 	if _, err := os.Stat(expected); err != nil {
 		t.Fatalf("expected emitted log file %q, got err %v", expected, err)
+	}
+}
+
+func TestLoopWritesObservabilityPipelineArtifactsForFailedTask(t *testing.T) {
+	mgr := newFakeTaskManager(contracts.Task{ID: "t-1", Title: "Task 1", ParentID: "epic-1", Status: contracts.TaskStatusOpen})
+	runner := &structuredDecisionRunner{
+		result: contracts.RunnerResult{
+			Status: contracts.RunnerResultFailed,
+			Reason: "observability validation failed",
+		},
+	}
+	recording := &recordingSink{}
+	repoRoot := t.TempDir()
+	eventsPath := filepath.Join(repoRoot, "runner-logs", "agent.events.jsonl")
+	sink := contracts.NewFanoutEventSink(contracts.NewFileEventSink(eventsPath), recording)
+
+	loop := NewLoop(mgr, runner, sink, LoopOptions{ParentID: "root", RepoRoot: repoRoot, Model: "openai/gpt-5.3-codex", Backend: "opencode"})
+	summary, err := loop.Run(context.Background())
+	if err != nil {
+		t.Fatalf("loop failed: %v", err)
+	}
+	if summary.Failed != 1 {
+		t.Fatalf("expected failed summary, got %#v", summary)
+	}
+
+	expected := filepath.Join(repoRoot, "runner-logs", "epic-1", "t-1", "opencode", "t-1.jsonl")
+	if got := runner.LogPath(); got != expected {
+		t.Fatalf("expected runner log path %q, got %q", expected, got)
+	}
+	content, err := os.ReadFile(expected)
+	if err != nil {
+		t.Fatalf("expected emitted log file %q, got err %v", expected, err)
+	}
+	scanner := bufio.NewScanner(strings.NewReader(string(content)))
+	hasStructuredLine := false
+	for scanner.Scan() {
+		hasStructuredLine = true
+		if err := logging.ValidateStructuredLogLine(scanner.Bytes()); err != nil {
+			t.Fatalf("invalid structured log line %q: %v", scanner.Text(), err)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatalf("read structured log file: %v", err)
+	}
+	if !hasStructuredLine {
+		t.Fatalf("expected at least one structured log line in %q", expected)
+	}
+
+	taskData := eventsByType(recording.events, contracts.EventTypeTaskDataUpdated)
+	if len(taskData) == 0 {
+		t.Fatalf("expected task_data_updated event for failed task")
+	}
+	if taskData[len(taskData)-1].Metadata["decision"] != "failed" {
+		t.Fatalf("expected failed decision in task_data_updated metadata, got %#v", taskData[len(taskData)-1].Metadata)
+	}
+
+	taskFinished := eventsByType(recording.events, contracts.EventTypeTaskFinished)
+	if len(taskFinished) == 0 {
+		t.Fatalf("expected task_finished event for failed task")
+	}
+	if taskFinished[len(taskFinished)-1].Metadata["decision"] != "failed" {
+		t.Fatalf("expected failed decision in task_finished metadata, got %#v", taskFinished[len(taskFinished)-1].Metadata)
+	}
+
+	eventsFile, err := os.ReadFile(eventsPath)
+	if err != nil {
+		t.Fatalf("expected event file %q, got err %v", eventsPath, err)
+	}
+	if !strings.Contains(string(eventsFile), "\"decision\":\"failed\"") {
+		t.Fatalf("expected decision metadata in events file, got %q", string(eventsFile))
+	}
+
+	browser, err := tui.NewLogBrowser(filepath.Join(repoRoot, "runner-logs"))
+	if err != nil {
+		t.Fatalf("new log browser: %v", err)
+	}
+	if got := browser.CurrentTask(); got != "t-1" {
+		browser.SelectTask(1)
+		if got := browser.CurrentTask(); got != "t-1" {
+			t.Fatalf("expected log browser to select task-1, got %q", got)
+		}
+	}
+	if got := browser.CurrentLogFile(); got != expected {
+		t.Fatalf("expected log browser selected log path %q, got %q", expected, got)
+	}
+	view := browser.View()
+	if !strings.Contains(view, "t-1") || !strings.Contains(view, "level") {
+		t.Fatalf("expected log browser view to include rendered task log content, got %q", view)
 	}
 }
 
