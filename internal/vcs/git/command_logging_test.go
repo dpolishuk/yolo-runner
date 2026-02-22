@@ -1,12 +1,14 @@
 package git
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/anomalyco/yolo-runner/internal/exec"
+	"github.com/anomalyco/yolo-runner/internal/logging"
 )
 
 func TestGitCommandsRouteOutputToLogFiles(t *testing.T) {
@@ -154,17 +156,19 @@ func TestGitCommandsRouteOutputToLogFiles(t *testing.T) {
 				t.Fatalf("failed to read log file: %v", err)
 			}
 
-			// Verify that log file contains expected sections
+			// Verify that log file is valid JSON and includes required fields
 			logContentStr := string(logContent)
-			expectedSections := []string{"Command:", "Start Time:", "Elapsed:", "=== STDOUT ===", "=== STDERR ==="}
-			for _, section := range expectedSections {
-				if !strings.Contains(logContentStr, section) {
-					t.Fatalf("log file should contain section '%s', got: %s", section, logContentStr)
-				}
+			line := strings.TrimSpace(logContentStr)
+			if err := logging.ValidateStructuredLogLine([]byte(line)); err != nil {
+				t.Fatalf("invalid structured log line: %v", err)
 			}
 
-			// Verify that log file contains a git command
-			if !strings.Contains(logContentStr, "git ") {
+			entry := map[string]interface{}{}
+			if err := json.Unmarshal([]byte(line), &entry); err != nil {
+				t.Fatalf("invalid json log entry: %v", err)
+			}
+			command, _ := entry["command"].(string)
+			if !strings.Contains(command, "git ") {
 				t.Fatalf("log file should contain git command, got: %s", logContentStr)
 			}
 		})
