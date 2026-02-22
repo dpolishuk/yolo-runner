@@ -464,6 +464,24 @@ func TestTaskGraphCalculateConcurrencyAcrossTopologies(t *testing.T) {
 	}
 }
 
+func TestTaskGraphCalculateConcurrencyIgnoresTerminalTasks(t *testing.T) {
+	graph, err := NewTaskGraph([]TaskNode{
+		{ID: "a", State: TaskStateSucceeded},
+		{ID: "b", State: TaskStatePending, DependsOn: []string{"a"}},
+		{ID: "c", State: TaskStateFailed, DependsOn: []string{"a"}},
+		{ID: "d", State: TaskStateCanceled, DependsOn: []string{"a"}},
+		{ID: "e", State: TaskStateSucceeded, DependsOn: []string{"a"}},
+		{ID: "f", State: TaskStatePending, DependsOn: []string{"b"}},
+	})
+	if err != nil {
+		t.Fatalf("NewTaskGraph() error = %v", err)
+	}
+
+	if got := callTaskGraphCalculateConcurrency(t, &graph); got != 1 {
+		t.Fatalf("CalculateConcurrency() = %d, want 1 for pending tasks only", got)
+	}
+}
+
 func TestTaskGraphIsCompleteReturnsTrueWhenAllTasksFinished(t *testing.T) {
 	graph, err := NewTaskGraph([]TaskNode{
 		{ID: "a", State: TaskStatePending},

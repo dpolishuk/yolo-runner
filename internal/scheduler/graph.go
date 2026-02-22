@@ -225,18 +225,22 @@ func (g *TaskGraph) CalculateConcurrency() int {
 
 	maxParallel := 0
 	for len(currentLevel) > 0 {
-		if len(currentLevel) > maxParallel {
-			maxParallel = len(currentLevel)
-		}
-
 		nextLevel := make([]string, 0)
+		pendingAtLevel := 0
 		for _, taskID := range currentLevel {
+			if node := g.nodes[taskID]; node.State == TaskStatePending {
+				pendingAtLevel++
+			}
+
 			for _, dependentID := range g.dependents[taskID] {
 				inDegree[dependentID]--
 				if inDegree[dependentID] == 0 {
 					nextLevel = append(nextLevel, dependentID)
 				}
 			}
+		}
+		if pendingAtLevel > maxParallel {
+			maxParallel = pendingAtLevel
 		}
 		sort.Strings(nextLevel)
 		currentLevel = nextLevel
