@@ -421,6 +421,7 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 				autoCommitSHA := ""
 				buildLandingMetadata := func(status string, attempt int, reason string) map[string]string {
 					metadata := map[string]string{"landing_status": status}
+					metadata = appendDecisionMetadata(metadata, status, reason)
 					if attempt > 0 {
 						metadata["landing_attempt"] = fmt.Sprintf("%d", attempt)
 					}
@@ -451,7 +452,7 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 						Timestamp: time.Now().UTC(),
 					})
 				}
-				emitMergeQueueEvent(contracts.EventTypeMergeQueued, map[string]string{"landing_status": string(landingState.State())})
+				emitMergeQueueEvent(contracts.EventTypeMergeQueued, appendDecisionMetadata(map[string]string{"landing_status": string(landingState.State())}, string(landingState.State()), ""))
 				_ = l.emit(ctx, contracts.Event{Type: contracts.EventTypeTaskDataUpdated, TaskID: task.ID, TaskTitle: task.Title, WorkerID: worker, ClonePath: taskRepoRoot, QueuePos: queuePos, Metadata: buildLandingMetadata(string(landingState.State()), 0, ""), Timestamp: time.Now().UTC()})
 				if l.landingLock != nil {
 					l.landingLock.Lock()
@@ -485,11 +486,11 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 						_ = landingState.Apply(scheduler.LandingEventFailedRetryable)
 						_ = l.emit(ctx, contracts.Event{Type: contracts.EventTypeTaskDataUpdated, TaskID: task.ID, TaskTitle: task.Title, WorkerID: worker, ClonePath: taskRepoRoot, QueuePos: queuePos, Metadata: buildLandingMetadata(string(landingState.State()), attempt, landingReason), Timestamp: time.Now().UTC()})
 						if attempt < 2 {
-							emitMergeQueueEvent(contracts.EventTypeMergeRetry, map[string]string{
+							emitMergeQueueEvent(contracts.EventTypeMergeRetry, appendDecisionMetadata(map[string]string{
 								"landing_status":  string(landingState.State()),
 								"landing_attempt": fmt.Sprintf("%d", attempt),
 								"triage_reason":   landingReason,
-							})
+							}, "retry", landingReason))
 							if isMergeConflictError(landingReason) {
 								remediationResult := l.runLandingMergeConflictRemediation(ctx, task, taskVCS, taskBranch, worker, taskRepoRoot, queuePos, landingReason)
 								if remediationResult.Status != contracts.RunnerResultCompleted {
@@ -506,10 +507,10 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 							}
 							_ = landingState.Apply(scheduler.LandingEventRequeued)
 							_ = l.emit(ctx, contracts.Event{Type: contracts.EventTypeTaskDataUpdated, TaskID: task.ID, TaskTitle: task.Title, WorkerID: worker, ClonePath: taskRepoRoot, QueuePos: queuePos, Metadata: buildLandingMetadata(string(landingState.State()), 0, ""), Timestamp: time.Now().UTC()})
-							emitMergeQueueEvent(contracts.EventTypeMergeQueued, map[string]string{
+							emitMergeQueueEvent(contracts.EventTypeMergeQueued, appendDecisionMetadata(map[string]string{
 								"landing_status":  string(landingState.State()),
 								"landing_attempt": fmt.Sprintf("%d", attempt+1),
-							})
+							}, string(landingState.State()), ""))
 							continue
 						}
 						landingBlocked = true
@@ -541,22 +542,23 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 					_ = l.emit(ctx, contracts.Event{Type: contracts.EventTypePushCompleted, TaskID: task.ID, TaskTitle: task.Title, WorkerID: worker, ClonePath: taskRepoRoot, QueuePos: queuePos, Metadata: pushMetadata, Timestamp: time.Now().UTC()})
 					_ = landingState.Apply(scheduler.LandingEventSucceeded)
 					_ = l.emit(ctx, contracts.Event{Type: contracts.EventTypeTaskDataUpdated, TaskID: task.ID, TaskTitle: task.Title, WorkerID: worker, ClonePath: taskRepoRoot, QueuePos: queuePos, Metadata: buildLandingMetadata(string(landingState.State()), 0, ""), Timestamp: time.Now().UTC()})
-					emitMergeQueueEvent(contracts.EventTypeMergeLanded, map[string]string{
+					emitMergeQueueEvent(contracts.EventTypeMergeLanded, appendDecisionMetadata(map[string]string{
 						"landing_status":  string(landingState.State()),
 						"landing_attempt": fmt.Sprintf("%d", attempt),
-					})
+					}, "landed", landingReason))
 					break
 				}
 
 				if landingBlocked {
-					emitMergeQueueEvent(contracts.EventTypeMergeBlocked, map[string]string{
+					emitMergeQueueEvent(contracts.EventTypeMergeBlocked, appendDecisionMetadata(map[string]string{
 						"landing_status": string(landingState.State()),
 						"triage_reason":  landingReason,
-					})
+					}, "blocked", landingReason))
 					blockedData := map[string]string{"triage_status": "blocked", "landing_status": string(landingState.State())}
 					if landingReason != "" {
 						blockedData["triage_reason"] = landingReason
 					}
+					blockedData = appendDecisionMetadata(blockedData, "blocked", landingReason)
 					if autoCommitSHA != "" {
 						blockedData["auto_commit_sha"] = autoCommitSHA
 					}
@@ -570,6 +572,7 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 					if landingReason != "" {
 						finishedMetadata["triage_reason"] = landingReason
 					}
+					finishedMetadata = appendDecisionMetadata(finishedMetadata, "blocked", landingReason)
 					_ = l.emit(ctx, contracts.Event{Type: contracts.EventTypeTaskFinished, TaskID: task.ID, TaskTitle: task.Title, WorkerID: worker, ClonePath: taskRepoRoot, QueuePos: queuePos, Message: string(contracts.TaskStatusBlocked), Metadata: finishedMetadata, Timestamp: time.Now().UTC()})
 					if err := l.tasks.SetTaskData(ctx, task.ID, blockedData); err != nil {
 						return summary, err
@@ -596,6 +599,7 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 			if result.Reason != "" {
 				blockedData["triage_reason"] = result.Reason
 			}
+			blockedData = appendDecisionMetadata(blockedData, "blocked", result.Reason)
 			blockedData = appendReviewOutcomeMetadata(blockedData, result)
 			if err := l.markTaskBlockedWithData(task.ID, blockedData); err != nil {
 				return summary, err
@@ -607,6 +611,7 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 			if result.Reason != "" {
 				finishedMetadata["triage_reason"] = result.Reason
 			}
+			finishedMetadata = appendDecisionMetadata(finishedMetadata, "blocked", result.Reason)
 			finishedMetadata = appendReviewOutcomeMetadata(finishedMetadata, result)
 			_ = l.emit(ctx, contracts.Event{Type: contracts.EventTypeTaskFinished, TaskID: task.ID, TaskTitle: task.Title, WorkerID: worker, ClonePath: taskRepoRoot, QueuePos: queuePos, Message: string(contracts.TaskStatusBlocked), Metadata: finishedMetadata, Timestamp: time.Now().UTC()})
 			if err := l.tasks.SetTaskData(ctx, task.ID, blockedData); err != nil {
@@ -636,6 +641,7 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 					if strings.TrimSpace(result.Reason) != "" {
 						retryData["triage_reason"] = strings.TrimSpace(result.Reason)
 					}
+					retryData = appendDecisionMetadata(retryData, "retry", result.Reason)
 					if err := l.tasks.SetTaskData(ctx, task.ID, retryData); err != nil {
 						return summary, err
 					}
@@ -656,6 +662,7 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 			if result.Reason != "" {
 				failedData["triage_reason"] = result.Reason
 			}
+			failedData = appendDecisionMetadata(failedData, "failed", result.Reason)
 			if reviewFail || reviewRetries > 0 {
 				failedData["review_retry_count"] = fmt.Sprintf("%d", reviewRetries)
 			}
@@ -674,6 +681,7 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 			if result.Reason != "" {
 				finishedMetadata["triage_reason"] = result.Reason
 			}
+			finishedMetadata = appendDecisionMetadata(finishedMetadata, "failed", result.Reason)
 			finishedMetadata = appendReviewOutcomeMetadata(finishedMetadata, result)
 			_ = l.emit(ctx, contracts.Event{Type: contracts.EventTypeTaskFinished, TaskID: task.ID, TaskTitle: task.Title, WorkerID: worker, ClonePath: taskRepoRoot, QueuePos: queuePos, Message: string(contracts.TaskStatusFailed), Metadata: finishedMetadata, Timestamp: time.Now().UTC()})
 			summary.Failed++
@@ -683,6 +691,7 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 			if result.Reason != "" {
 				failedData["triage_reason"] = result.Reason
 			}
+			failedData = appendDecisionMetadata(failedData, "failed", result.Reason)
 			failedData = appendReviewOutcomeMetadata(failedData, result)
 			if err := l.tasks.SetTaskData(ctx, task.ID, failedData); err != nil {
 				return summary, err
@@ -698,6 +707,7 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 			if result.Reason != "" {
 				finishedMetadata["triage_reason"] = result.Reason
 			}
+			finishedMetadata = appendDecisionMetadata(finishedMetadata, "failed", result.Reason)
 			finishedMetadata = appendReviewOutcomeMetadata(finishedMetadata, result)
 			_ = l.emit(ctx, contracts.Event{Type: contracts.EventTypeTaskFinished, TaskID: task.ID, TaskTitle: task.Title, WorkerID: worker, ClonePath: taskRepoRoot, QueuePos: queuePos, Message: string(contracts.TaskStatusFailed), Metadata: finishedMetadata, Timestamp: time.Now().UTC()})
 			summary.Failed++
@@ -1136,6 +1146,19 @@ func appendReviewOutcomeMetadata(metadata map[string]string, result contracts.Ru
 	}
 	if feedback := reviewFailFeedbackFromArtifacts(result); feedback != "" {
 		metadata["review_fail_feedback"] = feedback
+	}
+	return metadata
+}
+
+func appendDecisionMetadata(metadata map[string]string, decision string, reason string) map[string]string {
+	if metadata == nil {
+		metadata = map[string]string{}
+	}
+	if decision = strings.TrimSpace(decision); decision != "" {
+		metadata["decision"] = decision
+	}
+	if reason = strings.TrimSpace(reason); reason != "" {
+		metadata["reason"] = reason
 	}
 	return metadata
 }

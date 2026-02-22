@@ -1582,6 +1582,95 @@ func TestLoopEmitsReviewFeedbackMetadataOnFailedReview(t *testing.T) {
 	}
 }
 
+func TestLoopEmitsDecisionMetadataForReviewRetry(t *testing.T) {
+	mgr := newFakeTaskManager(contracts.Task{ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen})
+	run := &fakeRunner{results: []contracts.RunnerResult{
+		{Status: contracts.RunnerResultCompleted},
+		{
+			Status:      contracts.RunnerResultCompleted,
+			ReviewReady: false,
+			Artifacts: map[string]string{
+				"review_verdict":       "fail",
+				"review_fail_feedback": "add retry evidence to pass",
+			},
+		},
+		{Status: contracts.RunnerResultCompleted},
+		{Status: contracts.RunnerResultCompleted, ReviewReady: true},
+	}}
+	sink := &recordingSink{}
+	loop := NewLoop(mgr, run, sink, LoopOptions{ParentID: "root", MaxRetries: 1, RequireReview: true})
+
+	_, err := loop.Run(context.Background())
+	if err != nil {
+		t.Fatalf("loop failed: %v", err)
+	}
+
+	updates := eventsByType(sink.events, contracts.EventTypeTaskDataUpdated)
+	if len(updates) != 1 {
+		t.Fatalf("expected one task_data_updated event for retry decision, got %d", len(updates))
+	}
+	if updates[0].Metadata["decision"] != "retry" {
+		t.Fatalf("expected decision=retry on retry update, got %#v", updates[0].Metadata)
+	}
+	if updates[0].Metadata["reason"] != "review rejected: add retry evidence to pass" {
+		t.Fatalf("expected resolved retry reason, got %#v", updates[0].Metadata)
+	}
+}
+
+func TestLoopEmitsDecisionMetadataForReviewFailure(t *testing.T) {
+	mgr := newFakeTaskManager(contracts.Task{ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen})
+	run := &fakeRunner{results: []contracts.RunnerResult{
+		{Status: contracts.RunnerResultCompleted},
+		{
+			Status:      contracts.RunnerResultCompleted,
+			ReviewReady: false,
+			Artifacts: map[string]string{
+				"review_verdict":       "fail",
+				"review_fail_feedback": "first reviewer blocker",
+			},
+		},
+		{Status: contracts.RunnerResultCompleted},
+		{
+			Status:      contracts.RunnerResultCompleted,
+			ReviewReady: false,
+			Artifacts: map[string]string{
+				"review_verdict":       "fail",
+				"review_fail_feedback": "second reviewer blocker",
+			},
+		},
+	}}
+	sink := &recordingSink{}
+	loop := NewLoop(mgr, run, sink, LoopOptions{ParentID: "root", MaxRetries: 1, RequireReview: true})
+
+	_, err := loop.Run(context.Background())
+	if err != nil {
+		t.Fatalf("loop failed: %v", err)
+	}
+
+	updates := eventsByType(sink.events, contracts.EventTypeTaskDataUpdated)
+	if len(updates) < 1 {
+		t.Fatalf("expected at least one task_data_updated event on final failure, got %d", len(updates))
+	}
+	finalFailure := updates[len(updates)-1]
+	if finalFailure.Metadata["decision"] != "failed" {
+		t.Fatalf("expected decision=failed on final failure, got %#v", finalFailure.Metadata)
+	}
+	if finalFailure.Metadata["triage_status"] != "failed" {
+		t.Fatalf("expected triage_status=failed on final failure, got %#v", finalFailure.Metadata)
+	}
+
+	finished := eventsByType(sink.events, contracts.EventTypeTaskFinished)
+	if len(finished) != 1 {
+		t.Fatalf("expected one task_finished event, got %d", len(finished))
+	}
+	if finished[0].Metadata["decision"] != "failed" {
+		t.Fatalf("expected task_finished decision=failed, got %#v", finished[0].Metadata)
+	}
+	if finished[0].Metadata["reason"] != "review rejected: second reviewer blocker" {
+		t.Fatalf("expected resolved failure reason, got %#v", finished[0].Metadata)
+	}
+}
+
 func TestLoopHonorsConcurrencyLimit(t *testing.T) {
 	mgr := newFakeTaskManager(
 		contracts.Task{ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen},
@@ -1765,6 +1854,101 @@ func TestLoopMarksLandingQueueBlockedOnMergeFailure(t *testing.T) {
 	}
 	if hasEventType(sink.events, contracts.EventTypeMergeLanded) {
 		t.Fatalf("did not expect merge_landed event on blocked landing")
+	}
+}
+
+func TestLoopEmitsDecisionMetadataForLandingRetryAndBlocked(t *testing.T) {
+	mgr := newFakeTaskManager(contracts.Task{ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen})
+	run := &fakeRunner{results: []contracts.RunnerResult{{Status: contracts.RunnerResultCompleted}, {Status: contracts.RunnerResultCompleted, ReviewReady: true}}}
+	vcs := &fakeVCS{mergeErrs: []error{errors.New("landing failure first"), errors.New("landing failure second")}}
+	sink := &recordingSink{}
+	loop := NewLoop(mgr, run, sink, LoopOptions{ParentID: "root", VCS: vcs, MergeOnSuccess: true, RequireReview: true})
+
+	summary, err := loop.Run(context.Background())
+	if err != nil {
+		t.Fatalf("expected merge conflict to block task without failing loop, got %v", err)
+	}
+	if summary.Blocked != 1 {
+		t.Fatalf("expected blocked summary count, got %#v", summary)
+	}
+
+	mergeRetry, ok := findEventByType(sink.events, contracts.EventTypeMergeRetry)
+	if !ok {
+		t.Fatalf("expected merge_retry event")
+	}
+	if mergeRetry.Metadata["decision"] != "retry" {
+		t.Fatalf("expected decision=retry on merge_retry event, got %#v", mergeRetry.Metadata)
+	}
+	if !strings.Contains(mergeRetry.Metadata["reason"], "landing failure first") {
+		t.Fatalf("expected retry reason on merge_retry event, got %#v", mergeRetry.Metadata)
+	}
+
+	mergeBlocked, ok := findEventByType(sink.events, contracts.EventTypeMergeBlocked)
+	if !ok {
+		t.Fatalf("expected merge_blocked event")
+	}
+	if mergeBlocked.Metadata["decision"] != "blocked" {
+		t.Fatalf("expected decision=blocked on merge_blocked event, got %#v", mergeBlocked.Metadata)
+	}
+	if !strings.Contains(mergeBlocked.Metadata["reason"], "landing failure second") {
+		t.Fatalf("expected blocked reason on merge_blocked event, got %#v", mergeBlocked.Metadata)
+	}
+
+	updates := eventsByType(sink.events, contracts.EventTypeTaskDataUpdated)
+	if len(updates) == 0 {
+		t.Fatalf("expected task_data_updated events for landing")
+	}
+	foundBlocked := false
+	for _, update := range updates {
+		if update.Metadata["triage_status"] != "blocked" {
+			continue
+		}
+		foundBlocked = true
+		if update.Metadata["decision"] != "blocked" {
+			t.Fatalf("expected decision=blocked on blocked task_data_updated event, got %#v", update.Metadata)
+		}
+		if !strings.Contains(update.Metadata["reason"], "landing failure second") {
+			t.Fatalf("expected blocked task reason in task_data_updated, got %#v", update.Metadata)
+		}
+	}
+	if !foundBlocked {
+		t.Fatalf("expected blocked task_data_updated event with triage_status=blocked, got %#v", updates)
+	}
+}
+
+func TestLoopEmitsDecisionMetadataForLandingLanded(t *testing.T) {
+	mgr := newFakeTaskManager(contracts.Task{ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen})
+	run := &fakeRunner{results: []contracts.RunnerResult{{Status: contracts.RunnerResultCompleted}, {Status: contracts.RunnerResultCompleted, ReviewReady: true}}}
+	vcs := &fakeVCS{commitSHA: "deadbeef"}
+	sink := &recordingSink{}
+	loop := NewLoop(mgr, run, sink, LoopOptions{ParentID: "root", VCS: vcs, MergeOnSuccess: true, RequireReview: true})
+
+	_, err := loop.Run(context.Background())
+	if err != nil {
+		t.Fatalf("loop failed: %v", err)
+	}
+
+	mergeLanded, ok := findEventByType(sink.events, contracts.EventTypeMergeLanded)
+	if !ok {
+		t.Fatalf("expected merge_landed event")
+	}
+	if mergeLanded.Metadata["decision"] != "landed" {
+		t.Fatalf("expected decision=landed on merge_landed event, got %#v", mergeLanded.Metadata)
+	}
+
+	updates := eventsByType(sink.events, contracts.EventTypeTaskDataUpdated)
+	foundLanded := false
+	for _, update := range updates {
+		if update.Metadata["landing_status"] != "landed" {
+			continue
+		}
+		foundLanded = true
+		if update.Metadata["decision"] != "landed" {
+			t.Fatalf("expected landing_status landed update to include decision=landed, got %#v", update.Metadata)
+		}
+	}
+	if !foundLanded {
+		t.Fatalf("expected landing_status=landed task_data_updated event, got %#v", updates)
 	}
 }
 
