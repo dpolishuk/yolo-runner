@@ -3,6 +3,7 @@
 package main
 
 import (
+	"encoding/json"
 	"bytes"
 	"os"
 	"path/filepath"
@@ -62,15 +63,20 @@ func TestHeadlessModeShowsHighLevelLabels(t *testing.T) {
 	}
 
 	logStr := string(logContent)
-	// Verify log contains command, stdout, stderr sections
-	if !strings.Contains(logStr, "Command:") {
-		t.Fatalf("log should contain 'Command:' section")
+	// Verify log contains a valid structured entry with command and streams
+	line := strings.TrimSpace(logStr)
+	entry := map[string]interface{}{}
+	if err := json.Unmarshal([]byte(line), &entry); err != nil {
+		t.Fatalf("log should contain valid JSON: %v", err)
 	}
-	if !strings.Contains(logStr, "=== STDOUT ===") {
-		t.Fatalf("log should contain '=== STDOUT ===' section")
+	if _, ok := entry["command"]; !ok {
+		t.Fatalf("log should contain command field: %s", logStr)
 	}
-	if !strings.Contains(logStr, "=== STDERR ===") {
-		t.Fatalf("log should contain '=== STDERR ===' section")
+	if _, ok := entry["stdout"]; !ok {
+		t.Fatalf("log should contain stdout field: %s", logStr)
+	}
+	if _, ok := entry["stderr"]; !ok {
+		t.Fatalf("log should contain stderr field: %s", logStr)
 	}
 }
 
@@ -212,14 +218,23 @@ func TestBDCommandsAreRoutedToLogFiles(t *testing.T) {
 		t.Fatalf("failed to read log file: %v", err)
 	}
 
-	logStr := string(logContent)
-	if !strings.Contains(logStr, "bd ready") {
-		t.Fatalf("log file should contain bd command, got: %s", logStr)
+	logStr := strings.TrimSpace(string(logContent))
+	lines := strings.Split(logStr, "\n")
+	if len(lines) == 0 {
+		t.Fatalf("expected non-empty log content")
 	}
-	if !strings.Contains(logStr, "=== STDOUT ===") {
-		t.Fatalf("log should contain '=== STDOUT ===' section")
+	line := lines[len(lines)-1]
+	entry := map[string]interface{}{}
+	if err := json.Unmarshal([]byte(line), &entry); err != nil {
+		t.Fatalf("log should contain valid JSON: %v", err)
 	}
-	if !strings.Contains(logStr, "=== STDERR ===") {
-		t.Fatalf("log should contain '=== STDERR ===' section")
+	command, _ := entry["command"].(string)
+	if !strings.Contains(command, "bd ") {
+		t.Fatalf("log should contain bd command, got: %s", logStr)
 	}
-}
+	if _, ok := entry["stdout"]; !ok {
+		t.Fatalf("log should contain stdout field: %s", logStr)
+	}
+	if _, ok := entry["stderr"]; !ok {
+		t.Fatalf("log should contain stderr field: %s", logStr)
+	}
