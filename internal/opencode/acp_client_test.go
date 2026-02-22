@@ -29,9 +29,13 @@ func TestACPHandlerAutoApprovesPermission(t *testing.T) {
 func TestACPClientCancelsQuestionPermission(t *testing.T) {
 	var gotKind string
 	var gotOutcome string
-	handler := NewACPHandler("issue-1", "log", func(_ string, _ string, kind string, outcome string, _ string) error {
+	var gotReason string
+	var gotContext string
+	handler := NewACPHandler("issue-1", "log", func(_ string, _ string, kind string, outcome string, reason string, context string, _ string) error {
 		gotKind = kind
 		gotOutcome = outcome
+		gotReason = reason
+		gotContext = context
 		return nil
 	})
 	client := &acpClient{handler: handler}
@@ -60,6 +64,12 @@ func TestACPClientCancelsQuestionPermission(t *testing.T) {
 	}
 	if gotOutcome != "decide yourself" {
 		t.Fatalf("expected question outcome, got %q", gotOutcome)
+	}
+	if gotReason != "retry" {
+		t.Fatalf("expected retry reason, got %q", gotReason)
+	}
+	if gotContext != "Need input" {
+		t.Fatalf("expected question context, got %q", gotContext)
 	}
 
 	expected := acp.NewRequestPermissionOutcomeCancelled()
@@ -217,7 +227,13 @@ func TestACPClientSessionUpdateCallback(t *testing.T) {
 }
 
 func TestACPClientSelectsAllowOption(t *testing.T) {
-	handler := NewACPHandler("issue-1", "log", nil)
+	var gotReason string
+	var gotContext string
+	handler := NewACPHandler("issue-1", "log", func(_ string, _ string, _ string, _ string, reason string, context string, _ string) error {
+		gotReason = reason
+		gotContext = context
+		return nil
+	})
 	client := &acpClient{handler: handler}
 
 	response, err := client.RequestPermission(context.Background(), &acp.RequestPermissionRequest{
@@ -246,6 +262,12 @@ func TestACPClientSelectsAllowOption(t *testing.T) {
 	selected := response.Outcome.GetSelected()
 	if selected == nil || selected.OptionId != "allow" {
 		t.Fatalf("expected allow option selected, got %#v", response.Outcome)
+	}
+	if gotReason != "tool_use" {
+		t.Fatalf("expected tool_use reason, got %q", gotReason)
+	}
+	if gotContext != "Update file" {
+		t.Fatalf("expected tool context, got %q", gotContext)
 	}
 }
 
