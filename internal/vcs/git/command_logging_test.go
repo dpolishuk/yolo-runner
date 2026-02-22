@@ -158,7 +158,11 @@ func TestGitCommandsRouteOutputToLogFiles(t *testing.T) {
 
 			// Verify that log file is valid JSON and includes required fields
 			logContentStr := string(logContent)
-			line := strings.TrimSpace(logContentStr)
+			lines := strings.Split(strings.TrimSpace(logContentStr), "\n")
+			if len(lines) == 0 {
+				t.Fatal("expected non-empty log file")
+			}
+			line := lines[len(lines)-1]
 			if err := logging.ValidateStructuredLogLine([]byte(line)); err != nil {
 				t.Fatalf("invalid structured log line: %v", err)
 			}
