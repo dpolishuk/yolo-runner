@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/anomalyco/yolo-runner/internal/exec"
-	"github.com/anomalyco/yolo-runner/internal/logging"
+	"github.com/egv/yolo-runner/v2/internal/exec"
+	"github.com/egv/yolo-runner/v2/internal/logging"
 )
 
 func TestGitCommandsRouteOutputToLogFiles(t *testing.T) {
