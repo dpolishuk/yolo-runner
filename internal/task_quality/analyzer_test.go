@@ -71,6 +71,29 @@ func TestAssessTaskQuality_HighQualitySampleScoresAboveThresholdAndIsClean(t *te
 	}
 }
 
+func TestAssessTaskQuality_ScoreIsBoundedToHundred(t *testing.T) {
+	task := TaskInput{
+		Title:       "Implement deterministic task quality scoring in analyzer",
+		Description: "Add deterministic task-quality scoring that returns a bounded score from 0 to 100 for all tasks.",
+		AcceptanceCriteria: "- Given a task with complete fields, when the analyzer runs, then the score is between 0 and 100.\n" +
+			"- Given a task with missing fields, when the analyzer runs, then the score and issues indicate incompleteness.",
+		Deliverables: `- Analyzer scoring implementation updates
+- Unit tests covering score bounds and issue collection`,
+		TestingPlan: `- go test ./internal/task_quality
+- go test ./internal/task_quality -run TestAssessTaskQuality`,
+		DefinitionOfDone: `- Analyzer returns bounded score and ordered issues.
+- All task quality tests pass.`,
+		DependenciesContext: `- Context: Internal task quality rubric.
+- Risks: false positives due heuristic matching.
+- Non-goals: task execution changes outside analyzer behavior.`,
+	}
+
+	result := AssessTaskQuality(task)
+	if result.Score < 0 || result.Score > 100 {
+		t.Fatalf("expected score to be bounded within 0..100, got %d", result.Score)
+	}
+}
+
 func joinIssues(issues []string) string {
 	return strings.Join(issues, "\n")
 }

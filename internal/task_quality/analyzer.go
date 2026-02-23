@@ -20,7 +20,7 @@ type Assessment struct {
 }
 
 func AssessTaskQuality(task TaskInput) Assessment {
-	var issues []string
+	issues := []string{}
 	score := 0
 
 	score += requiredFieldScore(task, &issues)
@@ -28,11 +28,22 @@ func AssessTaskQuality(task TaskInput) Assessment {
 	score += acceptanceCoverageScore(task, &issues)
 	score += validationRigorScore(task, &issues)
 	score += nonGoalRiskScore(task, &issues)
+	score = clampScore(score)
 
 	return Assessment{
 		Score:  score,
 		Issues: issues,
 	}
+}
+
+func clampScore(score int) int {
+	if score < 0 {
+		return 0
+	}
+	if score > 100 {
+		return 100
+	}
+	return score
 }
 
 func requiredFieldScore(task TaskInput, issues *[]string) int {
