@@ -261,6 +261,45 @@ func TestFullscreenModelStaysOpenAfterStreamDoneUntilQuitKey(t *testing.T) {
 	_ = updated
 }
 
+func TestFullscreenModelSupportsAdditionalQuitShortcuts(t *testing.T) {
+	stream := make(chan streamMsg)
+	close(stream)
+	m := newFullscreenModel(stream, demoEvents(time.Now().UTC()), true)
+	m.detailsCollapsed = false
+	m.activityCollapsed = false
+	m.historyCollapsed = false
+
+	for _, tc := range []struct {
+		name string
+		msg  tea.KeyMsg
+	}{
+		{name: "q", msg: tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}}},
+		{name: "Q", msg: tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'Q'}}},
+		{name: "ctrl+q", msg: tea.KeyMsg{Type: tea.KeyCtrlQ}},
+		{name: "esc", msg: tea.KeyMsg{Type: tea.KeyEsc}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			updated, cmd := m.Update(tc.msg)
+			if cmd == nil {
+				t.Fatalf("expected quit command for %s", tc.name)
+			}
+			if _, ok := cmd().(tea.QuitMsg); !ok {
+				t.Fatalf("expected tea.QuitMsg for %s, got %T", tc.name, cmd())
+			}
+			next := updated.(fullscreenModel)
+			if next.detailsCollapsed != false {
+				t.Fatalf("expected detailsCollapsed false after %s", tc.name)
+			}
+			if next.activityCollapsed != false {
+				t.Fatalf("expected activityCollapsed false after %s", tc.name)
+			}
+			if next.historyCollapsed != false {
+				t.Fatalf("expected historyCollapsed false after %s", tc.name)
+			}
+		})
+	}
+}
+
 func TestStylePanelLinesUsesDepthWithoutMarkers(t *testing.T) {
 	lines := []monitor.UIPanelLine{
 		{ID: "run", Depth: 0, Label: "Run", Selected: false, Expanded: true, Leaf: false},
