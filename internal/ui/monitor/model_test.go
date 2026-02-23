@@ -377,6 +377,46 @@ func TestModelBuildsStructuredUIStateWithWorkerActivity(t *testing.T) {
 	}
 }
 
+func TestModelCountsDoneTasksAsCompleted(t *testing.T) {
+	now := time.Date(2026, 2, 10, 12, 14, 0, 0, time.UTC)
+	model := NewModel(func() time.Time { return now })
+
+	model.Apply(contracts.Event{
+		Type:      contracts.EventTypeTaskStarted,
+		TaskID:    "task-1",
+		TaskTitle: "First",
+		WorkerID:  "worker-0",
+		QueuePos:  1,
+		Timestamp: now.Add(-8 * time.Second),
+	})
+	model.Apply(contracts.Event{
+		Type:      contracts.EventTypeTaskFinished,
+		TaskID:    "task-1",
+		TaskTitle: "First",
+		Message:   "done",
+		Timestamp: now.Add(-6 * time.Second),
+	})
+	model.Apply(contracts.Event{
+		Type:      contracts.EventTypeTaskStarted,
+		TaskID:    "task-2",
+		TaskTitle: "Second",
+		WorkerID:  "worker-1",
+		QueuePos:  2,
+		Timestamp: now.Add(-4 * time.Second),
+	})
+
+	metrics := model.UIState().StatusMetrics
+	if metrics.completed != 1 {
+		t.Fatalf("expected completed=1, got %d", metrics.completed)
+	}
+	if metrics.total != 2 {
+		t.Fatalf("expected total=2, got %d", metrics.total)
+	}
+	if metrics.inProgress != 1 {
+		t.Fatalf("expected in_progress=1, got %d", metrics.inProgress)
+	}
+}
+
 func assertContains(t *testing.T, text string, expected string) {
 	t.Helper()
 	if !contains(text, expected) {
