@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
 	"strings"
 	"testing"
 	"time"
@@ -28,6 +29,11 @@ var _ runner.OpenCodeContextRunner = openCodeAdapter{}
 
 func (f *fakeRunner) Run(args ...string) (string, error) {
 	f.calls = append(f.calls, strings.Join(args, " "))
+	if len(args) >= 2 && args[0] == "bd" {
+		if args[1] == "ready" || args[1] == "list" || args[1] == "show" {
+			return "[]", nil
+		}
+	}
 	return "", nil
 }
 
@@ -248,6 +254,7 @@ func TestRunOnceMainInfersRoadmapRootWhenMissing(t *testing.T) {
 	tempDir := t.TempDir()
 	writeIssuesFile(t, tempDir, `{"id":"roadmap-1","title":"Roadmap","issue_type":"epic","status":"open"}`)
 	writeAgentFile(t, tempDir, "---\npermission: allow\n---\n")
+	t.Setenv("YOLO_RUNNER_TASK_TRACKER", "beads")
 	runOnce := &fakeRunOnce{result: "no_tasks"}
 	exit := &fakeExit{}
 	out := &bytes.Buffer{}
@@ -271,6 +278,7 @@ func TestRunOnceMainInfersRoadmapRootWhenInProgress(t *testing.T) {
 	tempDir := t.TempDir()
 	writeIssuesFile(t, tempDir, `{"id":"roadmap-2","title":"Roadmap","issue_type":"epic","status":"in_progress"}`)
 	writeAgentFile(t, tempDir, "---\npermission: allow\n---\n")
+	t.Setenv("YOLO_RUNNER_TASK_TRACKER", "beads")
 	runOnce := &fakeRunOnce{result: "no_tasks"}
 	exit := &fakeExit{}
 	out := &bytes.Buffer{}
@@ -294,6 +302,7 @@ func TestRunOnceMainMissingRootRequiresExplicitFlag(t *testing.T) {
 	tempDir := t.TempDir()
 	writeIssuesFile(t, tempDir, `{"id":"epic-1","title":"Other","issue_type":"epic","status":"open"}`)
 	writeAgentFile(t, tempDir, "---\npermission: allow\n---\n")
+	t.Setenv("YOLO_RUNNER_TASK_TRACKER", "beads")
 	runOnce := &fakeRunOnce{result: "no_tasks"}
 	exit := &fakeExit{}
 	stdout := &bytes.Buffer{}
@@ -351,6 +360,34 @@ func (f *fakeTUIProgram) SendInput(msg tea.Msg) {
 
 func (f *fakeTUIProgram) Quit() {
 	close(f.quit)
+}
+
+type fakeRunnerModeUIWriter struct {
+	mu     sync.Mutex
+	buffer bytes.Buffer
+	closed bool
+}
+
+func (w *fakeRunnerModeUIWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.closed {
+		return 0, io.EOF
+	}
+	return w.buffer.Write(p)
+}
+
+func (w *fakeRunnerModeUIWriter) Close() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.closed = true
+	return nil
+}
+
+func (w *fakeRunnerModeUIWriter) String() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.buffer.String()
 }
 
 func waitForSignal(t *testing.T, signal chan struct{}, label string) {
@@ -446,6 +483,150 @@ func TestRunOnceMainUsesTUIOnTTYByDefault(t *testing.T) {
 	}
 }
 
+func TestRunOnceMainUsesExternalUIDispatcherWhenModeUI(t *testing.T) {
+	tempDir := t.TempDir()
+	writeAgentFile(t, tempDir, "---\npermission: allow\n---\n")
+	fakeWriter := &fakeRunnerModeUIWriter{}
+	var launched bool
+	prevModeUI := launchYoloTUI
+	prevIsTerminal := isTerminal
+	isTerminal = func(io.Writer) bool { return true }
+	launchYoloTUI = func() (io.WriteCloser, func() error, error) {
+		launched = true
+		return fakeWriter, func() error { return nil }, nil
+	}
+	t.Cleanup(func() {
+		launchYoloTUI = prevModeUI
+		isTerminal = prevIsTerminal
+	})
+
+	runOnce := func(opts runner.RunOnceOptions, deps runner.RunOnceDeps) (string, error) {
+		fmt.Fprint(opts.Out, "runner output\n")
+		deps.Events.Emit(runner.Event{Type: runner.EventSelectTask, IssueID: "task-1", Title: "Example"})
+		return "no_tasks", nil
+	}
+	out := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+
+	code := RunOnceMain([]string{"--repo", tempDir, "--root", "root", "--mode", "ui"}, runOnce, nil, out, stderr, &fakeRunner{}, &fakeGitRunner{})
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d", code)
+	}
+	if !launched {
+		t.Fatalf("expected yolo-tui launch to be triggered")
+	}
+	outStr := out.String()
+	if outStr != "" && outStr != "\x1b[?25h" {
+		t.Fatalf("expected runner output to be sent through UI mode writer only, got %q", outStr)
+	}
+	if payload := fakeWriter.String(); payload == "" {
+		t.Fatalf("expected output to be written to ui writer")
+	} else if !strings.Contains(payload, "\"type\":\"runner_output\"") {
+		t.Fatalf("expected NDJSON event payload, got %q", payload)
+	}
+}
+
+func TestRunOnceMainUsesUIModeFromConfig(t *testing.T) {
+	tempDir := t.TempDir()
+	writeAgentFile(t, tempDir, "---\npermission: allow\n---\n")
+	configDir := filepath.Join(tempDir, ".yolo-runner")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatalf("mkdir .yolo-runner: %v", err)
+	}
+	configPath := filepath.Join(configDir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte("agent:\n  mode: ui\n"), 0o644); err != nil {
+		t.Fatalf("write config file: %v", err)
+	}
+
+	fakeWriter := &fakeRunnerModeUIWriter{}
+	var launched bool
+	prevModeUI := launchYoloTUI
+	prevIsTerminal := isTerminal
+	prevNewTUIProgram := newTUIProgram
+	isTerminal = func(io.Writer) bool { return true }
+	newTUIProgram = func(model tea.Model, stdout io.Writer, input io.Reader) tuiProgram {
+		t.Fatalf("did not expect in-process TUI when mode ui")
+		return nil
+	}
+	launchYoloTUI = func() (io.WriteCloser, func() error, error) {
+		launched = true
+		return fakeWriter, func() error { return nil }, nil
+	}
+	t.Cleanup(func() {
+		launchYoloTUI = prevModeUI
+		isTerminal = prevIsTerminal
+		newTUIProgram = prevNewTUIProgram
+	})
+
+	runOnce := func(opts runner.RunOnceOptions, deps runner.RunOnceDeps) (string, error) {
+		fmt.Fprint(opts.Out, "runner output\n")
+		return "no_tasks", nil
+	}
+
+	code := RunOnceMain([]string{"--repo", tempDir, "--root", "root"}, runOnce, nil, &bytes.Buffer{}, &bytes.Buffer{}, &fakeRunner{}, &fakeGitRunner{})
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d", code)
+	}
+	if !launched {
+		t.Fatalf("expected yolo-tui launch from config mode")
+	}
+}
+
+func TestRunOnceMainModeHeadlessDisablesTUI(t *testing.T) {
+	tempDir := t.TempDir()
+	writeAgentFile(t, tempDir, "---\npermission: allow\n---\n")
+	var called bool
+	prevIsTerminal := isTerminal
+	prevNewTUIProgram := newTUIProgram
+	isTerminal = func(io.Writer) bool { return true }
+	newTUIProgram = func(model tea.Model, stdout io.Writer, input io.Reader) tuiProgram {
+		called = true
+		return newFakeTUIProgram()
+	}
+	t.Cleanup(func() {
+		isTerminal = prevIsTerminal
+		newTUIProgram = prevNewTUIProgram
+	})
+
+	runOnce := &fakeRunOnce{result: "no_tasks"}
+	RunOnceMain([]string{"--repo", tempDir, "--root", "root", "--mode", "headless"}, runOnce.Run, nil, &bytes.Buffer{}, &bytes.Buffer{}, &fakeRunner{}, &fakeGitRunner{})
+
+	if called {
+		t.Fatalf("expected in-process TUI program not to start when mode is headless")
+	}
+	if runOnce.deps.Events != nil {
+		t.Fatalf("expected no events emitter in mode headless")
+	}
+}
+
+func TestRunOnceMainConfigInvalidModeFails(t *testing.T) {
+	tempDir := t.TempDir()
+	writeAgentFile(t, tempDir, "---\npermission: allow\n---\n")
+	configDir := filepath.Join(tempDir, ".yolo-runner")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatalf("mkdir .yolo-runner: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "config.yaml"), []byte("agent:\n  mode: invalid\n"), 0o644); err != nil {
+		t.Fatalf("write config file: %v", err)
+	}
+
+	runOnce := &fakeRunOnce{}
+	stderr := &bytes.Buffer{}
+
+	code := RunOnceMain([]string{"--repo", tempDir, "--root", "root"}, runOnce.Run, nil, &bytes.Buffer{}, stderr, &fakeRunner{}, &fakeGitRunner{})
+
+	if code != 1 {
+		t.Fatalf("expected exit code 1, got %d", code)
+	}
+	if runOnce.called {
+		t.Fatalf("expected run loop to be skipped when mode config is invalid")
+	}
+	if !strings.Contains(stderr.String(), "agent.mode") {
+		t.Fatalf("expected invalid mode error, got %q", stderr.String())
+	}
+}
+
 func TestRunOnceMainTuiRoutesOutputToProgram(t *testing.T) {
 	fakeProgram := newFakeTUIProgram()
 	prevIsTerminal := isTerminal
@@ -461,8 +642,7 @@ func TestRunOnceMainTuiRoutesOutputToProgram(t *testing.T) {
 	writeAgentFile(t, tempDir, "---\npermission: allow\n---\n")
 
 	// Set up mock beads environment for testing
-	os.Setenv("YOLO_RUNNER_TASK_TRACKER", "beads")
-	t.Cleanup(func() { os.Unsetenv("YOLO_RUNNER_TASK_TRACKER") })
+	t.Setenv("YOLO_RUNNER_TASK_TRACKER", "beads")
 
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
@@ -472,7 +652,7 @@ func TestRunOnceMainTuiRoutesOutputToProgram(t *testing.T) {
 		return "no_tasks", nil
 	}
 
-	code := RunOnceMain([]string{"--repo", tempDir, "--root", "root"}, runOnce, nil, stdout, stderr, nil, nil)
+	code := RunOnceMain([]string{"--repo", tempDir, "--root", "root"}, runOnce, nil, stdout, stderr, &fakeRunner{}, &fakeGitRunner{})
 	if code != 0 {
 		t.Fatalf("expected exit code 0, got %d", code)
 	}
@@ -510,8 +690,7 @@ func TestRunOnceMainWiresStopCleanupHooks(t *testing.T) {
 	writeAgentFile(t, tempDir, "---\npermission: allow\n---\n")
 
 	// Set up mock beads environment for testing
-	os.Setenv("YOLO_RUNNER_TASK_TRACKER", "beads")
-	t.Cleanup(func() { os.Unsetenv("YOLO_RUNNER_TASK_TRACKER") })
+	t.Setenv("YOLO_RUNNER_TASK_TRACKER", "beads")
 
 	runOnce := &fakeRunOnce{result: "no_tasks"}
 	exit := &fakeExit{}
@@ -631,8 +810,7 @@ func TestRunOnceMainRunModePassesAfterInit(t *testing.T) {
 	writeRootYoloFile(t, tempDir, "---\npermission: allow\n---\n")
 
 	// Set up mock beads environment for testing
-	os.Setenv("YOLO_RUNNER_TASK_TRACKER", "beads")
-	t.Cleanup(func() { os.Unsetenv("YOLO_RUNNER_TASK_TRACKER") })
+	t.Setenv("YOLO_RUNNER_TASK_TRACKER", "beads")
 
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
@@ -644,7 +822,7 @@ func TestRunOnceMainRunModePassesAfterInit(t *testing.T) {
 	}
 
 	runOnce := &fakeRunOnce{result: "no_tasks"}
-	code = RunOnceMain([]string{"--repo", tempDir, "--root", "root"}, runOnce.Run, exit.Exit, stdout, stderr, nil, nil)
+	code = RunOnceMain([]string{"--repo", tempDir, "--root", "root"}, runOnce.Run, exit.Exit, stdout, stderr, &fakeRunner{}, &fakeGitRunner{})
 
 	if code != 0 {
 		t.Fatalf("expected run mode exit code 0, got %d", code)
