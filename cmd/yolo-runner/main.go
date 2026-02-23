@@ -12,8 +12,11 @@ import (
 	osexec "os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/anomalyco/yolo-runner/internal/beads"
+	"github.com/anomalyco/yolo-runner/internal/contracts"
 	"github.com/anomalyco/yolo-runner/internal/exec"
 	"github.com/anomalyco/yolo-runner/internal/logging"
 	"github.com/anomalyco/yolo-runner/internal/opencode"
@@ -22,6 +25,7 @@ import (
 	"github.com/anomalyco/yolo-runner/internal/tk"
 	"github.com/anomalyco/yolo-runner/internal/ui/tui"
 	gitadapter "github.com/anomalyco/yolo-runner/internal/vcs/git"
+	"gopkg.in/yaml.v3"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"golang.org/x/term"
@@ -54,6 +58,10 @@ type tuiEmitter struct {
 	program tuiProgram
 }
 
+type runnerUIDispatcher struct {
+	writer *runnerUIEventWriter
+}
+
 func (t tuiEmitter) Emit(event runner.Event) {
 	if t.program == nil {
 		return
@@ -61,9 +69,36 @@ func (t tuiEmitter) Emit(event runner.Event) {
 	go t.program.Send(event)
 }
 
+func (d runnerUIDispatcher) Emit(event runner.Event) {
+	if d.writer == nil {
+		return
+	}
+	d.writer.Emit(event)
+}
+
 type bubbleTUIProgram struct {
 	program *tea.Program
 }
+
+type runnerUIEventWriter struct {
+	mu     sync.Mutex
+	writer io.WriteCloser
+	buffer strings.Builder
+}
+
+type runnerConfig struct {
+	Agent runnerConfigAgent `yaml:"agent"`
+}
+
+type runnerConfigAgent struct {
+	Mode string `yaml:"mode"`
+}
+
+const (
+	runnerModeUI      = "ui"
+	runnerModeHeadless = "headless"
+	runnerConfigPath   = ".yolo-runner/config.yaml"
+)
 
 func (b bubbleTUIProgram) Start() error {
 	if b.program == nil {
@@ -91,6 +126,24 @@ func (b bubbleTUIProgram) Quit() {
 		return
 	}
 	b.program.Quit()
+}
+
+var launchYoloTUI = func() (io.WriteCloser, func() error, error) {
+	cmd := osexec.Command("yolo-tui", "--events-stdin")
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return nil, nil, err
+	}
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Start(); err != nil {
+		_ = stdin.Close()
+		return nil, nil, err
+	}
+	return stdin, func() error {
+		_ = stdin.Close()
+		return cmd.Wait()
+	}, nil
 }
 
 var isTerminal = func(writer io.Writer) bool {
@@ -123,6 +176,160 @@ func (a adapterRunner) Run(args ...string) (string, error) {
 		return runCommand(args...)
 	}
 	return a.runner.Run(args...)
+}
+
+func normalizeRunnerMode(raw string, field string) (string, error) {
+	value := strings.ToLower(strings.TrimSpace(raw))
+	if value == "" {
+		return "", nil
+	}
+	switch value {
+	case runnerModeUI, runnerModeHeadless:
+		return value, nil
+	}
+	return "", fmt.Errorf("%s in %s must be one of: %s, %s", field, runnerConfigPath, runnerModeUI, runnerModeHeadless)
+}
+
+func resolveRunnerMode(repoRoot string, modeFlag string, headlessFlag bool) (string, error) {
+	mode, err := normalizeRunnerMode(modeFlag, "mode")
+	if err != nil {
+		return "", err
+	}
+	if mode != "" {
+		return mode, nil
+	}
+	if headlessFlag {
+		return runnerModeHeadless, nil
+	}
+
+	configMode, err := resolveRunnerModeFromConfig(repoRoot)
+	if err != nil {
+		return "", err
+	}
+	return configMode, nil
+}
+
+func resolveRunnerModeFromConfig(repoRoot string) (string, error) {
+	configPath := filepath.Join(repoRoot, runnerConfigPath)
+	content, err := os.ReadFile(configPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", fmt.Errorf("cannot read config file at %s: %w", runnerConfigPath, err)
+	}
+
+	var config runnerConfig
+	decoder := yaml.NewDecoder(strings.NewReader(string(content)))
+	if err := decoder.Decode(&config); err != nil {
+		return "", fmt.Errorf("cannot parse config file at %s: %w", runnerConfigPath, err)
+	}
+	return normalizeRunnerMode(config.Agent.Mode, "agent.mode")
+}
+
+func (w *runnerUIEventWriter) Emit(event runner.Event) {
+	if w == nil {
+		return
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	message := strings.TrimSpace(event.RunnerEventMessage())
+	if message == "" {
+		message = strings.TrimSpace(event.RunnerEventThought())
+	}
+	if title := strings.TrimSpace(event.RunnerEventTitle()); title != "" {
+		if message == "" {
+			message = title
+		} else {
+			message = title + " " + message
+		}
+	}
+	if eventType := event.RunnerEventType(); eventType != "" {
+		if message == "" {
+			message = eventType
+		} else {
+			message = eventType + ": " + message
+		}
+	}
+	if phase := strings.TrimSpace(event.Phase); phase != "" {
+		if message == "" {
+			message = phase
+		} else {
+			message = message + " (" + phase + ")"
+		}
+	}
+	w.emitLine(message)
+}
+
+func newRunnerUIEventWriter(w io.WriteCloser) *runnerUIEventWriter {
+	return &runnerUIEventWriter{writer: w}
+}
+
+func (w *runnerUIEventWriter) Write(p []byte) (int, error) {
+	if w == nil {
+		return len(p), nil
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.buffer.Write(p)
+	buffered := normalizeLineBreaks(w.buffer.String())
+	lines := strings.Split(buffered, "\n")
+	for i := 0; i < len(lines)-1; i++ {
+		w.emitLine(strings.TrimRight(lines[i], "\r"))
+	}
+	remaining := lines[len(lines)-1]
+	w.buffer.Reset()
+	if remaining != "" {
+		w.buffer.WriteString(remaining)
+	}
+	return len(p), nil
+}
+
+func (w *runnerUIEventWriter) Flush() {
+	if w == nil {
+		return
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	remaining := normalizeLineBreaks(w.buffer.String())
+	w.buffer.Reset()
+	if remaining == "" {
+		return
+	}
+	lines := strings.Split(remaining, "\n")
+	for i, line := range lines {
+		if i == len(lines)-1 && line == "" {
+			continue
+		}
+		w.emitLine(strings.TrimRight(line, "\r"))
+	}
+}
+
+func (w *runnerUIEventWriter) Close() error {
+	if w == nil {
+		return nil
+	}
+	w.Flush()
+	if w.writer == nil {
+		return nil
+	}
+	return w.writer.Close()
+}
+
+func (w *runnerUIEventWriter) emitLine(line string) {
+	if w == nil || strings.TrimSpace(line) == "" {
+		return
+	}
+	if w.writer == nil {
+		return
+	}
+	event := contracts.Event{Type: contracts.EventTypeRunnerOutput, Message: line, Timestamp: time.Now().UTC()}
+	payload, err := contracts.MarshalEventJSONL(event)
+	if err != nil {
+		return
+	}
+	_, _ = w.writer.Write([]byte(payload))
 }
 
 type adapterGitRunner struct {
@@ -176,6 +383,7 @@ func RunOnceMain(args []string, runOnce runOnceFunc, exit exitFunc, stdout io.Wr
 	model := fs.String("model", "", "OpenCode model")
 	dryRun := fs.Bool("dry-run", false, "Print task and prompt without executing")
 	headless := fs.Bool("headless", false, "Force plain output without TUI")
+	mode := fs.String("mode", "", "Output mode for runner events (ui, headless)")
 	configRoot := fs.String("config-root", "", "OpenCode config root")
 	configDir := fs.String("config-dir", "", "OpenCode config dir")
 
@@ -189,6 +397,15 @@ func RunOnceMain(args []string, runOnce runOnceFunc, exit exitFunc, stdout io.Wr
 
 	if runOnce == nil {
 		runOnce = runner.RunOnce
+	}
+
+	resolvedMode, err := resolveRunnerMode(*repoRoot, *mode, *headless)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		if exit != nil {
+			exit(1)
+		}
+		return 1
 	}
 
 	if err := opencode.ValidateAgent(*repoRoot); err != nil {
@@ -299,8 +516,27 @@ func RunOnceMain(args []string, runOnce runOnceFunc, exit exitFunc, stdout io.Wr
 
 	var program tuiProgram
 	var tuiWriter *tuiLogWriter
+	var uiWriter *runnerUIEventWriter
+	var closeUIDispatcher func()
 	previousCommandOutput := commandOutput
-	if !*headless && isTerminal(stdout) {
+	if resolvedMode == runnerModeUI {
+		stdin, closeFn, err := launchYoloTUI()
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			if exit != nil {
+				exit(1)
+			}
+			return 1
+		}
+		uiWriter = newRunnerUIEventWriter(stdin)
+		deps.Events = runnerUIDispatcher{writer: uiWriter}
+		options.Out = uiWriter
+		commandOutput = uiWriter
+		closeUIDispatcher = func() {
+			_ = uiWriter.Close()
+			_ = closeFn()
+		}
+	} else if resolvedMode == "" && isTerminal(stdout) {
 		stopCh := make(chan struct{})
 		options.Stop = stopCh
 		program = newTUIProgram(tui.NewModelWithStop(nil, stopCh), stdout, os.Stdin)
@@ -322,13 +558,16 @@ func RunOnceMain(args []string, runOnce runOnceFunc, exit exitFunc, stdout io.Wr
 		if tuiWriter != nil {
 			tuiWriter.Flush()
 		}
+		if closeUIDispatcher != nil {
+			closeUIDispatcher()
+		}
 	}()
 	if isTerminal(stdout) {
 		defer fmt.Fprint(stdout, "\x1b[?25h")
 	}
 
 	// Loop until there are no tasks left. Blocked tasks are skipped.
-	_, err := runner.RunLoop(options, deps, 0, runOnce)
+	_, err = runner.RunLoop(options, deps, 0, runOnce)
 	if program != nil {
 		program.Quit()
 	}
