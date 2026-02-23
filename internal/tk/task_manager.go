@@ -143,6 +143,8 @@ func (m *TaskManager) GetTaskTree(_ context.Context, rootID string) (*contracts.
 
 	tasks := make(map[string]contracts.Task, len(taskIDs))
 	depsByTask := make(map[string][]string, len(taskIDs))
+	missingByTask := make(map[string][]string)
+	missingByID := make(map[string]struct{})
 	for _, taskID := range taskIDs {
 		raw := ticketsByID[taskID]
 		parentID := strings.TrimSpace(raw.Parent)
@@ -152,8 +154,14 @@ func (m *TaskManager) GetTaskTree(_ context.Context, rootID string) (*contracts.
 			parentID = rootID
 		}
 
-		deps := filterDependencies([]string(raw.Deps), inScope, taskID)
+		deps, missingDeps := filterDependencies([]string(raw.Deps), inScope, taskID)
 		depsByTask[taskID] = deps
+		if len(missingDeps) > 0 {
+			missingByTask[taskID] = missingDeps
+			for _, depID := range missingDeps {
+				missingByID[depID] = struct{}{}
+			}
+		}
 
 		task := contracts.Task{
 			ID:          taskID,
@@ -195,10 +203,18 @@ func (m *TaskManager) GetTaskTree(_ context.Context, rootID string) (*contracts.
 	}
 	sortTaskRelations(relations)
 
+	missingDependencyIDs := make([]string, 0, len(missingByID))
+	for depID := range missingByID {
+		missingDependencyIDs = append(missingDependencyIDs, depID)
+	}
+	sort.Strings(missingDependencyIDs)
+
 	return &contracts.TaskTree{
-		Root:      root,
-		Tasks:     tasks,
-		Relations: relations,
+		Root:                      root,
+		Tasks:                     tasks,
+		Relations:                 relations,
+		MissingDependencyIDs:      missingDependencyIDs,
+		MissingDependenciesByTask: missingByTask,
 	}, nil
 }
 
@@ -318,18 +334,25 @@ func sortedTaskIDs(ids map[string]struct{}) []string {
 	return result
 }
 
-func filterDependencies(deps []string, inScope map[string]struct{}, taskID string) []string {
+func filterDependencies(deps []string, inScope map[string]struct{}, taskID string) ([]string, []string) {
 	if len(deps) == 0 {
-		return nil
+		return nil, nil
 	}
 	seen := map[string]struct{}{}
+	missingSeen := map[string]struct{}{}
 	filtered := make([]string, 0, len(deps))
+	missingDeps := make([]string, 0, len(deps))
 	for _, depID := range deps {
 		depID = strings.TrimSpace(depID)
 		if depID == "" || depID == taskID {
 			continue
 		}
 		if _, ok := inScope[depID]; !ok {
+			if _, seen := missingSeen[depID]; seen {
+				continue
+			}
+			missingSeen[depID] = struct{}{}
+			missingDeps = append(missingDeps, depID)
 			continue
 		}
 		if _, ok := seen[depID]; ok {
@@ -339,7 +362,8 @@ func filterDependencies(deps []string, inScope map[string]struct{}, taskID strin
 		filtered = append(filtered, depID)
 	}
 	sort.Strings(filtered)
-	return filtered
+	sort.Strings(missingDeps)
+	return filtered, missingDeps
 }
 
 func fallbackTaskTitle(title string, fallback string) string {
