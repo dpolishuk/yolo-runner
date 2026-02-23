@@ -511,6 +511,32 @@ func TestLoopBlocksTaskBelowQualityThreshold(t *testing.T) {
 	}
 }
 
+func TestLoopBlocksTaskBelowCoverageThreshold(t *testing.T) {
+	mgr := newFakeTaskManager(contracts.Task{
+		ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen,
+		Metadata: map[string]string{"coverage": "45"},
+	})
+	run := &fakeRunner{results: []contracts.RunnerResult{{Status: contracts.RunnerResultCompleted}}}
+	loop := NewLoop(mgr, run, nil, LoopOptions{ParentID: "root", QualityGateThreshold: 50})
+
+	summary, err := loop.Run(context.Background())
+	if err != nil {
+		t.Fatalf("loop failed: %v", err)
+	}
+	if summary.Blocked != 1 {
+		t.Fatalf("expected blocked summary, got %#v", summary)
+	}
+	if mgr.statusByID["t-1"] != contracts.TaskStatusBlocked {
+		t.Fatalf("expected blocked status, got %s", mgr.statusByID["t-1"])
+	}
+	if len(run.requests) != 0 {
+		t.Fatalf("expected no runner requests when blocked by coverage gate, got %d", len(run.requests))
+	}
+	if got := mgr.dataByID["t-1"]["triage_reason"]; !strings.Contains(got, "below threshold") {
+		t.Fatalf("expected triage_reason to mention coverage threshold, got %q", got)
+	}
+}
+
 func TestLoopBlocksTaskBelowQualityThresholdWithAutoComment(t *testing.T) {
 	mgr := newFakeTaskManager(contracts.Task{
 		ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen,
@@ -541,6 +567,29 @@ func TestLoopBlocksTaskBelowQualityThresholdWithAutoComment(t *testing.T) {
 	}
 	if !strings.Contains(comment, "Please update the task") {
 		t.Fatalf("expected comment to include suggested fix, got %q", comment)
+	}
+}
+
+func TestLoopAllowsTaskAtOrAboveCoverageThreshold(t *testing.T) {
+	mgr := newFakeTaskManager(contracts.Task{
+		ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen,
+		Metadata: map[string]string{"coverage": "50"},
+	})
+	run := &fakeRunner{results: []contracts.RunnerResult{{Status: contracts.RunnerResultCompleted}}}
+	loop := NewLoop(mgr, run, nil, LoopOptions{ParentID: "root", QualityGateThreshold: 50})
+
+	summary, err := loop.Run(context.Background())
+	if err != nil {
+		t.Fatalf("loop failed: %v", err)
+	}
+	if summary.Completed != 1 {
+		t.Fatalf("expected completed summary, got %#v", summary)
+	}
+	if mgr.statusByID["t-1"] != contracts.TaskStatusClosed {
+		t.Fatalf("expected task to close when coverage is at threshold, got %s", mgr.statusByID["t-1"])
+	}
+	if len(run.requests) != 1 {
+		t.Fatalf("expected one runner request when coverage passes threshold, got %d", len(run.requests))
 	}
 }
 

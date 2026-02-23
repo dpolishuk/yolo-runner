@@ -248,7 +248,7 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 	}
 	_ = l.emit(ctx, contracts.Event{Type: contracts.EventTypeTaskStarted, TaskID: task.ID, TaskTitle: task.Title, WorkerID: worker, QueuePos: queuePos, Message: task.Title, Timestamp: time.Now().UTC()})
 
-	if qualityScore, ok := taskQualityScore(task.Metadata); ok && l.options.QualityGateThreshold > 0 && qualityScore < l.options.QualityGateThreshold {
+	if qualityScore, ok := taskExecutionThresholdScore(task.Metadata); ok && l.options.QualityGateThreshold > 0 && qualityScore < l.options.QualityGateThreshold {
 		qualityGateReason := fmt.Sprintf("quality score %d is below threshold %d", qualityScore, l.options.QualityGateThreshold)
 		qualityComment := qualityGateComment(task.Metadata, qualityScore, l.options.QualityGateThreshold)
 		qualityMetadata := map[string]string{
@@ -1056,6 +1056,22 @@ func reviewRetryPromptContext(metadata map[string]string) (int, string) {
 
 func taskQualityScore(metadata map[string]string) (int, bool) {
 	raw := strings.TrimSpace(metadata["quality_score"])
+	if raw == "" {
+		return 0, false
+	}
+	score, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, false
+	}
+	return score, true
+}
+
+func taskExecutionThresholdScore(metadata map[string]string) (int, bool) {
+	if score, ok := taskQualityScore(metadata); ok {
+		return score, true
+	}
+
+	raw := strings.TrimSpace(metadata["coverage"])
 	if raw == "" {
 		return 0, false
 	}
