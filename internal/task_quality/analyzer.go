@@ -20,6 +20,13 @@ type Assessment struct {
 	Issues []string
 }
 
+type CoverageReport struct {
+	TotalCases    int
+	CoveredCases  int
+	MissingCases  []string
+	OverallScore  int
+}
+
 func AssessTaskQuality(task TaskInput) Assessment {
 	issues := []string{}
 	score := 0
@@ -126,22 +133,14 @@ func clarityScore(task TaskInput, issues *[]string) int {
 }
 
 func acceptanceCoverageScore(task TaskInput, issues *[]string) int {
-	trimmed := strings.TrimSpace(task.AcceptanceCriteria)
-	if trimmed == "" {
+	report := AcceptanceCoverageReport(task)
+	if report.TotalCases == 0 {
 		*issues = append(*issues, "acceptance criteria should exist and be explicit")
 		return 0
 	}
 
-	acceptanceCount := 0
-	for _, line := range strings.Split(trimmed, "\n") {
-		line = strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(line, "-"), "*"))
-		if strings.TrimSpace(line) != "" {
-			acceptanceCount++
-		}
-	}
-
 	score := 0
-	if acceptanceCount > 0 {
+	if report.TotalCases > 0 {
 		score += 10
 	}
 
@@ -151,13 +150,57 @@ func acceptanceCoverageScore(task TaskInput, issues *[]string) int {
 		*issues = append(*issues, "acceptance criteria should use Given/When/Then format")
 	}
 
-	testingPlanCount := concreteTestCommandCount(task.TestingPlan)
-	if testingPlanCount < acceptanceCount {
-		missing := acceptanceCount - testingPlanCount
-		*issues = append(*issues, fmt.Sprintf("acceptance criteria coverage gaps: missing %d of %d criteria in testing plan", missing, acceptanceCount))
+	if report.CoveredCases < report.TotalCases {
+		missing := report.TotalCases - report.CoveredCases
+		*issues = append(*issues, fmt.Sprintf("acceptance criteria coverage gaps: missing %d of %d criteria in testing plan", missing, report.TotalCases))
+		for _, missingCase := range report.MissingCases {
+			*issues = append(*issues, "acceptance coverage missing case: "+missingCase)
+		}
 	}
 
 	return score
+}
+
+func AcceptanceCoverageReport(task TaskInput) CoverageReport {
+	cases := parseAcceptanceCriteria(task.AcceptanceCriteria)
+	total := len(cases)
+	if total == 0 {
+		return CoverageReport{
+			TotalCases:   0,
+			CoveredCases: 0,
+			OverallScore: 0,
+		}
+	}
+
+	covered := concreteTestCommandCount(task.TestingPlan)
+	if covered > total {
+		covered = total
+	}
+
+	missingCount := total - covered
+	missingCases := make([]string, 0, missingCount)
+	if missingCount > 0 {
+		missingCases = append(missingCases, cases[covered:]...)
+	}
+
+	return CoverageReport{
+		TotalCases:   total,
+		CoveredCases: covered,
+		MissingCases: missingCases,
+		OverallScore: (covered * 100) / total,
+	}
+}
+
+func parseAcceptanceCriteria(raw string) []string {
+	cases := []string{}
+	for _, line := range strings.Split(strings.TrimSpace(raw), "\n") {
+		caseText := strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(line, "-"), "*"))
+		if caseText == "" {
+			continue
+		}
+		cases = append(cases, caseText)
+	}
+	return cases
 }
 
 func validationRigorScore(task TaskInput, issues *[]string) int {

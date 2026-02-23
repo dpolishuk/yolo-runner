@@ -107,6 +107,52 @@ func TestAssessTaskQuality_AdequateAcceptanceCriteriaCoveragePasses(t *testing.T
 	}
 }
 
+func TestCoverageReportListsMissingCasesAndOverallScore(t *testing.T) {
+	task := fullyPopulatedTaskQualityInput()
+	task.AcceptanceCriteria = `- Given a user creates a valid request, when task validation passes, then status is in_progress.
+- Given a user creates an invalid request, when input validation fails, then status is blocked.
+- Given a user retries after timeout, when task succeeds, then status returns to completed.`
+	task.TestingPlan = `- go test ./internal/task_quality -run TestAssessTaskQuality
+- go test ./internal/task_quality -run TestAssessTaskQuality_HighQualitySampleScoresAboveThresholdAndIsClean`
+
+	report := AcceptanceCoverageReport(task)
+	if report.TotalCases != 3 {
+		t.Fatalf("expected 3 acceptance criteria, got %d", report.TotalCases)
+	}
+	if report.CoveredCases != 2 {
+		t.Fatalf("expected 2 covered criteria, got %d", report.CoveredCases)
+	}
+	if report.OverallScore != 66 {
+		t.Fatalf("expected overall coverage score 66, got %d", report.OverallScore)
+	}
+	if len(report.MissingCases) != 1 {
+		t.Fatalf("expected one missing case, got %d", len(report.MissingCases))
+	}
+	if !strings.Contains(strings.Join(report.MissingCases, "\n"), "a user retries after timeout") {
+		t.Fatalf("expected missing case details, got %q", report.MissingCases)
+	}
+}
+
+func TestAssessTaskQuality_IncludesMissingCasesInQualityIssues(t *testing.T) {
+	task := fullyPopulatedTaskQualityInput()
+	task.AcceptanceCriteria = `- Given a service returns success, when task is executed, then output is persisted.
+- Given a service rejects input, when task validation fails, then status is blocked.
+- Given storage is unavailable, when persistence is attempted, then task is retried with backoff.`
+	task.TestingPlan = `- go test ./internal/task_quality -run TestAssessTaskQuality`
+
+	result := AssessTaskQuality(task)
+	issues := joinIssues(result.Issues)
+	if !strings.Contains(issues, "acceptance criteria coverage gaps") {
+		t.Fatalf("expected coverage gap issue, got %q", result.Issues)
+	}
+	if !strings.Contains(issues, "acceptance coverage missing case") {
+		t.Fatalf("expected missing case issue entries, got %q", result.Issues)
+	}
+	if !strings.Contains(issues, "storage is unavailable") {
+		t.Fatalf("expected missing case details, got %q", result.Issues)
+	}
+}
+
 func TestAssessTaskQuality_ScoreIsBoundedToHundred(t *testing.T) {
 	task := TaskInput{
 		Title:       "Implement deterministic task quality scoring in analyzer",
