@@ -1340,35 +1340,66 @@ func isReviewFailResult(result contracts.RunnerResult) bool {
 }
 
 func shouldUseModelFallbackForFailure(result contracts.RunnerResult, currentModel string, fallbackModel string) bool {
-	if result.Status != contracts.RunnerResultFailed {
-		return false
-	}
-	if strings.TrimSpace(currentModel) == "" || strings.TrimSpace(fallbackModel) == "" {
-		return false
-	}
-	if strings.EqualFold(strings.TrimSpace(currentModel), strings.TrimSpace(fallbackModel)) {
+	return isRecoverableModelFailureResult(result, currentModel, fallbackModel)
+}
+
+func isRecoverableModelFailureReason(reason string) bool {
+	text := strings.ToLower(strings.TrimSpace(reason))
+	if text == "" {
 		return false
 	}
 
-	reason := strings.TrimSpace(result.Reason)
-	if reason == "" {
-		return false
+	// Explicitly avoid fallback on review-style failures; those are handled by
+	// the dedicated review retry path.
+	for _, needle := range []string{
+		"review rejected",
+		"review verdict",
+		"review feedback",
+		"failing acceptance criteria",
+	} {
+		if strings.Contains(text, needle) {
+			return false
+		}
 	}
-	lower := strings.ToLower(reason)
+
 	for _, needle := range []string{
 		"type failure",
 		"type error",
 		"type checker",
+		"type mismatch",
+		"type check",
+		"type validation",
+		"type annotation",
 		"tool failure",
 		"tool call",
-		"tool error",
+		"tool call failed",
 		"tool unavailable",
+		"tool error",
+		"tool execution",
+		"tool timed out",
+		"tool timeout",
+		"tool response",
+		"parse failure",
+		"invalid json",
+		"json parse",
+		"invalid json response",
+		"malformed output",
+		"provider error",
+		"rate limit",
+		"too many requests",
+		"quota exceeded",
+		"429",
 	} {
-		if strings.Contains(lower, needle) {
+		if strings.Contains(text, needle) {
 			return true
 		}
 	}
+
 	return false
+}
+
+func isRecoverableModelFailureResult(result contracts.RunnerResult, currentModel string, fallbackModel string) bool {
+	return isRecoverableModelFailureReason(result.Reason) && strings.TrimSpace(currentModel) != "" && strings.TrimSpace(fallbackModel) != "" && !strings.EqualFold(strings.TrimSpace(currentModel), strings.TrimSpace(fallbackModel))
 }
 
 func autoLandingCommitMessage(task contracts.Task) string {
