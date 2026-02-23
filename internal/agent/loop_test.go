@@ -128,9 +128,12 @@ func TestLoopBlocksTDDTaskWhenNoTestsArePresent(t *testing.T) {
 	}
 }
 
-func TestLoopAllowsTDDTaskWhenTestsArePresent(t *testing.T) {
+func TestLoopAllowsTDDTaskWhenTestsAreFailing(t *testing.T) {
 	repoRoot := t.TempDir()
-	if err := os.WriteFile(filepath.Join(repoRoot, "feature_test.go"), []byte("package main\n\nfunc TestFeature(t *testing.T) {}\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(repoRoot, "go.mod"), []byte("module tdd-test\n\ngo 1.22\n"), 0o644); err != nil {
+		t.Fatalf("failed to write go.mod: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repoRoot, "feature_test.go"), []byte("package main\n\nimport \"testing\"\n\nfunc TestFeature(t *testing.T) {\n\tt.Fatalf(\"intentional failing test\")\n}\n"), 0o644); err != nil {
 		t.Fatalf("failed to write test file: %v", err)
 	}
 
@@ -153,6 +156,46 @@ func TestLoopAllowsTDDTaskWhenTestsArePresent(t *testing.T) {
 	}
 	if got := run.requests[0].Mode; got != contracts.RunnerModeImplement {
 		t.Fatalf("expected implement mode request, got %s", got)
+	}
+}
+
+func TestLoopBlocksTDDTaskWhenTestsArePresentButPassing(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, "go.mod"), []byte("module tdd-test\n\ngo 1.22\n"), 0o644); err != nil {
+		t.Fatalf("failed to write go.mod: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repoRoot, "feature.go"), []byte("package main\n\nfunc Feature() bool {\n\treturn true\n}\n"), 0o644); err != nil {
+		t.Fatalf("failed to write feature file: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repoRoot, "feature_test.go"), []byte("package main\n\nimport \"testing\"\n\nfunc TestFeature(t *testing.T) {\n\tif !Feature() {\n\t\tt.Fatalf(\"feature should pass\")\n\t}\n}\n"), 0o644); err != nil {
+		t.Fatalf("failed to write test file: %v", err)
+	}
+
+	mgr := newFakeTaskManager(contracts.Task{ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen})
+	run := &fakeRunner{results: []contracts.RunnerResult{{Status: contracts.RunnerResultCompleted}}}
+	loop := NewLoop(mgr, run, nil, LoopOptions{ParentID: "root", TDDMode: true, RepoRoot: repoRoot})
+
+	summary, err := loop.Run(context.Background())
+	if err != nil {
+		t.Fatalf("loop failed: %v", err)
+	}
+	if summary.Blocked != 1 {
+		t.Fatalf("expected blocked summary, got %#v", summary)
+	}
+	if got := mgr.statusByID["t-1"]; got != contracts.TaskStatusBlocked {
+		t.Fatalf("expected blocked task status, got %s", got)
+	}
+	if len(run.requests) != 0 {
+		t.Fatalf("expected no runner requests when blocked by tdd tests-first gate, got %d", len(run.requests))
+	}
+	if got := mgr.dataByID["t-1"]["triage_reason"]; !strings.Contains(got, "tests-first") {
+		t.Fatalf("expected triage_reason to mention tests-first gate, got %q", got)
+	}
+	if got := mgr.dataByID["t-1"]["tests_present"]; got != "true" {
+		t.Fatalf("expected tests_present=true, got %q", got)
+	}
+	if got := mgr.dataByID["t-1"]["tests_failing"]; got != "false" {
+		t.Fatalf("expected tests_failing=false, got %q", got)
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -335,17 +336,21 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 
 	taskRepoRoot := l.options.RepoRoot
 	if l.options.TDDMode {
-		hasTests, err := hasTestsForTDDMode(l.options.RepoRoot)
+		testsPresent, testsFailing, err := hasTestsForTDDMode(l.options.RepoRoot)
 		if err != nil {
 			return summary, err
 		}
-		if !hasTests {
-			reason := "tdd mode tests-first gate requires adding tests before implementation"
+		if !testsFailing {
+			reason := "tdd mode tests-first gate requires tests to be present and currently failing before implementation"
+			if !testsPresent {
+				reason = "tdd mode tests-first gate requires adding tests before implementation"
+			}
 			blockedData := map[string]string{
 				"triage_status": "blocked",
 				"triage_reason": reason,
 				"tdd_mode":      "true",
-				"tests_present": "false",
+				"tests_present": strconv.FormatBool(testsPresent),
+				"tests_failing": strconv.FormatBool(testsFailing),
 			}
 			blockedData = appendDecisionMetadata(blockedData, "blocked", reason)
 			if err := l.markTaskBlockedWithData(task.ID, blockedData); err != nil {
@@ -358,7 +363,8 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 				"triage_status": "blocked",
 				"triage_reason": reason,
 				"tdd_mode":      "true",
-				"tests_present": "false",
+				"tests_present": strconv.FormatBool(testsPresent),
+				"tests_failing": strconv.FormatBool(testsFailing),
 			}
 			finishedMetadata = appendDecisionMetadata(finishedMetadata, "blocked", reason)
 			_ = l.emit(ctx, contracts.Event{
@@ -1106,10 +1112,10 @@ func buildPrompt(task contracts.Task, mode contracts.RunnerMode, tddMode bool) s
 	return strings.Join(sections, "\n\n")
 }
 
-func hasTestsForTDDMode(repoRoot string) (bool, error) {
+func hasTestsForTDDMode(repoRoot string) (bool, bool, error) {
 	root := strings.TrimSpace(repoRoot)
 	if root == "" {
-		return false, nil
+		return false, false, nil
 	}
 
 	found := false
@@ -1129,9 +1135,26 @@ func hasTestsForTDDMode(repoRoot string) (bool, error) {
 		return nil
 	})
 	if err != nil {
-		return false, err
+		return false, false, err
 	}
-	return found, nil
+	if !found {
+		return false, false, nil
+	}
+	failing, err := hasFailingTestsForTDDMode(root)
+	return found, failing, err
+}
+
+func hasFailingTestsForTDDMode(repoRoot string) (bool, error) {
+	cmd := exec.Command("go", "test", "./...")
+	cmd.Dir = repoRoot
+	_, err := cmd.CombinedOutput()
+	if err == nil {
+		return false, nil
+	}
+	if _, ok := err.(*exec.ExitError); ok {
+		return true, nil
+	}
+	return false, fmt.Errorf("run tests for tdd mode: %w", err)
 }
 
 func reviewRetryPromptContext(metadata map[string]string) (int, string) {
