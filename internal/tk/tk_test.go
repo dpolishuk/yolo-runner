@@ -1,6 +1,7 @@
 package tk
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -80,6 +81,74 @@ func TestShowFallsBackToTitleFromTkShowOutput(t *testing.T) {
 	}
 	if bead.ID != "root.1" || bead.Title != "Task title from show" {
 		t.Fatalf("unexpected bead: %#v", bead)
+	}
+}
+
+func TestParseTicketQueryParsesDependencyMetadata(t *testing.T) {
+	tests := []struct {
+		name  string
+		query string
+		want  []string
+	}{
+		{
+			name: "missing dependency metadata",
+			query: `{"id":"t-1","status":"open","type":"task","title":"No deps"}`,
+			want:  nil,
+		},
+		{
+			name:  "empty dependency array",
+			query: `{"id":"t-1","status":"open","type":"task","title":"Empty deps","deps":[]}`,
+			want:  []string{},
+		},
+		{
+			name:  "single dependency",
+			query: `{"id":"t-1","status":"open","type":"task","title":"Single dep","deps":["d-1"]}`,
+			want:  []string{"d-1"},
+		},
+		{
+			name:  "multiple dependencies",
+			query: `{"id":"t-1","status":"open","type":"task","title":"Multiple deps","deps":["d-1","d-2"]}`,
+			want:  []string{"d-1", "d-2"},
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			tickets, err := parseTicketQuery(tc.query)
+			if err != nil {
+				t.Fatalf("parseTicketQuery failed: %v", err)
+			}
+			if len(tickets) != 1 {
+				t.Fatalf("expected one parsed ticket, got %d", len(tickets))
+			}
+			got := []string(tickets[0].Deps)
+			if len(tc.want) == 0 {
+				if len(got) != len(tc.want) {
+					t.Fatalf("expected %d dependencies, got %d (%v)", len(tc.want), len(got), got)
+				}
+				return
+			}
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("expected dependencies %v, got %v", tc.want, got)
+			}
+		})
+	}
+}
+
+func TestParseTicketQueryAcceptsMalformedDependencyMetadataAsSingleDependencyString(t *testing.T) {
+	output := `{"id":"t-1","status":"open","type":"task","title":"Legacy dep format","deps":"d-1"}`
+
+	tickets, err := parseTicketQuery(output)
+	if err != nil {
+		t.Fatalf("parseTicketQuery failed: %v", err)
+	}
+	if len(tickets) != 1 {
+		t.Fatalf("expected one parsed ticket, got %d", len(tickets))
+	}
+	got := []string(tickets[0].Deps)
+	if !reflect.DeepEqual(got, []string{"d-1"}) {
+		t.Fatalf("expected malformed dependency metadata to normalize to single dependency, got %v", got)
 	}
 }
 
