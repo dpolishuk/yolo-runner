@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -2794,6 +2795,111 @@ func TestLoopUsesIsolatedClonePerTaskAndCleansUp(t *testing.T) {
 	}
 }
 
+func TestLoopUsesRealCloneManagerForParallelTasksAndCleansUpWorktrees(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is required")
+	}
+
+	repoRoot := t.TempDir()
+	runGit(t, repoRoot, "init")
+	readmePath := filepath.Join(repoRoot, "README.md")
+	if err := os.WriteFile(readmePath, []byte("hello\n"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	runGit(t, repoRoot, "add", "README.md")
+	runGit(t, repoRoot, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "init")
+
+	cloneBase := t.TempDir()
+	cloneManager := NewGitCloneManager(cloneBase)
+	runner := &parallelBlockingRepoRunner{
+		expected:   2,
+		startedAll: make(chan struct{}),
+		release:    make(chan struct{}),
+	}
+	loop := NewLoop(newFakeTaskManager(
+		contracts.Task{ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen},
+		contracts.Task{ID: "t-2", Title: "Task 2", Status: contracts.TaskStatusOpen},
+	), runner, nil, LoopOptions{
+		ParentID:     "root",
+		RepoRoot:     repoRoot,
+		Concurrency:  2,
+		CloneManager: cloneManager,
+	})
+
+	type loopResult struct {
+		summary contracts.LoopSummary
+		err     error
+	}
+	resultCh := make(chan loopResult, 1)
+	go func() {
+		summary, err := loop.Run(context.Background())
+		resultCh <- loopResult{summary: summary, err: err}
+	}()
+
+	select {
+	case <-runner.startedAll:
+	case <-time.After(5 * time.Second):
+		close(runner.release)
+		result := <-resultCh
+		t.Fatalf("timed out waiting for parallel task starts: summary=%#v err=%v", result.summary, result.err)
+	}
+
+	repoRoots := runner.RepoRootsByTask()
+	if len(repoRoots) != 2 {
+		close(runner.release)
+		_ = <-resultCh
+		t.Fatalf("expected two repo roots, got %#v", repoRoots)
+	}
+	if repoRoots["t-1"] == repoRoots["t-2"] {
+		close(runner.release)
+		_ = <-resultCh
+		t.Fatalf("expected isolated clone path per task, got shared path %q", repoRoots["t-1"])
+	}
+	for taskID, root := range repoRoots {
+		if _, err := os.Stat(root); err != nil {
+			close(runner.release)
+			_ = <-resultCh
+			t.Fatalf("expected live clone for %s at %q: %v", taskID, root, err)
+		}
+		if root == repoRoot {
+			close(runner.release)
+			_ = <-resultCh
+			t.Fatalf("expected task clone path, got source repo root for %s", taskID)
+		}
+		if _, err := os.Stat(filepath.Join(root, "README.md")); err != nil {
+			close(runner.release)
+			_ = <-resultCh
+			t.Fatalf("expected cloned file for %s at %q: %v", taskID, root, err)
+		}
+		if filepath.Dir(root) != filepath.Clean(cloneBase) {
+			close(runner.release)
+			_ = <-resultCh
+			t.Fatalf("expected clone under %q, got %q", cloneBase, root)
+		}
+	}
+
+	close(runner.release)
+	result := <-resultCh
+	if result.err != nil {
+		t.Fatalf("loop failed: %v", result.err)
+	}
+	if result.summary.Completed != 2 {
+		t.Fatalf("expected two completed tasks, got %#v", result.summary)
+	}
+	for _, root := range repoRoots {
+		if _, err := os.Stat(root); !os.IsNotExist(err) {
+			t.Fatalf("expected clone path cleaned up, got %v for %q", err, root)
+		}
+	}
+	entries, err := os.ReadDir(cloneBase)
+	if err != nil {
+		t.Fatalf("read clone base: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("expected temporary clone base directory to be empty, got %d entries", len(entries))
+	}
+}
+
 func TestLoopUsesCloneScopedVCSFactoryForTaskBranchingAndLanding(t *testing.T) {
 	mgr := newFakeTaskManager(contracts.Task{ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen})
 	run := &fakeRunner{results: []contracts.RunnerResult{
@@ -3185,6 +3291,43 @@ func (r *repoRecordingRunner) Run(_ context.Context, request contracts.RunnerReq
 }
 
 func (r *repoRecordingRunner) RepoRootsByTask() map[string]string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make(map[string]string, len(r.byTaskID))
+	for taskID, repoRoot := range r.byTaskID {
+		out[taskID] = repoRoot
+	}
+	return out
+}
+
+type parallelBlockingRepoRunner struct {
+	expected   int
+	mu         sync.Mutex
+	byTaskID   map[string]string
+	started    int
+	startedAll chan struct{}
+	release    chan struct{}
+}
+
+func (r *parallelBlockingRepoRunner) Run(_ context.Context, request contracts.RunnerRequest) (contracts.RunnerResult, error) {
+	r.mu.Lock()
+	if r.byTaskID == nil {
+		r.byTaskID = map[string]string{}
+	}
+	r.byTaskID[request.TaskID] = request.RepoRoot
+	r.started++
+	if r.started == r.expected {
+		close(r.startedAll)
+	}
+	r.mu.Unlock()
+
+	if r.release != nil {
+		<-r.release
+	}
+	return contracts.RunnerResult{Status: contracts.RunnerResultCompleted}, nil
+}
+
+func (r *parallelBlockingRepoRunner) RepoRootsByTask() map[string]string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	out := make(map[string]string, len(r.byTaskID))
