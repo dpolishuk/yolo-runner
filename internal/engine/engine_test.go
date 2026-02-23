@@ -681,6 +681,32 @@ func TestTaskEngineCalculateConcurrencyAcrossTopologies(t *testing.T) {
 			want: 4,
 		},
 		{
+			name: "blocked ancestors do not increase parallelism",
+			tree: &contracts.TaskTree{
+				Root: contracts.Task{ID: "root", Status: contracts.TaskStatusClosed},
+				Tasks: map[string]contracts.Task{
+					"root":     {ID: "root", Status: contracts.TaskStatusClosed},
+					"independent": {ID: "independent", Status: contracts.TaskStatusOpen},
+					"blocked":  {ID: "blocked", Status: contracts.TaskStatusBlocked},
+					"dependent-1": {
+						ID:       "dependent-1",
+						Status:   contracts.TaskStatusOpen,
+						ParentID: "root",
+					},
+					"dependent-2": {
+						ID:       "dependent-2",
+						Status:   contracts.TaskStatusOpen,
+						ParentID: "root",
+					},
+				},
+				Relations: []contracts.TaskRelation{
+					{FromID: "dependent-1", ToID: "blocked", Type: contracts.RelationDependsOn},
+					{FromID: "dependent-2", ToID: "blocked", Type: contracts.RelationDependsOn},
+				},
+			},
+			want: 1,
+		},
+		{
 			name: "ignores finished tasks",
 			tree: &contracts.TaskTree{
 				Root: contracts.Task{ID: "a", Status: contracts.TaskStatusClosed},

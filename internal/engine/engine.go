@@ -218,6 +218,9 @@ func (e *TaskEngine) CalculateConcurrency(graph *contracts.TaskGraph, opts contr
 			if node.Status == contracts.TaskStatusOpen {
 				openAtLevel++
 			}
+			if node.Status != contracts.TaskStatusOpen && node.Status != contracts.TaskStatusClosed {
+				continue
+			}
 			for _, dependent := range node.Dependents {
 				if dependent == nil {
 					continue
