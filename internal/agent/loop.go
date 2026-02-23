@@ -334,6 +334,65 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 	}
 
 	taskRepoRoot := l.options.RepoRoot
+	if l.options.TDDMode {
+		hasTests, err := hasTestsForTDDMode(l.options.RepoRoot)
+		if err != nil {
+			return summary, err
+		}
+		if !hasTests {
+			reason := "tdd mode tests-first gate requires adding tests before implementation"
+			blockedData := map[string]string{
+				"triage_status": "blocked",
+				"triage_reason": reason,
+				"tdd_mode":      "true",
+				"tests_present": "false",
+			}
+			blockedData = appendDecisionMetadata(blockedData, "blocked", reason)
+			if err := l.markTaskBlockedWithData(task.ID, blockedData); err != nil {
+				return summary, err
+			}
+			if err := l.tasks.SetTaskStatus(ctx, task.ID, contracts.TaskStatusBlocked); err != nil {
+				return summary, err
+			}
+			finishedMetadata := map[string]string{
+				"triage_status": "blocked",
+				"triage_reason": reason,
+				"tdd_mode":      "true",
+				"tests_present": "false",
+			}
+			finishedMetadata = appendDecisionMetadata(finishedMetadata, "blocked", reason)
+			_ = l.emit(ctx, contracts.Event{
+				Type:      contracts.EventTypeTaskFinished,
+				TaskID:    task.ID,
+				TaskTitle: task.Title,
+				WorkerID:  worker,
+				ClonePath: taskRepoRoot,
+				QueuePos:  queuePos,
+				Message:   string(contracts.TaskStatusBlocked),
+				Metadata:  finishedMetadata,
+				Timestamp: time.Now().UTC(),
+			})
+			if err := l.tasks.SetTaskData(ctx, task.ID, blockedData); err != nil {
+				return summary, err
+			}
+			_ = l.emit(ctx, contracts.Event{
+				Type:      contracts.EventTypeTaskDataUpdated,
+				TaskID:    task.ID,
+				TaskTitle: task.Title,
+				WorkerID:  worker,
+				ClonePath: taskRepoRoot,
+				QueuePos:  queuePos,
+				Metadata:  blockedData,
+				Timestamp: time.Now().UTC(),
+			})
+			if err := l.clearTaskTerminalState(task.ID); err != nil {
+				return summary, err
+			}
+			summary.Blocked++
+			return summary, nil
+		}
+	}
+
 	if l.cloneManager != nil {
 		clonePath, cloneErr := l.cloneManager.CloneForTask(ctx, task.ID, l.options.RepoRoot)
 		if cloneErr != nil {
@@ -1006,6 +1065,10 @@ func buildPrompt(task contracts.Task, mode contracts.RunnerMode, tddMode bool) s
 		if tddMode {
 			sections = append(sections, strings.Join([]string{
 				"Strict TDD Workflow (Red-Green-Refactor):",
+				"Tests-First Gate:",
+				"- Confirm tests for the target behavior exist before implementation.",
+				"- Run tests before changes and confirm they fail to define expected behavior.",
+				"- Do not implement until tests-first gate is passing.",
 				"1. RED: Add or update a test that fails for the target behavior.",
 				"2. GREEN: Implement the minimal code required for that test to pass.",
 				"3. REFACTOR: Improve the design while preserving passing tests.",
@@ -1041,6 +1104,34 @@ func buildPrompt(task contracts.Task, mode contracts.RunnerMode, tddMode bool) s
 		sections = append(sections, "Description:\n"+task.Description)
 	}
 	return strings.Join(sections, "\n\n")
+}
+
+func hasTestsForTDDMode(repoRoot string) (bool, error) {
+	root := strings.TrimSpace(repoRoot)
+	if root == "" {
+		return false, nil
+	}
+
+	found := false
+	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			if info.Name() == ".git" || info.Name() == "node_modules" || info.Name() == "vendor" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if strings.Contains(filepath.Base(path), "_test.") {
+			found = true
+		}
+		return nil
+	})
+	if err != nil {
+		return false, err
+	}
+	return found, nil
 }
 
 func reviewRetryPromptContext(metadata map[string]string) (int, string) {

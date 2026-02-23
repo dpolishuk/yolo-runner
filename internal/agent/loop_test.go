@@ -86,6 +86,10 @@ func TestBuildPromptImplementIncludesRedGreenRefactorWorkflowWhenTDDModeEnabled(
 
 	required := []string{
 		"Strict TDD Workflow (Red-Green-Refactor):",
+		"Tests-First Gate:",
+		"- Confirm tests for the target behavior exist before implementation.",
+		"- Run tests before changes and confirm they fail to define expected behavior.",
+		"- Do not implement until tests-first gate is passing.",
 		"1. RED: Add or update a test that fails for the target behavior.",
 		"2. GREEN: Implement the minimal code required for that test to pass.",
 		"3. REFACTOR: Improve the design while preserving passing tests.",
@@ -97,6 +101,58 @@ func TestBuildPromptImplementIncludesRedGreenRefactorWorkflowWhenTDDModeEnabled(
 		if !strings.Contains(prompt, needle) {
 			t.Fatalf("expected prompt to include %q, got %q", needle, prompt)
 		}
+	}
+}
+
+func TestLoopBlocksTDDTaskWhenNoTestsArePresent(t *testing.T) {
+	repoRoot := t.TempDir()
+	mgr := newFakeTaskManager(contracts.Task{ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen})
+	run := &fakeRunner{results: []contracts.RunnerResult{{Status: contracts.RunnerResultCompleted}}}
+	loop := NewLoop(mgr, run, nil, LoopOptions{ParentID: "root", TDDMode: true, RepoRoot: repoRoot})
+
+	summary, err := loop.Run(context.Background())
+	if err != nil {
+		t.Fatalf("loop failed: %v", err)
+	}
+	if summary.Blocked != 1 {
+		t.Fatalf("expected blocked summary, got %#v", summary)
+	}
+	if mgr.statusByID["t-1"] != contracts.TaskStatusBlocked {
+		t.Fatalf("expected blocked task status, got %s", mgr.statusByID["t-1"])
+	}
+	if len(run.requests) != 0 {
+		t.Fatalf("expected no runner requests when blocked by tdd tests-first gate, got %d", len(run.requests))
+	}
+	if got := mgr.dataByID["t-1"]["triage_reason"]; !strings.Contains(got, "tests-first") {
+		t.Fatalf("expected triage_reason to mention tests-first gate, got %q", got)
+	}
+}
+
+func TestLoopAllowsTDDTaskWhenTestsArePresent(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, "feature_test.go"), []byte("package main\n\nfunc TestFeature(t *testing.T) {}\n"), 0o644); err != nil {
+		t.Fatalf("failed to write test file: %v", err)
+	}
+
+	mgr := newFakeTaskManager(contracts.Task{ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen})
+	run := &fakeRunner{results: []contracts.RunnerResult{{Status: contracts.RunnerResultCompleted}}}
+	loop := NewLoop(mgr, run, nil, LoopOptions{ParentID: "root", TDDMode: true, RepoRoot: repoRoot})
+
+	summary, err := loop.Run(context.Background())
+	if err != nil {
+		t.Fatalf("loop failed: %v", err)
+	}
+	if summary.Completed != 1 {
+		t.Fatalf("expected completed summary, got %#v", summary)
+	}
+	if mgr.statusByID["t-1"] != contracts.TaskStatusClosed {
+		t.Fatalf("expected closed status after completion, got %s", mgr.statusByID["t-1"])
+	}
+	if len(run.requests) != 1 {
+		t.Fatalf("expected one runner request, got %d", len(run.requests))
+	}
+	if got := run.requests[0].Mode; got != contracts.RunnerModeImplement {
+		t.Fatalf("expected implement mode request, got %s", got)
 	}
 }
 
