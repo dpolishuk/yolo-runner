@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/anomalyco/yolo-runner/internal/beads"
 	"github.com/anomalyco/yolo-runner/internal/claude"
 	"github.com/anomalyco/yolo-runner/internal/codex"
 	"github.com/anomalyco/yolo-runner/internal/contracts"
@@ -537,6 +538,192 @@ profiles:
 	}
 }
 
+func TestE2E_BeadsProfileProcessesAndClosesIssue(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git CLI is required for e2e test")
+	}
+
+	repo := t.TempDir()
+	runCommand(t, repo, "git", "init")
+	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatalf("write seed file: %v", err)
+	}
+	runCommand(t, repo, "git", "add", "README.md")
+	runCommand(t, repo, "git", "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "init")
+
+	const (
+		rootID      = "beads-root-e2e"
+		issueID     = "beads-task-e2e"
+		profileName = "beads-demo"
+	)
+
+	writeTrackerConfigYAML(t, repo, `
+default_profile: beads-demo
+profiles:
+  beads-demo:
+    tracker:
+      type: beads
+      beads:
+        scope:
+          root: beads-root-e2e
+`)
+
+	manager := &beadsE2ETaskManager{
+		task: contracts.Task{
+			ID:          issueID,
+			Title:       "Implement beads e2e",
+			Description: "validate beads profile e2e",
+			Status:      contracts.TaskStatusOpen,
+		},
+	}
+
+	originalFactory := newBeadsTaskManager
+	newBeadsTaskManager = func(beads.Runner) (contracts.TaskManager, error) {
+		return manager, nil
+	}
+	t.Cleanup(func() {
+		newBeadsTaskManager = originalFactory
+	})
+
+	profile, err := resolveTrackerProfile(repo, "", "", rootID, os.Getenv)
+	if err != nil {
+		t.Fatalf("resolve tracker profile: %v", err)
+	}
+	if profile.Name != profileName {
+		t.Fatalf("expected profile %q, got %q", profileName, profile.Name)
+	}
+	if profile.Tracker.Type != trackerTypeBeads {
+		t.Fatalf("expected tracker type %q, got %q", trackerTypeBeads, profile.Tracker.Type)
+	}
+
+	taskManager, err := buildTaskManagerForTracker(repo, profile)
+	if err != nil {
+		t.Fatalf("build beads task manager from profile: %v", err)
+	}
+	fakeAgent := &fakeAgentRunner{results: []contracts.RunnerResult{
+		{Status: contracts.RunnerResultCompleted},
+		{Status: contracts.RunnerResultCompleted, ReviewReady: true},
+	}}
+	fakeVCS := &fakeVCS{}
+
+	originalStdout := os.Stdout
+	readPipe, writePipe, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	os.Stdout = writePipe
+	defer func() {
+		os.Stdout = originalStdout
+	}()
+
+	runErr := runWithComponents(context.Background(), runConfig{
+		repoRoot:    repo,
+		rootID:      rootID,
+		backend:     backendCodex,
+		profile:     profile.Name,
+		trackerType: profile.Tracker.Type,
+		model:       "openai/gpt-5.3-codex",
+		maxTasks:    1,
+		stream:      true,
+	}, taskManager, fakeAgent, fakeVCS)
+	if runErr != nil {
+		t.Fatalf("run failed: %v", runErr)
+	}
+	if err := writePipe.Close(); err != nil {
+		t.Fatalf("close writer: %v", err)
+	}
+	raw, err := io.ReadAll(readPipe)
+	if err != nil {
+		t.Fatalf("read stream: %v", err)
+	}
+	if err := readPipe.Close(); err != nil {
+		t.Fatalf("close reader: %v", err)
+	}
+
+	events := decodeNDJSONEvents(t, raw)
+	sawRunStarted := false
+	sawBeadsTracker := false
+	sawBeadsProfile := false
+	sawTaskStarted := false
+	sawTaskFinished := false
+	for _, event := range events {
+		switch event.Type {
+		case contracts.EventTypeRunStarted:
+			sawRunStarted = true
+			if event.Metadata["tracker"] == trackerTypeBeads {
+				sawBeadsTracker = true
+			}
+			if event.Metadata["profile"] == profileName {
+				sawBeadsProfile = true
+			}
+		case contracts.EventTypeTaskStarted:
+			sawTaskStarted = true
+		case contracts.EventTypeTaskFinished:
+			sawTaskFinished = true
+		}
+	}
+	if !sawRunStarted {
+		t.Fatalf("expected run_started event in stream, got %q", string(raw))
+	}
+	if !sawBeadsTracker {
+		t.Fatalf("expected run_started metadata tracker=%q, got %q", trackerTypeBeads, string(raw))
+	}
+	if !sawBeadsProfile {
+		t.Fatalf("expected run_started metadata profile=%q, got %q", profileName, string(raw))
+	}
+	if !sawTaskStarted || !sawTaskFinished {
+		t.Fatalf("expected task lifecycle events (started/finished), got %q", string(raw))
+	}
+
+	if manager.task.Status != contracts.TaskStatusClosed {
+		t.Fatalf("expected beads issue %q to be closed, got %q", issueID, manager.task.Status)
+	}
+	if len(manager.transitions) != 2 {
+		t.Fatalf("expected exactly two beads status transitions, got %#v", manager.transitions)
+	}
+	if manager.transitions[0] != contracts.TaskStatusInProgress {
+		t.Fatalf("expected first transition to in_progress, got %#v", manager.transitions)
+	}
+	if manager.transitions[1] != contracts.TaskStatusClosed {
+		t.Fatalf("expected second transition to closed, got %#v", manager.transitions)
+	}
+}
+
+func TestE2E_BeadsProfileProbeFailureReturnsActionableError(t *testing.T) {
+	repo := t.TempDir()
+	writeTrackerConfigYAML(t, repo, `
+default_profile: beads-demo
+profiles:
+  beads-demo:
+    tracker:
+      type: beads
+`)
+
+	originalFactory := newBeadsTaskManager
+	newBeadsTaskManager = func(beads.Runner) (contracts.TaskManager, error) {
+		return nil, errors.New("unable to detect backend")
+	}
+	t.Cleanup(func() {
+		newBeadsTaskManager = originalFactory
+	})
+
+	profile, err := resolveTrackerProfile(repo, "", "", "root-1", os.Getenv)
+	if err != nil {
+		t.Fatalf("resolve tracker profile: %v", err)
+	}
+
+	_, err = buildTaskManagerForTracker(repo, profile)
+	if err == nil {
+		t.Fatalf("expected beads probe failure")
+	}
+	if !strings.Contains(err.Error(), "beads capability probe failed") {
+		t.Fatalf("expected actionable beads probe context, got %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), "unable to detect backend") {
+		t.Fatalf("expected wrapped probe error, got %q", err.Error())
+	}
+}
+
 func TestE2E_GitHubProfileProcessesAndClosesIssue(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git CLI is required for e2e test")
@@ -551,11 +738,11 @@ func TestE2E_GitHubProfileProcessesAndClosesIssue(t *testing.T) {
 	runCommand(t, repo, "git", "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "init")
 
 	const (
-		rootID           = "101"
-		issueID          = "102"
-		rootIssueNumber  = 101
-		taskIssueNumber  = 102
-		profileName      = "github-demo"
+		rootID          = "101"
+		issueID         = "102"
+		rootIssueNumber = 101
+		taskIssueNumber = 102
+		profileName     = "github-demo"
 	)
 
 	writeTrackerConfigYAML(t, repo, `
@@ -1324,6 +1511,58 @@ type fakeAgentRunner struct {
 	results  []contracts.RunnerResult
 	index    int
 	requests []contracts.RunnerRequest
+}
+
+type beadsE2ETaskManager struct {
+	mu          sync.Mutex
+	task        contracts.Task
+	emitted     bool
+	transitions []contracts.TaskStatus
+}
+
+func (m *beadsE2ETaskManager) NextTasks(_ context.Context, parentID string) ([]contracts.TaskSummary, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if parentID == "" {
+		return nil, nil
+	}
+	if m.emitted {
+		return nil, nil
+	}
+	if m.task.Status != contracts.TaskStatusOpen {
+		return nil, nil
+	}
+	m.emitted = true
+	return []contracts.TaskSummary{{ID: m.task.ID, Title: m.task.Title}}, nil
+}
+
+func (m *beadsE2ETaskManager) GetTask(_ context.Context, taskID string) (contracts.Task, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if taskID != m.task.ID {
+		return contracts.Task{}, errors.New("task not found")
+	}
+	return m.task, nil
+}
+
+func (m *beadsE2ETaskManager) SetTaskStatus(_ context.Context, taskID string, status contracts.TaskStatus) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if taskID != m.task.ID {
+		return errors.New("task not found")
+	}
+	m.task.Status = status
+	m.transitions = append(m.transitions, status)
+	return nil
+}
+
+func (m *beadsE2ETaskManager) SetTaskData(_ context.Context, taskID string, _ map[string]string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if taskID != m.task.ID {
+		return errors.New("task not found")
+	}
+	return nil
 }
 
 type parallelFakeAgentRunner struct {
