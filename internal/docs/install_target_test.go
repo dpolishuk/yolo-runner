@@ -87,10 +87,12 @@ func TestMakefileInstallTargetHonorsPrefixAndCreatesExecutable(t *testing.T) {
 	}
 
 	helpOutput, err := exec.Command(filepath.Join(binDir, "yolo-agent"), "--help").CombinedOutput()
-	if err != nil && !strings.Contains(string(helpOutput), "Usage of yolo-agent:") {
+	usageText := string(helpOutput)
+	hasUsage := strings.Contains(usageText, "Usage of yolo-agent:") || strings.Contains(usageText, "Usage: yolo-agent [options]")
+	if err != nil && !hasUsage {
 		t.Fatalf("installed binary should expose usage text: %v (%s)", err, helpOutput)
 	}
-	if !strings.Contains(string(helpOutput), "Usage of yolo-agent:") {
+	if !hasUsage {
 		t.Fatalf("installed binary should expose usage text: got %s", helpOutput)
 	}
 

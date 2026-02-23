@@ -230,7 +230,7 @@ func TestBuildPromptRetryContextOmitsGenericReviewVerdictFailureReason(t *testin
 		},
 	}
 
-	prompt := buildPrompt(task, contracts.RunnerModeImplement)
+	prompt := buildPrompt(task, contracts.RunnerModeImplement, false)
 	if strings.Contains(prompt, "- review verdict returned fail") {
 		t.Fatalf("expected generic review failure placeholder to be omitted from retry blockers, got %q", prompt)
 	}

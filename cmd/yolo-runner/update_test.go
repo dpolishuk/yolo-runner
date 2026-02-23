@@ -369,7 +369,7 @@ func TestYoloRunnerUpdateVerifiesChecksumPassAndFail(t *testing.T) {
 func TestYoloRunnerUpdateRollsBackOnInstallFailure(t *testing.T) {
 	artifact := writeTarArtifact(t, map[string][]byte{
 		"yolo-runner":           updateBinaryScript(t, "yolo-runner", "v1.0.0"),
-		"zzz-blocked/block.bin": updateBinaryScript(t, "zzz-blocked/block.bin", "v1.0.0"),
+		"zzz-blocked/block.bin": updateBinaryScript(t, "zzz-blocked/block.bin", "v9.9.9"),
 	})
 	artifactName := updateArtifactName("linux", "amd64")
 
@@ -389,11 +389,6 @@ func TestYoloRunnerUpdateRollsBackOnInstallFailure(t *testing.T) {
 	if err := os.WriteFile(oldBinary, []byte("existing"), 0o644); err != nil {
 		t.Fatalf("seed existing binary: %v", err)
 	}
-	blockedDir := filepath.Join(installDir, "zzz-blocked")
-	if err := os.MkdirAll(blockedDir, 0o500); err != nil {
-		t.Fatalf("prepare blocked dir: %v", err)
-	}
-
 	_, stderr, code := runUpdateCommand(t, []string{
 		"--release-api", server.URL() + "/repos/egv/yolo-runner",
 		"--release", "latest",
@@ -403,6 +398,9 @@ func TestYoloRunnerUpdateRollsBackOnInstallFailure(t *testing.T) {
 	}, nil)
 	if code == 0 {
 		t.Fatalf("expected install failure for rollback test: %q", stderr)
+	}
+	if !strings.Contains(stderr, "verify version for zzz-blocked/block.bin") {
+		t.Fatalf("expected version verification failure for rollback test: %q", stderr)
 	}
 	content, err := os.ReadFile(oldBinary)
 	if err != nil {
