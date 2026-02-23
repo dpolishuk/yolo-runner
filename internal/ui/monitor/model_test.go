@@ -2,6 +2,7 @@ package monitor
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -300,6 +301,62 @@ func TestModelSupportsSpacebarShortcutLiteralForToggle(t *testing.T) {
 	assertContains(t, view, "[+] worker-0 severity=warning")
 }
 
+func TestModelPanelMarksCompletedTaskInTaskPanel(t *testing.T) {
+	now := time.Date(2026, 2, 10, 12, 15, 0, 0, time.UTC)
+	model := NewModel(func() time.Time { return now })
+	model.panelExpand["tasks"] = true
+
+	model.Apply(contracts.Event{
+		Type:      contracts.EventTypeTaskStarted,
+		TaskID:    "task-1",
+		TaskTitle: "First",
+		WorkerID:  "worker-0",
+		QueuePos:  1,
+		Timestamp: now.Add(-8 * time.Second),
+	})
+	model.Apply(contracts.Event{
+		Type:      contracts.EventTypeRunnerFinished,
+		TaskID:    "task-1",
+		TaskTitle: "First",
+		WorkerID:  "worker-0",
+		Message:   "completed",
+		Timestamp: now.Add(-6 * time.Second),
+	})
+
+	state := model.UIState()
+	line, ok := panelLineForTask(state.PanelLines, "task-1")
+	if !ok {
+		t.Fatalf("expected panel line for task-1, got %#v", state.PanelLines)
+	}
+	if !strings.Contains(line.Label, "✅") || !strings.HasPrefix(line.Label, "✅ ") {
+		t.Fatalf("expected completed marker in panel label, got %#v", line.Label)
+	}
+}
+
+func TestModelPanelDoesNotMarkInProgressTaskAsCompleted(t *testing.T) {
+	now := time.Date(2026, 2, 10, 12, 16, 0, 0, time.UTC)
+	model := NewModel(func() time.Time { return now })
+	model.panelExpand["tasks"] = true
+
+	model.Apply(contracts.Event{
+		Type:      contracts.EventTypeTaskStarted,
+		TaskID:    "task-1",
+		TaskTitle: "In Progress",
+		WorkerID:  "worker-0",
+		QueuePos:  1,
+		Timestamp: now.Add(-5 * time.Second),
+	})
+
+	state := model.UIState()
+	line, ok := panelLineForTask(state.PanelLines, "task-1")
+	if !ok {
+		t.Fatalf("expected panel line for task-1, got %#v", state.PanelLines)
+	}
+	if strings.Contains(line.Label, "✅") {
+		t.Fatalf("did not expect completed marker on in-progress task, got %#v", line.Label)
+	}
+}
+
 func TestModelInvalidKeysDoNotCorruptPanelNavigationState(t *testing.T) {
 	now := time.Date(2026, 2, 10, 12, 12, 0, 0, time.UTC)
 	model := NewModel(func() time.Time { return now })
@@ -486,6 +543,15 @@ func clonePanelExpand(in map[string]bool) map[string]bool {
 		out[id] = expanded
 	}
 	return out
+}
+
+func panelLineForTask(state []UIPanelLine, taskID string) (UIPanelLine, bool) {
+	for _, line := range state {
+		if line.ID == "task:"+taskID {
+			return line, true
+		}
+	}
+	return UIPanelLine{}, false
 }
 
 func panelExpandEquals(a map[string]bool, b map[string]bool) bool {

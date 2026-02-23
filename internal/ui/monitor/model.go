@@ -590,7 +590,7 @@ func (m *Model) panelRows() []panelRow {
 					rows = append(rows, panelRow{
 						id:          "worker:" + workerID + ":task:" + task.TaskID,
 						indent:      3,
-						label:       renderCurrentTask(task.TaskID, task.Title),
+						label:       renderTaskPanelLabel(task),
 						severity:    deriveTaskSeverity(task),
 						hasChildren: false,
 					})
@@ -607,7 +607,7 @@ func (m *Model) panelRows() []panelRow {
 			rows = append(rows, panelRow{
 				id:          "task:" + taskID,
 				indent:      2,
-				label:       renderCurrentTask(task.TaskID, task.Title),
+				label:       renderTaskPanelLabel(task),
 				severity:    deriveTaskSeverity(task),
 				hasChildren: false,
 			})
@@ -998,6 +998,14 @@ func renderCurrentTask(id string, title string) string {
 		return id
 	}
 	return id + " - " + title
+}
+
+func renderTaskPanelLabel(task TaskState) string {
+	label := renderCurrentTask(task.TaskID, task.Title)
+	if isCompletedTerminalStatus(normalizeTerminalStatus(task.TerminalStatus)) {
+		return "✅ " + label
+	}
+	return label
 }
 
 func renderHistoryLine(event contracts.Event) string {
