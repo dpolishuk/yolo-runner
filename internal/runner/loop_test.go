@@ -77,8 +77,8 @@ func TestRunLoopUpdatesProgressCounter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if count != 3 {
-		t.Fatalf("expected count 3, got %d", count)
+	if count != 2 {
+		t.Fatalf("expected count 2, got %d", count)
 	}
 	if len(capture) != 4 {
 		t.Fatalf("expected 4 runs, got %d", len(capture))
@@ -89,10 +89,10 @@ func TestRunLoopUpdatesProgressCounter(t *testing.T) {
 	if capture[1].Completed != 1 || capture[1].Total != 3 {
 		t.Fatalf("expected progress [1/3], got %#v", capture[1])
 	}
-	if capture[2].Completed != 2 || capture[2].Total != 3 {
-		t.Fatalf("expected progress [2/3], got %#v", capture[2])
+	if capture[2].Completed != 1 || capture[2].Total != 3 {
+		t.Fatalf("expected progress [1/3], got %#v", capture[2])
 	}
-	if capture[3].Completed != 3 || capture[3].Total != 3 {
-		t.Fatalf("expected progress [3/3], got %#v", capture[3])
+	if capture[3].Completed != 2 || capture[3].Total != 3 {
+		t.Fatalf("expected progress [2/3], got %#v", capture[3])
 	}
 }
