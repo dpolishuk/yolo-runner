@@ -123,3 +123,20 @@ func TestInstallMatrixEntriesIncludeCommandAndSuccessCriteria(t *testing.T) {
 	}
 }
 
+func TestInstallMatrixReferencesEgvRepository(t *testing.T) {
+	matrix := readRepoFile(t, "docs", "install-matrix.md")
+
+	required := []string{
+		"github.com/egv/yolo-runner/releases/latest/download/yolo-runner_linux_amd64.tar.gz",
+		"github.com/egv/yolo-runner/releases/download/$tag/yolo-runner_windows_amd64.zip",
+		"raw.githubusercontent.com/egv/yolo-runner/main/install.sh",
+		"raw.githubusercontent.com/egv/yolo-runner/main/install.ps1",
+		"api.github.com/repos/egv/yolo-runner/releases/latest",
+	}
+
+	for _, needle := range required {
+		if !strings.Contains(matrix, needle) {
+			t.Fatalf("install matrix missing expected repository reference: %q", needle)
+		}
+	}
+}
