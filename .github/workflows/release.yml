@@ -36,23 +36,36 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.22"
-      - name: Build release artifact
+          go-version-file: go.mod
+      - name: Build and package release artifact
         run: |
           mkdir -p dist
+          binaries="yolo-runner yolo-agent yolo-task yolo-tui yolo-linear-webhook yolo-linear-worker"
+
           if [[ "${{ matrix.os }}" == "windows" ]]; then
-            binary="yolo-runner.exe"
+            ext=".exe"
           else
-            binary="yolo-runner"
+            ext=""
           fi
 
-          GOOS="${{ matrix.os }}" GOARCH="${{ matrix.arch }}" \
-            go build -trimpath -o "dist/${binary}" ./cmd/yolo-runner
+          built=()
+          for binary in $binaries; do
+            output="dist/${binary}${ext}"
+            if [[ "$binary" == "yolo-runner" ]]; then
+              ldflags="-X main.yoloRunnerVersion=${{ github.ref_name }}"
+            else
+              ldflags=""
+            fi
+
+            GOOS="${{ matrix.os }}" GOARCH="${{ matrix.arch }}" \
+              go build -trimpath ${ldflags:+-ldflags "$ldflags"} -o "$output" "./cmd/$binary"
+            built+=("$output")
+          done
 
           if [[ "${{ matrix.os }}" == "windows" ]]; then
-            zip -j "dist/${{ matrix.artifact }}" "dist/${binary}"
+            zip -j "dist/${{ matrix.artifact }}" "${built[@]}"
           else
-            tar -czf "dist/${{ matrix.artifact }}" -C dist "${binary}"
+            tar -czf "dist/${{ matrix.artifact }}" -C dist "${built[@]##dist/}"
           fi
       - name: Generate checksum artifact
         run: |
