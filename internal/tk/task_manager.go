@@ -152,7 +152,7 @@ func (m *TaskManager) GetTaskTree(_ context.Context, rootID string) (*contracts.
 			parentID = rootID
 		}
 
-		deps := filterDependencies(raw.Deps, inScope, taskID)
+		deps := filterDependencies([]string(raw.Deps), inScope, taskID)
 		depsByTask[taskID] = deps
 
 		task := contracts.Task{
@@ -267,7 +267,7 @@ func (m *TaskManager) dependenciesForTask(taskID string) ([]string, error) {
 	}
 	for _, t := range tickets {
 		if t.ID == taskID {
-			return append([]string(nil), t.Deps...), nil
+			return append([]string(nil), []string(t.Deps)...), nil
 		}
 	}
 	return nil, nil

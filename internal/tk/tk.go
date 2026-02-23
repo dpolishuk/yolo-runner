@@ -1,6 +1,7 @@
 package tk
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -29,7 +30,64 @@ type ticket struct {
 	Type        string   `json:"type"`
 	Priority    any      `json:"priority"`
 	Parent      string   `json:"parent"`
-	Deps        []string `json:"deps"`
+	Deps        dependencyList `json:"deps"`
+}
+
+type dependencyList []string
+
+func (d *dependencyList) UnmarshalJSON(data []byte) error {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		*d = nil
+		return nil
+	}
+
+	switch trimmed[0] {
+	case '"':
+		var raw string
+		if err := json.Unmarshal(trimmed, &raw); err != nil {
+			*d = nil
+			return nil
+		}
+		*d = parseDependencyString(raw)
+		return nil
+	case '[':
+		var rawDeps []any
+		if err := json.Unmarshal(trimmed, &rawDeps); err != nil {
+			*d = nil
+			return nil
+		}
+		deps := make(dependencyList, 0, len(rawDeps))
+		for _, rawDep := range rawDeps {
+			rawDepString, ok := rawDep.(string)
+			if !ok {
+				continue
+			}
+			deps = append(deps, parseDependencyString(rawDepString)...)
+		}
+		*d = deps
+		return nil
+	default:
+		*d = nil
+		return nil
+	}
+}
+
+func parseDependencyString(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	deps := make([]string, 0, len(parts))
+	for _, dep := range parts {
+		dep = strings.TrimSpace(dep)
+		if dep == "" {
+			continue
+		}
+		deps = append(deps, dep)
+	}
+	return deps
 }
 
 func (a *Adapter) Ready(rootID string) (runner.Issue, error) {
