@@ -52,6 +52,7 @@ func (s StatusBar) Update(msg tea.Msg) (StatusBar, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		s.width = typed.Width
 	case UpdateStatusBarMsg:
+		s.stopping = false
 		s.taskID = typed.Event.IssueID
 		s.phase = getPhaseLabel(typed.Event.Type)
 		s.model = typed.Event.Model

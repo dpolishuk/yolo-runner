@@ -90,6 +90,7 @@ type fullscreenModel struct {
 	stream            <-chan streamMsg
 	errorLine         string
 	streamDone        bool
+	stopping          bool
 	holdOpen          bool
 	detailsCollapsed  bool
 	historyCollapsed  bool
@@ -151,6 +152,9 @@ func (m fullscreenModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case eventMsg:
 		m.monitor.Apply(typed.event)
+		if m.stopping && isTerminalEvent(typed.event.Type) {
+			m.stopping = false
+		}
 		m.viewport.SetContent(m.renderBody())
 		return m, waitForStreamMessage(m.stream)
 	case decodeErrorMsg:
@@ -166,7 +170,14 @@ func (m fullscreenModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		rawKey := typed.String()
 		normalizedKey := strings.ToLower(strings.TrimSpace(rawKey))
 		switch rawKey {
-		case "ctrl+c", "q", "Q", "ctrl+q", "esc", "escape":
+		case "ctrl+c", "q", "Q", "ctrl+q":
+			if m.streamDone {
+				return m, tea.Quit
+			}
+			m.stopping = true
+			m.viewport.SetContent(m.renderBody())
+			return m, nil
+		case "esc", "escape":
 			return m, tea.Quit
 		case "pgup", "pageup":
 			m.viewport.HalfViewUp()
@@ -514,6 +525,10 @@ func (m fullscreenModel) View() string {
 		foot.Render(truncateLine(m.statusLine, width)),
 		foot.Render(truncateLine(m.keyHint, width)),
 	}
+	if m.stopping {
+		stop := lipgloss.NewStyle().Width(width).Foreground(lipgloss.Color("230")).Background(lipgloss.Color("52")).Bold(true)
+		footer = append(footer, stop.Render("Stopping..."))
+	}
 	if m.errorLine != "" {
 		warn := lipgloss.NewStyle().Width(width).Foreground(lipgloss.Color("230")).Background(lipgloss.Color("94"))
 		footer = append(footer, warn.Render(truncateLine("⚠ decode: "+m.errorLine, width)))
@@ -523,6 +538,15 @@ func (m fullscreenModel) View() string {
 		footer = append(footer, done.Render("🧾 stream ended"))
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, m.viewport.View(), strings.Join(footer, "\n"))
+}
+
+func isTerminalEvent(eventType contracts.EventType) bool {
+	switch eventType {
+	case contracts.EventTypeRunnerFinished, contracts.EventTypeTaskFinished:
+		return true
+	default:
+		return false
+	}
 }
 
 func runFullscreenFromReader(reader io.Reader, out io.Writer, errOut io.Writer) error {
