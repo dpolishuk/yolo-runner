@@ -371,6 +371,9 @@ func RunOnceMain(args []string, runOnce runOnceFunc, exit exitFunc, stdout io.Wr
 	if stderr != nil {
 		fmt.Fprintln(stderr, compatibilityNotice())
 	}
+	if len(args) > 0 && args[0] == "update" {
+		return runUpdate(args[1:], stdout, stderr, nil)
+	}
 	if len(args) > 0 && args[0] == "init" {
 		return InitMain(args[1:], exit, stderr)
 	}
