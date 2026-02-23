@@ -55,6 +55,35 @@ func TestRunMainParsesFlagsAndInvokesRun(t *testing.T) {
 	}
 }
 
+func TestRunMainParsesQualityGateFlagsAndOverride(t *testing.T) {
+	called := false
+	var got runConfig
+	run := func(_ context.Context, cfg runConfig) error {
+		called = true
+		got = cfg
+		return nil
+	}
+
+	code := RunMain([]string{
+		"--repo", "/repo",
+		"--root", "root-1",
+		"--quality-threshold", "7",
+		"--allow-low-quality",
+	}, run)
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d", code)
+	}
+	if !called {
+		t.Fatalf("expected run function to be called")
+	}
+	if got.qualityThreshold != 7 {
+		t.Fatalf("expected quality-threshold=7, got %d", got.qualityThreshold)
+	}
+	if !got.allowLowQuality {
+		t.Fatalf("expected allow-low-quality=true, got false")
+	}
+}
+
 func TestRunMainRoutesConfigValidateSubcommand(t *testing.T) {
 	originalValidate := runConfigValidateCommand
 	t.Cleanup(func() {
@@ -1037,6 +1066,21 @@ func TestRunMainRejectsNegativeRetryBudget(t *testing.T) {
 	}
 	if called {
 		t.Fatalf("expected run function not to be called for invalid retry-budget")
+	}
+}
+
+func TestRunMainRejectsNegativeQualityThreshold(t *testing.T) {
+	called := false
+	code := RunMain([]string{"--repo", "/repo", "--root", "root-1", "--quality-threshold", "-1"}, func(context.Context, runConfig) error {
+		called = true
+		return nil
+	})
+
+	if code != 1 {
+		t.Fatalf("expected exit code 1 when quality-threshold is negative, got %d", code)
+	}
+	if called {
+		t.Fatalf("expected run function not to be called for invalid quality-threshold")
 	}
 }
 
