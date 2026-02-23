@@ -16,7 +16,7 @@ import (
 func TestResolveTrackerProfileDefaultsToTKWhenConfigMissing(t *testing.T) {
 	repoRoot := t.TempDir()
 
-	got, err := resolveTrackerProfile(repoRoot, "", "root-1", nil)
+	got, err := resolveTrackerProfile(repoRoot, "", "", "root-1", nil)
 	if err != nil {
 		t.Fatalf("expected default profile resolution, got %v", err)
 	}
@@ -44,7 +44,7 @@ profiles:
       type: tk
 `)
 
-	got, err := resolveTrackerProfile(repoRoot, "linear-dev", "yr-8nec", nil)
+	got, err := resolveTrackerProfile(repoRoot, "linear-dev", "", "yr-8nec", nil)
 	if err != nil {
 		t.Fatalf("expected selected profile, got %v", err)
 	}
@@ -65,7 +65,7 @@ profiles:
       type: tk
 `)
 
-	_, err := resolveTrackerProfile(repoRoot, "missing", "root-1", nil)
+	_, err := resolveTrackerProfile(repoRoot, "missing", "", "root-1", nil)
 	if err == nil {
 		t.Fatalf("expected unknown profile to fail")
 	}
@@ -86,7 +86,7 @@ profiles:
           root: roadmap
 `)
 
-	_, err := resolveTrackerProfile(repoRoot, "", "other-root", nil)
+	_, err := resolveTrackerProfile(repoRoot, "", "", "other-root", nil)
 	if err == nil {
 		t.Fatalf("expected tk scope mismatch to fail")
 	}
@@ -107,7 +107,7 @@ profiles:
           token_env: LINEAR_TOKEN
 `)
 
-	_, err := resolveTrackerProfile(repoRoot, "", "root-1", func(string) string { return "token" })
+	_, err := resolveTrackerProfile(repoRoot, "", "", "root-1", func(string) string { return "token" })
 	if err == nil {
 		t.Fatalf("expected missing linear workspace to fail")
 	}
@@ -131,7 +131,7 @@ profiles:
           workspace: anomaly
 `)
 
-	_, err := resolveTrackerProfile(repoRoot, "", "root-1", func(string) string { return "token" })
+	_, err := resolveTrackerProfile(repoRoot, "", "", "root-1", func(string) string { return "token" })
 	if err == nil {
 		t.Fatalf("expected missing linear token env to fail")
 	}
@@ -157,7 +157,7 @@ profiles:
           token_env: LINEAR_TOKEN
 `)
 
-	_, err := resolveTrackerProfile(repoRoot, "", "root-1", func(string) string { return "" })
+	_, err := resolveTrackerProfile(repoRoot, "", "", "root-1", func(string) string { return "" })
 	if err == nil {
 		t.Fatalf("expected missing linear token value to fail")
 	}
@@ -183,7 +183,7 @@ profiles:
           token_env: LINEAR_TOKEN
 `)
 
-	_, err := resolveTrackerProfile(repoRoot, "", "root-1", func(string) string { return "token" })
+	_, err := resolveTrackerProfile(repoRoot, "", "", "root-1", func(string) string { return "token" })
 	if err == nil {
 		t.Fatalf("expected multi-workspace configuration to fail")
 	}
@@ -209,7 +209,7 @@ profiles:
           token_env: GITHUB_TOKEN
 `)
 
-	_, err := resolveTrackerProfile(repoRoot, "", "root-1", func(string) string { return "token" })
+	_, err := resolveTrackerProfile(repoRoot, "", "", "root-1", func(string) string { return "token" })
 	if err == nil {
 		t.Fatalf("expected missing github owner to fail")
 	}
@@ -235,7 +235,7 @@ profiles:
           token_env: GITHUB_TOKEN
 `)
 
-	_, err := resolveTrackerProfile(repoRoot, "", "root-1", func(string) string { return "token" })
+	_, err := resolveTrackerProfile(repoRoot, "", "", "root-1", func(string) string { return "token" })
 	if err == nil {
 		t.Fatalf("expected missing github repo to fail")
 	}
@@ -260,7 +260,7 @@ profiles:
           repo: yolo-runner
 `)
 
-	_, err := resolveTrackerProfile(repoRoot, "", "root-1", func(string) string { return "token" })
+	_, err := resolveTrackerProfile(repoRoot, "", "", "root-1", func(string) string { return "token" })
 	if err == nil {
 		t.Fatalf("expected missing github token env to fail")
 	}
@@ -287,7 +287,7 @@ profiles:
           token_env: GITHUB_TOKEN
 `)
 
-	_, err := resolveTrackerProfile(repoRoot, "", "root-1", func(string) string { return "" })
+	_, err := resolveTrackerProfile(repoRoot, "", "", "root-1", func(string) string { return "" })
 	if err == nil {
 		t.Fatalf("expected missing github token value to fail")
 	}
@@ -314,7 +314,7 @@ profiles:
           token_env: GITHUB_TOKEN
 `)
 
-	_, err := resolveTrackerProfile(repoRoot, "", "root-1", func(string) string { return "token" })
+	_, err := resolveTrackerProfile(repoRoot, "", "", "root-1", func(string) string { return "token" })
 	if err == nil {
 		t.Fatalf("expected multi-repo configuration to fail")
 	}

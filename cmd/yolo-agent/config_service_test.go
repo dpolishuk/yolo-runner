@@ -142,7 +142,7 @@ profiles:
 `)
 
 	svc := newTrackerConfigService()
-	_, err := svc.ResolveTrackerProfile(repoRoot, "", "root-1", func(string) string { return "" })
+	_, err := svc.ResolveTrackerProfile(repoRoot, "", "", "root-1", func(string) string { return "" })
 	if err == nil {
 		t.Fatalf("expected missing token validation to fail")
 	}

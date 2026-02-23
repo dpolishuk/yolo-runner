@@ -3,9 +3,11 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
+	"github.com/anomalyco/yolo-runner/internal/beads"
 	"github.com/anomalyco/yolo-runner/internal/contracts"
 	githubtracker "github.com/anomalyco/yolo-runner/internal/github"
 	"github.com/anomalyco/yolo-runner/internal/linear"
@@ -16,6 +18,7 @@ const (
 	trackerTypeTK     = "tk"
 	trackerTypeLinear = "linear"
 	trackerTypeGitHub = "github"
+	trackerTypeBeads  = "beads"
 
 	defaultProfileName     = "default"
 	trackerConfigRelPath   = ".yolo-runner/config.yaml"
@@ -44,6 +47,7 @@ type trackerModel struct {
 	TK     *tkTrackerModel     `yaml:"tk,omitempty"`
 	Linear *linearTrackerModel `yaml:"linear,omitempty"`
 	GitHub *githubTrackerModel `yaml:"github,omitempty"`
+	Beads  *beadsTrackerModel  `yaml:"beads,omitempty"`
 }
 
 type tkTrackerModel struct {
@@ -81,6 +85,14 @@ type githubAuthModel struct {
 	TokenEnv string `yaml:"token_env"`
 }
 
+type beadsTrackerModel struct {
+	Scope beadsScopeModel `yaml:"scope"`
+}
+
+type beadsScopeModel struct {
+	Root string `yaml:"root"`
+}
+
 type yoloAgentConfigModel struct {
 	Backend          string `yaml:"backend,omitempty"`
 	Model            string `yaml:"model,omitempty"`
@@ -116,8 +128,8 @@ func resolveProfileSelectionPolicy(input profileSelectionInput) string {
 	return ""
 }
 
-func resolveTrackerProfile(repoRoot string, selectedProfile string, rootID string, getenv func(string) string) (resolvedTrackerProfile, error) {
-	return newTrackerConfigService().ResolveTrackerProfile(repoRoot, selectedProfile, rootID, getenv)
+func resolveTrackerProfile(repoRoot string, selectedProfile string, trackerTypeOverride string, rootID string, getenv func(string) string) (resolvedTrackerProfile, error) {
+	return newTrackerConfigService().ResolveTrackerProfile(repoRoot, selectedProfile, trackerTypeOverride, rootID, getenv)
 }
 
 func buildTaskManagerForTracker(repoRoot string, profile resolvedTrackerProfile) (contracts.TaskManager, error) {
@@ -177,22 +189,55 @@ func buildTaskManagerForTracker(repoRoot string, profile resolvedTrackerProfile)
 			return nil, fmt.Errorf("github auth validation failed for profile %q using %s: %w", profile.Name, tokenEnv, err)
 		}
 		return manager, nil
+	case trackerTypeBeads:
+		return beads.NewTaskManager(localRunner{dir: repoRoot}), nil
 	default:
 		return nil, fmt.Errorf("tracker type %q is not supported yet", profile.Tracker.Type)
 	}
 }
 
 func defaultTrackerProfilesModel() trackerProfilesModel {
+	return defaultTrackerProfilesModelForRepo("")
+}
+
+func defaultTrackerProfilesModelForRepo(repoRoot string) trackerProfilesModel {
+	trackerType := detectTrackerType(repoRoot)
 	return trackerProfilesModel{
 		DefaultProfile: defaultProfileName,
 		Profiles: map[string]trackerProfileDef{
 			defaultProfileName: {
 				Tracker: trackerModel{
-					Type: trackerTypeTK,
+					Type: trackerType,
 				},
 			},
 		},
 	}
+}
+
+func detectTrackerType(repoRoot string) string {
+	if repoRoot == "" {
+		repoRoot = "."
+	}
+	
+	beadsDir := filepath.Join(repoRoot, ".beads")
+	ticketsDir := filepath.Join(repoRoot, ".tickets")
+	
+	_, beadsExists := os.Stat(beadsDir)
+	_, ticketsExists := os.Stat(ticketsDir)
+	
+	if beadsExists == nil && ticketsExists == nil {
+		// Both exist, prefer beads (newer format)
+		return trackerTypeBeads
+	}
+	if beadsExists == nil {
+		return trackerTypeBeads
+	}
+	if ticketsExists == nil {
+		return trackerTypeTK
+	}
+	
+	// Neither exists, default to tk for backward compatibility
+	return trackerTypeTK
 }
 
 func validateTrackerModel(profileName string, model trackerModel, rootID string, getenv func(string) string) (trackerModel, error) {
@@ -262,6 +307,14 @@ func validateTrackerModel(profileName string, model trackerModel, rootID string,
 		model.GitHub.Scope.Owner = owner
 		model.GitHub.Scope.Repo = repo
 		model.GitHub.Auth.TokenEnv = tokenEnv
+		return model, nil
+	case trackerTypeBeads:
+		if model.Beads != nil {
+			scopeRoot := strings.TrimSpace(model.Beads.Scope.Root)
+			if scopeRoot != "" && strings.TrimSpace(rootID) != scopeRoot {
+				return trackerModel{}, fmt.Errorf("root %q is outside beads scope %q in profile %q", rootID, scopeRoot, profileName)
+			}
+		}
 		return model, nil
 	default:
 		return trackerModel{}, fmt.Errorf("unsupported tracker type %q for profile %q", model.Type, profileName)

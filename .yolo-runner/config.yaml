@@ -1,5 +1,8 @@
-default_profile: tk
+default_profile: beads
 profiles:
+  beads:
+    tracker:
+      type: beads
   tk:
     tracker:
       type: tk

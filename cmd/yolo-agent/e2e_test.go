@@ -428,7 +428,7 @@ profiles:
 		newLinearTaskManager = originalFactory
 	})
 
-	profile, err := resolveTrackerProfile(repo, "", rootID, os.Getenv)
+	profile, err := resolveTrackerProfile(repo, "", "", rootID, os.Getenv)
 	if err != nil {
 		t.Fatalf("resolve tracker profile: %v", err)
 	}
@@ -677,7 +677,7 @@ profiles:
 		newGitHubTaskManager = originalFactory
 	})
 
-	profile, err := resolveTrackerProfile(repo, "", rootID, os.Getenv)
+	profile, err := resolveTrackerProfile(repo, "", "", rootID, os.Getenv)
 	if err != nil {
 		t.Fatalf("resolve tracker profile: %v", err)
 	}
@@ -978,7 +978,7 @@ profiles:
 		newLinearTaskManager = originalFactory
 	})
 
-	profile, err := resolveTrackerProfile(repo, "", rootID, os.Getenv)
+	profile, err := resolveTrackerProfile(repo, "", "", rootID, os.Getenv)
 	if err != nil {
 		t.Fatalf("resolve tracker profile: %v", err)
 	}

@@ -32,7 +32,7 @@ func (s trackerConfigService) ResolveAgentDefaults(repoRoot string) (yoloAgentCo
 	return resolveYoloAgentConfigDefaults(model.Agent)
 }
 
-func (s trackerConfigService) ResolveTrackerProfile(repoRoot string, selectedProfile string, rootID string, getenv func(string) string) (resolvedTrackerProfile, error) {
+func (s trackerConfigService) ResolveTrackerProfile(repoRoot string, selectedProfile string, trackerTypeOverride string, rootID string, getenv func(string) string) (resolvedTrackerProfile, error) {
 	model, err := s.LoadModel(repoRoot)
 	if err != nil {
 		return resolvedTrackerProfile{}, err
@@ -51,6 +51,11 @@ func (s trackerConfigService) ResolveTrackerProfile(repoRoot string, selectedPro
 		return resolvedTrackerProfile{}, fmt.Errorf("tracker profile %q not found (available: %s)", profileName, strings.Join(sortedProfileNames(model.Profiles), ", "))
 	}
 
+	// Apply tracker type override from CLI flag if provided
+	if trackerTypeOverride != "" {
+		profile.Tracker.Type = trackerTypeOverride
+	}
+
 	validated, err := validateTrackerModel(profileName, profile.Tracker, rootID, getenv)
 	if err != nil {
 		return resolvedTrackerProfile{}, err
@@ -65,7 +70,12 @@ func (s trackerConfigService) loadModelFromPath(path string) (trackerProfilesMod
 	content, err := s.readFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return defaultTrackerProfilesModel(), nil
+			// Extract repo root from config path for auto-detection
+			// path is like: repoRoot/.yolo-runner/config.yaml
+			// so repoRoot is parent of .yolo-runner directory
+			yoloRunnerDir := filepath.Dir(path)
+			repoRoot := filepath.Dir(yoloRunnerDir)
+			return defaultTrackerProfilesModelForRepo(repoRoot), nil
 		}
 		return trackerProfilesModel{}, fmt.Errorf("cannot read config file at %s: %w", trackerConfigRelPath, err)
 	}
