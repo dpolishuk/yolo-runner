@@ -13,7 +13,18 @@ import (
 
 	"github.com/anomalyco/yolo-runner/internal/contracts"
 	"github.com/anomalyco/yolo-runner/internal/scheduler"
+	"github.com/anomalyco/yolo-runner/internal/tk"
 )
+
+type taskRuntimeConfig struct {
+	backend   string
+	model     string
+	skillset  string
+	tools     []string
+	mode      string
+	timeout   time.Duration
+	useConfig bool
+}
 
 type taskLock interface {
 	TryLock(taskID string) bool
@@ -260,6 +271,16 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 	}
 	_ = l.emit(ctx, contracts.Event{Type: contracts.EventTypeTaskStarted, TaskID: task.ID, TaskTitle: task.Title, WorkerID: worker, QueuePos: queuePos, Message: task.Title, Timestamp: time.Now().UTC()})
 
+	taskRuntime, err := resolveTaskRuntimeConfig(task, l.options)
+	if err != nil {
+		return summary, err
+	}
+
+	epicID := strings.TrimSpace(task.ParentID)
+	if epicID == "" {
+		epicID = strings.TrimSpace(l.options.ParentID)
+	}
+
 	if qualityScore, ok := taskExecutionThresholdScore(task.Metadata); ok && l.options.QualityGateThreshold > 0 && qualityScore < l.options.QualityGateThreshold {
 		qualityGateReason := fmt.Sprintf("quality score %d is below threshold %d", qualityScore, l.options.QualityGateThreshold)
 		qualityComment := qualityGateComment(task.Metadata, qualityScore, l.options.QualityGateThreshold)
@@ -441,33 +462,39 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 
 	reviewRetries := 0
 	reviewRetryFeedback := ""
-	implementModel := strings.TrimSpace(l.options.Model)
+	implementModel := taskRuntime.model
+	if implementModel == "" {
+		implementModel = strings.TrimSpace(l.options.Model)
+	}
 	fallbackModel := strings.TrimSpace(l.options.FallbackModel)
 	usedModelFallback := false
+	modelBeforeFallback := ""
 	modelFallbackReason := ""
-	epicID := strings.TrimSpace(task.ParentID)
-	if epicID == "" {
-		epicID = strings.TrimSpace(l.options.ParentID)
+	taskBackend := taskRuntime.backend
+	if taskBackend == "" {
+		taskBackend = strings.TrimSpace(l.options.Backend)
 	}
 	for {
 		reviewFailed := false
 		if err := l.tasks.SetTaskStatus(ctx, task.ID, contracts.TaskStatusInProgress); err != nil {
 			return summary, err
 		}
-		implementLogPath := defaultRunnerLogPath(taskRepoRoot, task.ID, epicID, l.options.Backend)
+		implementLogPath := defaultRunnerLogPath(taskRepoRoot, task.ID, epicID, taskBackend)
 		if err := ensureRunnerLogDirectory(taskRepoRoot, implementLogPath); err != nil {
 			return summary, err
 		}
-		implementStartMeta := buildRunnerStartedMetadata(contracts.RunnerModeImplement, l.options.Backend, implementModel, taskRepoRoot, implementLogPath, time.Now().UTC())
+		implementStartMeta := buildRunnerStartedMetadata(contracts.RunnerModeImplement, taskBackend, implementModel, taskRepoRoot, implementLogPath, time.Now().UTC())
+		appendTaskRuntimeMetadata(implementStartMeta, taskRuntime)
 		if usedModelFallback {
 			implementStartMeta = appendDecisionMetadata(implementStartMeta, "model_fallback", modelFallbackReason)
-			implementStartMeta["model_previous"] = strings.TrimSpace(l.options.Model)
+			implementStartMeta["model_previous"] = modelBeforeFallback
 			if fallbackModel != "" {
 				implementStartMeta["model_fallback"] = fallbackModel
 			}
 		}
 		_ = l.emit(ctx, contracts.Event{Type: contracts.EventTypeRunnerStarted, TaskID: task.ID, TaskTitle: task.Title, WorkerID: worker, ClonePath: taskRepoRoot, QueuePos: queuePos, Message: string(contracts.RunnerModeImplement), Metadata: implementStartMeta, Timestamp: time.Now().UTC()})
 		requestMetadata := map[string]string{"log_path": implementLogPath, "clone_path": taskRepoRoot}
+		appendTaskRuntimeMetadata(requestMetadata, taskRuntime)
 		if l.options.WatchdogTimeout > 0 {
 			requestMetadata["watchdog_timeout"] = l.options.WatchdogTimeout.String()
 		}
@@ -481,7 +508,7 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 			Mode:     contracts.RunnerModeImplement,
 			RepoRoot: taskRepoRoot,
 			Model:    implementModel,
-			Timeout:  l.options.RunnerTimeout,
+			Timeout:  taskRuntime.timeout,
 			Prompt:   buildImplementPrompt(task, reviewRetryFeedback, reviewRetries, l.options.TDDMode),
 			Metadata: requestMetadata,
 		}, task.ID, task.Title, worker, taskRepoRoot, queuePos)
@@ -497,13 +524,15 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 				"review_retry_count": fmt.Sprintf("%d", reviewRetries),
 			}
 			_ = l.emit(ctx, contracts.Event{Type: contracts.EventTypeReviewStarted, TaskID: task.ID, TaskTitle: task.Title, WorkerID: worker, ClonePath: taskRepoRoot, QueuePos: queuePos, Metadata: reviewTelemetry, Timestamp: time.Now().UTC()})
-			reviewLogPath := defaultRunnerLogPath(taskRepoRoot, task.ID, epicID, l.options.Backend)
+			reviewLogPath := defaultRunnerLogPath(taskRepoRoot, task.ID, epicID, taskBackend)
 			if err := ensureRunnerLogDirectory(taskRepoRoot, reviewLogPath); err != nil {
 				return summary, err
 			}
-			reviewStartMeta := buildRunnerStartedMetadata(contracts.RunnerModeReview, l.options.Backend, l.options.Model, taskRepoRoot, reviewLogPath, time.Now().UTC())
+			reviewStartMeta := buildRunnerStartedMetadata(contracts.RunnerModeReview, taskBackend, implementModel, taskRepoRoot, reviewLogPath, time.Now().UTC())
+			appendTaskRuntimeMetadata(reviewStartMeta, taskRuntime)
 			_ = l.emit(ctx, contracts.Event{Type: contracts.EventTypeRunnerStarted, TaskID: task.ID, TaskTitle: task.Title, WorkerID: worker, ClonePath: taskRepoRoot, QueuePos: queuePos, Message: string(contracts.RunnerModeReview), Metadata: reviewStartMeta, Timestamp: time.Now().UTC()})
 			reviewMetadata := map[string]string{"log_path": reviewLogPath, "clone_path": taskRepoRoot}
+			appendTaskRuntimeMetadata(reviewMetadata, taskRuntime)
 			if l.options.WatchdogTimeout > 0 {
 				reviewMetadata["watchdog_timeout"] = l.options.WatchdogTimeout.String()
 			}
@@ -516,8 +545,8 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 				ParentID: l.options.ParentID,
 				Mode:     contracts.RunnerModeReview,
 				RepoRoot: taskRepoRoot,
-				Model:    l.options.Model,
-				Timeout:  l.options.RunnerTimeout,
+				Model:    implementModel,
+				Timeout:  taskRuntime.timeout,
 				Prompt:   buildPrompt(task, contracts.RunnerModeReview, false),
 				Metadata: reviewMetadata,
 			}, task.ID, task.Title, worker, taskRepoRoot, queuePos)
@@ -539,7 +568,8 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 				if l.options.WatchdogInterval > 0 {
 					verdictMetadata["watchdog_interval"] = l.options.WatchdogInterval.String()
 				}
-				verdictStartMeta := buildRunnerStartedMetadata(contracts.RunnerModeReview, l.options.Backend, l.options.Model, taskRepoRoot, reviewLogPath, time.Now().UTC())
+				verdictStartMeta := buildRunnerStartedMetadata(contracts.RunnerModeReview, taskBackend, implementModel, taskRepoRoot, reviewLogPath, time.Now().UTC())
+				appendTaskRuntimeMetadata(verdictStartMeta, taskRuntime)
 				verdictStartMeta["review_phase"] = "verdict_retry"
 				_ = l.emit(ctx, contracts.Event{Type: contracts.EventTypeRunnerStarted, TaskID: task.ID, TaskTitle: task.Title, WorkerID: worker, ClonePath: taskRepoRoot, QueuePos: queuePos, Message: string(contracts.RunnerModeReview), Metadata: verdictStartMeta, Timestamp: time.Now().UTC()})
 
@@ -548,8 +578,8 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 					ParentID: l.options.ParentID,
 					Mode:     contracts.RunnerModeReview,
 					RepoRoot: taskRepoRoot,
-					Model:    l.options.Model,
-					Timeout:  l.options.RunnerTimeout,
+					Model:    implementModel,
+					Timeout:  taskRuntime.timeout,
 					Prompt:   buildReviewVerdictPrompt(task),
 					Metadata: verdictMetadata,
 				}, task.ID, task.Title, worker, taskRepoRoot, queuePos)
@@ -674,7 +704,7 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 								"triage_reason":   landingReason,
 							}, "retry", landingReason))
 							if isMergeConflictError(landingReason) {
-								remediationResult := l.runLandingMergeConflictRemediation(ctx, task, taskVCS, taskBranch, worker, taskRepoRoot, queuePos, landingReason)
+								remediationResult := l.runLandingMergeConflictRemediation(ctx, task, taskVCS, taskBranch, worker, taskRepoRoot, queuePos, landingReason, taskRuntime)
 								if remediationResult.Status != contracts.RunnerResultCompleted {
 									remediationReason := strings.TrimSpace(remediationResult.Reason)
 									if remediationReason == "" {
@@ -809,6 +839,7 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 			if !reviewFailed && !usedModelFallback && shouldUseModelFallbackForFailure(result, implementModel, fallbackModel) {
 				usedModelFallback = true
 				modelFallbackReason = strings.TrimSpace(result.Reason)
+				modelBeforeFallback = implementModel
 				implementModel = fallbackModel
 				continue
 			}
@@ -1027,7 +1058,7 @@ func (l *Loop) runRunnerWithMonitoring(ctx context.Context, request contracts.Ru
 	return result, err
 }
 
-func (l *Loop) runLandingMergeConflictRemediation(ctx context.Context, task contracts.Task, taskVCS contracts.VCS, taskBranch string, worker string, taskRepoRoot string, queuePos int, mergeFailureReason string) contracts.RunnerResult {
+func (l *Loop) runLandingMergeConflictRemediation(ctx context.Context, task contracts.Task, taskVCS contracts.VCS, taskBranch string, worker string, taskRepoRoot string, queuePos int, mergeFailureReason string, runtime taskRuntimeConfig) contracts.RunnerResult {
 	if taskVCS != nil && strings.TrimSpace(taskBranch) != "" {
 		if err := taskVCS.Checkout(ctx, taskBranch); err != nil {
 			return contracts.RunnerResult{Status: contracts.RunnerResultFailed, Reason: fmt.Sprintf("git checkout %s failed: %v", taskBranch, err)}
@@ -1039,15 +1070,26 @@ func (l *Loop) runLandingMergeConflictRemediation(ctx context.Context, task cont
 		epicID = strings.TrimSpace(l.options.ParentID)
 	}
 
-	remediationLogPath := defaultRunnerLogPath(taskRepoRoot, task.ID, epicID, l.options.Backend)
+	runtimeBackend := strings.TrimSpace(runtime.backend)
+	if runtimeBackend == "" {
+		runtimeBackend = strings.TrimSpace(l.options.Backend)
+	}
+	runtimeModel := strings.TrimSpace(runtime.model)
+	if runtimeModel == "" {
+		runtimeModel = strings.TrimSpace(l.options.Model)
+	}
+
+	remediationLogPath := defaultRunnerLogPath(taskRepoRoot, task.ID, epicID, runtimeBackend)
 	if err := ensureRunnerLogDirectory(taskRepoRoot, remediationLogPath); err != nil {
 		return contracts.RunnerResult{Status: contracts.RunnerResultFailed, Reason: err.Error()}
 	}
-	remediationStartMeta := buildRunnerStartedMetadata(contracts.RunnerModeImplement, l.options.Backend, l.options.Model, taskRepoRoot, remediationLogPath, time.Now().UTC())
+	remediationStartMeta := buildRunnerStartedMetadata(contracts.RunnerModeImplement, runtimeBackend, runtimeModel, taskRepoRoot, remediationLogPath, time.Now().UTC())
+	remediationStartMeta = appendTaskRuntimeMetadata(remediationStartMeta, runtime)
 	remediationStartMeta["landing_phase"] = "merge_conflict_remediation"
 	_ = l.emit(ctx, contracts.Event{Type: contracts.EventTypeRunnerStarted, TaskID: task.ID, TaskTitle: task.Title, WorkerID: worker, ClonePath: taskRepoRoot, QueuePos: queuePos, Message: string(contracts.RunnerModeImplement), Metadata: remediationStartMeta, Timestamp: time.Now().UTC()})
 
 	remediationMetadata := map[string]string{"log_path": remediationLogPath, "clone_path": taskRepoRoot, "landing_phase": "merge_conflict_remediation"}
+	remediationMetadata = appendTaskRuntimeMetadata(remediationMetadata, runtime)
 	if l.options.WatchdogTimeout > 0 {
 		remediationMetadata["watchdog_timeout"] = l.options.WatchdogTimeout.String()
 	}
@@ -1060,8 +1102,8 @@ func (l *Loop) runLandingMergeConflictRemediation(ctx context.Context, task cont
 		ParentID: l.options.ParentID,
 		Mode:     contracts.RunnerModeImplement,
 		RepoRoot: taskRepoRoot,
-		Model:    l.options.Model,
-		Timeout:  l.options.RunnerTimeout,
+		Model:    runtimeModel,
+		Timeout:  runtime.timeout,
 		Prompt:   buildMergeConflictRemediationPrompt(task, taskBranch, mergeFailureReason),
 		Metadata: remediationMetadata,
 	}, task.ID, task.Title, worker, taskRepoRoot, queuePos)
@@ -1071,6 +1113,86 @@ func (l *Loop) runLandingMergeConflictRemediation(ctx context.Context, task cont
 
 	_ = l.emit(ctx, contracts.Event{Type: contracts.EventTypeRunnerFinished, TaskID: task.ID, TaskTitle: task.Title, WorkerID: worker, ClonePath: taskRepoRoot, QueuePos: queuePos, Message: string(result.Status), Metadata: buildRunnerFinishedMetadata(result), Timestamp: time.Now().UTC()})
 	return result
+}
+
+func resolveTaskRuntimeConfig(task contracts.Task, options LoopOptions) (taskRuntimeConfig, error) {
+	backend := strings.TrimSpace(options.Backend)
+	model := strings.TrimSpace(options.Model)
+	timeout := options.RunnerTimeout
+
+	taskRuntime := taskRuntimeConfig{
+		backend: backend,
+		model:   model,
+		timeout: timeout,
+	}
+
+	overrides, hasOverrides, err := tk.ParseTicketFrontmatterFromDescription(task.Description)
+	if err != nil {
+		return taskRuntime, err
+	}
+	if !hasOverrides {
+		return taskRuntime, nil
+	}
+
+	taskRuntime.useConfig = true
+	if strings.TrimSpace(overrides.Backend) != "" {
+		taskRuntime.backend = strings.TrimSpace(overrides.Backend)
+	}
+	if strings.TrimSpace(overrides.Model) != "" {
+		taskRuntime.model = strings.TrimSpace(overrides.Model)
+	}
+	if strings.TrimSpace(overrides.Skillset) != "" {
+		taskRuntime.skillset = strings.TrimSpace(overrides.Skillset)
+	}
+	if len(overrides.Tools) > 0 {
+		taskRuntime.tools = append([]string{}, overrides.Tools...)
+	}
+	if strings.TrimSpace(overrides.Mode) != "" {
+		taskRuntime.mode = strings.TrimSpace(overrides.Mode)
+	}
+	if overrides.HasTimeout {
+		taskRuntime.timeout = overrides.Timeout
+	}
+	return taskRuntime, nil
+}
+
+func appendTaskRuntimeMetadata(metadata map[string]string, runtime taskRuntimeConfig) map[string]string {
+	if metadata == nil {
+		metadata = map[string]string{}
+	}
+	if runtime.useConfig {
+		metadata["runtime_config"] = "true"
+	}
+	if strings.TrimSpace(runtime.backend) != "" {
+		if strings.TrimSpace(metadata["backend"]) == "" {
+			metadata["backend"] = strings.TrimSpace(runtime.backend)
+		}
+		metadata["runtime_backend"] = strings.TrimSpace(runtime.backend)
+	}
+	if strings.TrimSpace(runtime.model) != "" {
+		if strings.TrimSpace(metadata["model"]) == "" {
+			metadata["model"] = strings.TrimSpace(runtime.model)
+		}
+		metadata["runtime_model"] = strings.TrimSpace(runtime.model)
+	}
+	if strings.TrimSpace(runtime.skillset) != "" {
+		metadata["skillset"] = strings.TrimSpace(runtime.skillset)
+		metadata["runtime_skillset"] = strings.TrimSpace(runtime.skillset)
+	}
+	if runtime.timeout >= 0 {
+		metadata["timeout"] = runtime.timeout.String()
+		metadata["runtime_timeout"] = runtime.timeout.String()
+	}
+	if len(runtime.tools) > 0 {
+		tools := strings.Join(runtime.tools, ",")
+		metadata["tools"] = tools
+		metadata["runtime_tools"] = tools
+	}
+	if strings.TrimSpace(runtime.mode) != "" {
+		metadata["task_mode"] = strings.TrimSpace(strings.ToLower(runtime.mode))
+		metadata["runtime_mode"] = strings.TrimSpace(strings.ToLower(runtime.mode))
+	}
+	return compactMetadata(metadata)
 }
 
 func buildPrompt(task contracts.Task, mode contracts.RunnerMode, tddMode bool) string {

@@ -132,6 +132,42 @@ func ParseTicketFrontmatterConfig(raw string) (TicketFrontmatterConfig, error) {
 	return config, nil
 }
 
+// ParseTicketFrontmatterFromDescription extracts and parses leading YAML frontmatter from task descriptions.
+func ParseTicketFrontmatterFromDescription(raw string) (TicketFrontmatterConfig, bool, error) {
+	frontmatter, found, err := extractLeadingFrontmatter(raw)
+	if err != nil {
+		return TicketFrontmatterConfig{}, found, err
+	}
+	if !found {
+		return TicketFrontmatterConfig{}, false, nil
+	}
+	if strings.TrimSpace(frontmatter) == "" {
+		return TicketFrontmatterConfig{}, true, nil
+	}
+	config, err := ParseTicketFrontmatterConfig(frontmatter)
+	if err != nil {
+		return TicketFrontmatterConfig{}, true, err
+	}
+	return config, true, nil
+}
+
+func extractLeadingFrontmatter(raw string) (string, bool, error) {
+	raw = strings.TrimLeft(raw, "\r\n\t ")
+	lines := strings.Split(raw, "\n")
+	if len(lines) == 0 {
+		return "", false, nil
+	}
+	if strings.TrimSpace(lines[0]) != "---" {
+		return "", false, nil
+	}
+	for i := 1; i < len(lines); i++ {
+		if strings.TrimSpace(lines[i]) == "---" {
+			return strings.Join(lines[1:i], "\n"), true, nil
+		}
+	}
+	return "", true, fmt.Errorf("frontmatter must include closing --- delimiter")
+}
+
 func contains(values []string, value string) bool {
 	for _, candidate := range values {
 		if candidate == value {
@@ -140,4 +176,3 @@ func contains(values []string, value string) bool {
 	}
 	return false
 }
-
