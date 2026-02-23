@@ -636,6 +636,27 @@ profiles:
 	}
 }
 
+func TestRunMainParsesTDDFlag(t *testing.T) {
+	called := false
+	var got runConfig
+	run := func(_ context.Context, cfg runConfig) error {
+		called = true
+		got = cfg
+		return nil
+	}
+
+	code := RunMain([]string{"--repo", "/repo", "--root", "root-1", "--tdd"}, run)
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d", code)
+	}
+	if !called {
+		t.Fatalf("expected run function to be called")
+	}
+	if !got.tddMode {
+		t.Fatalf("expected tdd mode to be true")
+	}
+}
+
 func TestRunMainUsesZeroRunnerTimeoutByDefault(t *testing.T) {
 	called := false
 	var got runConfig

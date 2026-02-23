@@ -28,9 +28,12 @@ Your purpose is to implement the single task described in the prompt using stric
 - Do NOT ask the user for clarification; proceed with best-effort assumptions.
 
 **TDD requirements:**
-- NEVER write implementation code before a failing test exists.
+- RED-GREEN-REFACTOR is required:
+- RED: write or update a test that demonstrates the behavior gap before implementation.
 - Watch the test fail before writing code.
-- Write minimal code to pass each test.
+- GREEN: write the minimal implementation needed to make the test pass.
+- Refactor only after the tests are green, preserving behavior and test coverage.
+- Write minimal implementation changes to pass each test.
 - Do not modify unrelated files.
 - Use real code, not mocks unless unavoidable.
 - All tests must pass before marking the task complete.

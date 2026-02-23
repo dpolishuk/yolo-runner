@@ -3,8 +3,8 @@ package main
 import (
 	"context"
 	"flag"
-	"io"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -28,8 +28,8 @@ const (
 	backendCodex    = "codex"
 	backendClaude   = "claude"
 	backendKimi     = "kimi"
-	agentModeStream  = "stream"
-	agentModeUI      = "ui"
+	agentModeStream = "stream"
+	agentModeUI     = "ui"
 )
 
 type runConfig struct {
@@ -48,9 +48,10 @@ type runConfig struct {
 	mode                 string
 	stream               bool
 	verboseStream        bool
-	streamOutputInterval  time.Duration
-	streamOutputBuffer    int
-	runnerTimeout         time.Duration
+	streamOutputInterval time.Duration
+	streamOutputBuffer   int
+	tddMode              bool
+	runnerTimeout        time.Duration
 	watchdogTimeout      time.Duration
 	watchdogInterval     time.Duration
 	eventsPath           string
@@ -96,6 +97,7 @@ func RunMain(args []string, run func(context.Context, runConfig) error) int {
 	dryRun := fs.Bool("dry-run", false, "Dry run task loop")
 	stream := fs.Bool("stream", false, "Emit NDJSON events to stdout for piping into yolo-tui")
 	verboseStream := fs.Bool("verbose-stream", false, "Emit every runner_output event without coalescing")
+	tddMode := fs.Bool("tdd", false, "Enable strict test-first Red/Green/Refactor workflow")
 	streamOutputInterval := fs.Duration("stream-output-interval", 150*time.Millisecond, "Minimum interval between emitted runner_output events when not verbose")
 	streamOutputBuffer := fs.Int("stream-output-buffer", 64, "Maximum coalesced runner_output events retained before drop")
 	mode := fs.String("mode", "", "Output mode for runner events (stream, ui)")
@@ -228,6 +230,7 @@ func RunMain(args []string, run func(context.Context, runConfig) error) int {
 		stream:               selectedStream,
 		mode:                 selectedMode,
 		verboseStream:        *verboseStream,
+		tddMode:              *tddMode,
 		streamOutputInterval: *streamOutputInterval,
 		streamOutputBuffer:   *streamOutputBuffer,
 		qualityThreshold:     *qualityThreshold,
@@ -388,6 +391,7 @@ func runWithComponents(ctx context.Context, cfg runConfig, taskManager contracts
 		RunnerTimeout:        cfg.runnerTimeout,
 		WatchdogTimeout:      cfg.watchdogTimeout,
 		WatchdogInterval:     cfg.watchdogInterval,
+		TDDMode:              cfg.tddMode,
 		VCS:                  vcs,
 		RequireReview:        true,
 		MergeOnSuccess:       true,
@@ -466,6 +470,7 @@ func runWithStorageComponents(ctx context.Context, cfg runConfig, storage contra
 		RunnerTimeout:        cfg.runnerTimeout,
 		WatchdogTimeout:      cfg.watchdogTimeout,
 		WatchdogInterval:     cfg.watchdogInterval,
+		TDDMode:              cfg.tddMode,
 		VCS:                  vcs,
 		RequireReview:        true,
 		MergeOnSuccess:       true,
