@@ -317,6 +317,19 @@ func TestStylePanelLinesUsesDepthWithoutMarkers(t *testing.T) {
 	}
 }
 
+func TestStylePanelLinesAddsCompletedMarkerFromUIState(t *testing.T) {
+	lines := []monitor.UIPanelLine{
+		{ID: "task:task-1", Depth: 2, Label: "task-1 - First", Completed: true, Leaf: true},
+	}
+	styled := stylePanelLines(lines, 80)
+	if len(styled) != 1 {
+		t.Fatalf("expected one line, got %#v", styled)
+	}
+	if !contains(styled[0].text, "✅ task-1 - First") {
+		t.Fatalf("expected completed marker to be added from state, got %q", styled[0].text)
+	}
+}
+
 func TestRenderTopKeepsHeaderSingleLineAtTerminalWidth(t *testing.T) {
 	state := monitor.UIState{
 		CurrentTask:   "yr-very-long-task-id-with-a-title-that-keeps-going",
