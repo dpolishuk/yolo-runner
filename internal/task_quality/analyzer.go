@@ -1,6 +1,7 @@
 package taskquality
 
 import (
+	"fmt"
 	"strings"
 )
 
@@ -131,16 +132,16 @@ func acceptanceCoverageScore(task TaskInput, issues *[]string) int {
 		return 0
 	}
 
-	lines := 0
+	acceptanceCount := 0
 	for _, line := range strings.Split(trimmed, "\n") {
 		line = strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(line, "-"), "*"))
 		if strings.TrimSpace(line) != "" {
-			lines++
+			acceptanceCount++
 		}
 	}
 
 	score := 0
-	if lines > 0 {
+	if acceptanceCount > 0 {
 		score += 10
 	}
 
@@ -148,6 +149,12 @@ func acceptanceCoverageScore(task TaskInput, issues *[]string) int {
 		score += 10
 	} else {
 		*issues = append(*issues, "acceptance criteria should use Given/When/Then format")
+	}
+
+	testingPlanCount := concreteTestCommandCount(task.TestingPlan)
+	if testingPlanCount < acceptanceCount {
+		missing := acceptanceCount - testingPlanCount
+		*issues = append(*issues, fmt.Sprintf("acceptance criteria coverage gaps: missing %d of %d criteria in testing plan", missing, acceptanceCount))
 	}
 
 	return score
@@ -209,6 +216,21 @@ func hasConcreteTestCommand(text string) bool {
 		strings.Contains(text, "pytest") ||
 		strings.Contains(text, "npm test") ||
 		strings.Contains(text, "go run")
+}
+
+func concreteTestCommandCount(plan string) int {
+	lines := 0
+	for _, line := range strings.Split(plan, "\n") {
+		trimmed := strings.ToLower(strings.TrimSpace(line))
+		if trimmed == "" {
+			continue
+		}
+		trimmed = strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(trimmed, "-"), "*"))
+		if hasConcreteTestCommand(trimmed) {
+			lines++
+		}
+	}
+	return lines
 }
 
 func containsAny(haystack string, needles []string) bool {
