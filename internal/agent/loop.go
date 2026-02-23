@@ -47,6 +47,7 @@ type LoopOptions struct {
 	WatchdogInterval     time.Duration
 	HeartbeatInterval    time.Duration
 	NoOutputWarningAfter time.Duration
+	TDDMode              bool
 	QualityGateThreshold int
 	AllowLowQuality      bool
 	VCS                  contracts.VCS
@@ -251,9 +252,9 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 		qualityGateReason := fmt.Sprintf("quality score %d is below threshold %d", qualityScore, l.options.QualityGateThreshold)
 		qualityComment := qualityGateComment(task.Metadata, qualityScore, l.options.QualityGateThreshold)
 		qualityMetadata := map[string]string{
-			"quality_score":     strconv.Itoa(qualityScore),
-			"quality_threshold": strconv.Itoa(l.options.QualityGateThreshold),
-			"quality_gate":      "true",
+			"quality_score":        strconv.Itoa(qualityScore),
+			"quality_threshold":    strconv.Itoa(l.options.QualityGateThreshold),
+			"quality_gate":         "true",
 			"quality_gate_comment": qualityComment,
 		}
 		if l.options.AllowLowQuality {
@@ -278,11 +279,11 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 			})
 		} else {
 			blockedData := map[string]string{
-				"triage_status":     "blocked",
-				"triage_reason":     qualityGateReason,
-				"quality_score":     strconv.Itoa(qualityScore),
-				"quality_threshold": strconv.Itoa(l.options.QualityGateThreshold),
-				"quality_gate":      "true",
+				"triage_status":        "blocked",
+				"triage_reason":        qualityGateReason,
+				"quality_score":        strconv.Itoa(qualityScore),
+				"quality_threshold":    strconv.Itoa(l.options.QualityGateThreshold),
+				"quality_gate":         "true",
 				"quality_gate_comment": qualityComment,
 			}
 			blockedData = appendDecisionMetadata(blockedData, "blocked", qualityGateReason)
@@ -394,7 +395,7 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 			RepoRoot: taskRepoRoot,
 			Model:    l.options.Model,
 			Timeout:  l.options.RunnerTimeout,
-			Prompt:   buildImplementPrompt(task, reviewRetryFeedback, reviewRetries),
+			Prompt:   buildImplementPrompt(task, reviewRetryFeedback, reviewRetries, l.options.TDDMode),
 			Metadata: requestMetadata,
 		}, task.ID, task.Title, worker, taskRepoRoot, queuePos)
 		if err != nil {
@@ -430,7 +431,7 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 				RepoRoot: taskRepoRoot,
 				Model:    l.options.Model,
 				Timeout:  l.options.RunnerTimeout,
-				Prompt:   buildPrompt(task, contracts.RunnerModeReview),
+				Prompt:   buildPrompt(task, contracts.RunnerModeReview, false),
 				Metadata: reviewMetadata,
 			}, task.ID, task.Title, worker, taskRepoRoot, queuePos)
 			if reviewErr != nil {
@@ -978,7 +979,7 @@ func (l *Loop) runLandingMergeConflictRemediation(ctx context.Context, task cont
 	return result
 }
 
-func buildPrompt(task contracts.Task, mode contracts.RunnerMode) string {
+func buildPrompt(task contracts.Task, mode contracts.RunnerMode, tddMode bool) string {
 	modeLine := "Implementation"
 	if mode == contracts.RunnerModeReview {
 		modeLine = "Review"
@@ -1002,14 +1003,26 @@ func buildPrompt(task contracts.Task, mode contracts.RunnerMode) string {
 			"- Do not call task-selection/status tools (the runner owns task state).",
 			"- Keep edits scoped to files required for this task.",
 		}, "\n"))
-		sections = append(sections, strings.Join([]string{
-			"Strict TDD Checklist:",
-			"[ ] Add or update a test that fails for the target behavior.",
-			"[ ] Run the targeted test and confirm it fails before implementation.",
-			"[ ] Implement the minimal code change required for the test to pass.",
-			"[ ] Re-run targeted tests, then run broader relevant tests.",
-			"[ ] Stop only when all tests pass and acceptance criteria are covered.",
-		}, "\n"))
+		if tddMode {
+			sections = append(sections, strings.Join([]string{
+				"Strict TDD Workflow (Red-Green-Refactor):",
+				"1. RED: Add or update a test that fails for the target behavior.",
+				"2. GREEN: Implement the minimal code required for that test to pass.",
+				"3. REFACTOR: Improve the design while preserving passing tests.",
+				"- Required sequence: test-first, targeted fail check, minimal green fix, then refactor.",
+				"- Re-run targeted tests, then run broader relevant tests.",
+				"- Stop only when all tests pass and acceptance criteria are covered.",
+			}, "\n"))
+		} else {
+			sections = append(sections, strings.Join([]string{
+				"Strict TDD Checklist:",
+				"[ ] Add or update a test that fails for the target behavior.",
+				"[ ] Run the targeted test and confirm it fails before implementation.",
+				"[ ] Implement the minimal code change required for the test to pass.",
+				"[ ] Re-run targeted tests, then run broader relevant tests.",
+				"[ ] Stop only when all tests pass and acceptance criteria are covered.",
+			}, "\n"))
+		}
 		if retryAttempt, blockers := reviewRetryPromptContext(task.Metadata); retryAttempt > 0 {
 			retrySection := []string{
 				"Retry Context:",
@@ -1106,8 +1119,8 @@ func reviewRetryBlockersFromMetadata(metadata map[string]string) string {
 	return ""
 }
 
-func buildImplementPrompt(task contracts.Task, reviewFeedback string, reviewRetryCount int) string {
-	prompt := buildPrompt(task, contracts.RunnerModeImplement)
+func buildImplementPrompt(task contracts.Task, reviewFeedback string, reviewRetryCount int, tddMode bool) string {
+	prompt := buildPrompt(task, contracts.RunnerModeImplement, tddMode)
 	feedback := strings.TrimSpace(reviewFeedback)
 	if feedback == "" || reviewRetryCount <= 0 {
 		return prompt
@@ -1125,7 +1138,7 @@ func buildImplementPrompt(task contracts.Task, reviewFeedback string, reviewRetr
 }
 
 func buildMergeConflictRemediationPrompt(task contracts.Task, taskBranch string, mergeFailureReason string) string {
-	base := buildImplementPrompt(task, "", 0)
+	base := buildImplementPrompt(task, "", 0, false)
 	sections := []string{
 		base,
 		strings.Join([]string{

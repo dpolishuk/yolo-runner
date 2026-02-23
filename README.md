@@ -124,6 +124,14 @@ Use streaming mode to drive `yolo-tui` from stdin in real time:
 
 The monitor is decoder-safe: malformed NDJSON lines are surfaced as `decode_error` warnings in the UI and stderr while valid subsequent events continue rendering.
 
+`yolo-agent` also accepts `--tdd` to enable strict Red/Green/Refactor guidance in implementation prompts:
+
+```bash
+./bin/yolo-agent --repo . --root <root-id> --model openai/gpt-5.3-codex --tdd --stream | ./bin/yolo-tui --events-stdin
+```
+
+When `--tdd` is omitted, the agent still enforces existing implementation requirements but does not include the full explicit Red/Green/Refactor workflow.
+
 ### `yolo-agent` preflight (commit + push first)
 
 Always commit and push ticket/config changes before starting `yolo-agent`.

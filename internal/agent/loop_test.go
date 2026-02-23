@@ -37,7 +37,7 @@ func TestLoopCompletesTask(t *testing.T) {
 }
 
 func TestBuildPromptReviewRequiresStructuredVerdict(t *testing.T) {
-	prompt := buildPrompt(contracts.Task{ID: "t-1", Title: "Task 1", Description: "Check behavior"}, contracts.RunnerModeReview)
+	prompt := buildPrompt(contracts.Task{ID: "t-1", Title: "Task 1", Description: "Check behavior"}, contracts.RunnerModeReview, false)
 	if !strings.Contains(prompt, "Mode: Review") {
 		t.Fatalf("expected review mode marker in prompt, got %q", prompt)
 	}
@@ -50,7 +50,7 @@ func TestBuildPromptReviewRequiresStructuredVerdict(t *testing.T) {
 }
 
 func TestBuildPromptImplementExcludesReviewVerdictInstructions(t *testing.T) {
-	prompt := buildPrompt(contracts.Task{ID: "t-1", Title: "Task 1", Description: "Implement behavior"}, contracts.RunnerModeImplement)
+	prompt := buildPrompt(contracts.Task{ID: "t-1", Title: "Task 1", Description: "Implement behavior"}, contracts.RunnerModeImplement, false)
 	if !strings.Contains(prompt, "Mode: Implementation") {
 		t.Fatalf("expected implementation mode marker in prompt, got %q", prompt)
 	}
@@ -60,7 +60,7 @@ func TestBuildPromptImplementExcludesReviewVerdictInstructions(t *testing.T) {
 }
 
 func TestBuildPromptImplementIncludesCommandContractAndTDDChecklist(t *testing.T) {
-	prompt := buildPrompt(contracts.Task{ID: "t-1", Title: "Task 1", Description: "Implement behavior"}, contracts.RunnerModeImplement)
+	prompt := buildPrompt(contracts.Task{ID: "t-1", Title: "Task 1", Description: "Implement behavior"}, contracts.RunnerModeImplement, false)
 
 	required := []string{
 		"Command Contract:",
@@ -81,11 +81,31 @@ func TestBuildPromptImplementIncludesCommandContractAndTDDChecklist(t *testing.T
 	}
 }
 
+func TestBuildPromptImplementIncludesRedGreenRefactorWorkflowWhenTDDModeEnabled(t *testing.T) {
+	prompt := buildPrompt(contracts.Task{ID: "t-1", Title: "Task 1", Description: "Implement behavior"}, contracts.RunnerModeImplement, true)
+
+	required := []string{
+		"Strict TDD Workflow (Red-Green-Refactor):",
+		"1. RED: Add or update a test that fails for the target behavior.",
+		"2. GREEN: Implement the minimal code required for that test to pass.",
+		"3. REFACTOR: Improve the design while preserving passing tests.",
+		"- Required sequence: test-first, targeted fail check, minimal green fix, then refactor.",
+		"- Re-run targeted tests, then run broader relevant tests.",
+		"- Stop only when all tests pass and acceptance criteria are covered.",
+	}
+	for _, needle := range required {
+		if !strings.Contains(prompt, needle) {
+			t.Fatalf("expected prompt to include %q, got %q", needle, prompt)
+		}
+	}
+}
+
 func TestBuildImplementPromptIncludesReviewFeedbackWhenRetrying(t *testing.T) {
 	prompt := buildImplementPrompt(
 		contracts.Task{ID: "t-1", Title: "Task 1", Description: "Implement behavior"},
 		"add RED/GREEN note evidence to ticket",
 		1,
+		false,
 	)
 
 	if !strings.Contains(prompt, "Review Remediation Loop: Attempt 1") {
