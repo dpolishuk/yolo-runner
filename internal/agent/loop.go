@@ -42,6 +42,7 @@ type LoopOptions struct {
 	RepoRoot             string
 	Backend              string
 	Model                string
+	FallbackModel        string
 	RunnerTimeout        time.Duration
 	WatchdogTimeout      time.Duration
 	WatchdogInterval     time.Duration
@@ -365,6 +366,10 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 
 	reviewRetries := 0
 	reviewRetryFeedback := ""
+	implementModel := strings.TrimSpace(l.options.Model)
+	fallbackModel := strings.TrimSpace(l.options.FallbackModel)
+	usedModelFallback := false
+	modelFallbackReason := ""
 	epicID := strings.TrimSpace(task.ParentID)
 	if epicID == "" {
 		epicID = strings.TrimSpace(l.options.ParentID)
@@ -378,7 +383,14 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 		if err := ensureRunnerLogDirectory(taskRepoRoot, implementLogPath); err != nil {
 			return summary, err
 		}
-		implementStartMeta := buildRunnerStartedMetadata(contracts.RunnerModeImplement, l.options.Backend, l.options.Model, taskRepoRoot, implementLogPath, time.Now().UTC())
+		implementStartMeta := buildRunnerStartedMetadata(contracts.RunnerModeImplement, l.options.Backend, implementModel, taskRepoRoot, implementLogPath, time.Now().UTC())
+		if usedModelFallback {
+			implementStartMeta = appendDecisionMetadata(implementStartMeta, "model_fallback", modelFallbackReason)
+			implementStartMeta["model_previous"] = strings.TrimSpace(l.options.Model)
+			if fallbackModel != "" {
+				implementStartMeta["model_fallback"] = fallbackModel
+			}
+		}
 		_ = l.emit(ctx, contracts.Event{Type: contracts.EventTypeRunnerStarted, TaskID: task.ID, TaskTitle: task.Title, WorkerID: worker, ClonePath: taskRepoRoot, QueuePos: queuePos, Message: string(contracts.RunnerModeImplement), Metadata: implementStartMeta, Timestamp: time.Now().UTC()})
 		requestMetadata := map[string]string{"log_path": implementLogPath, "clone_path": taskRepoRoot}
 		if l.options.WatchdogTimeout > 0 {
@@ -393,7 +405,7 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 			ParentID: l.options.ParentID,
 			Mode:     contracts.RunnerModeImplement,
 			RepoRoot: taskRepoRoot,
-			Model:    l.options.Model,
+			Model:    implementModel,
 			Timeout:  l.options.RunnerTimeout,
 			Prompt:   buildImplementPrompt(task, reviewRetryFeedback, reviewRetries, l.options.TDDMode),
 			Metadata: requestMetadata,
@@ -719,6 +731,13 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 			summary.Blocked++
 			return summary, nil
 		case contracts.RunnerResultFailed:
+			if !reviewFailed && !usedModelFallback && shouldUseModelFallbackForFailure(result, implementModel, fallbackModel) {
+				usedModelFallback = true
+				modelFallbackReason = strings.TrimSpace(result.Reason)
+				implementModel = fallbackModel
+				continue
+			}
+
 			reviewFail := reviewFailed || isReviewFailResult(result)
 			if reviewFail {
 				feedback := strings.TrimSpace(reviewFailFeedbackFromArtifacts(result))
@@ -1204,6 +1223,38 @@ func isReviewFailResult(result contracts.RunnerResult) bool {
 	}
 	lower := strings.ToLower(reason)
 	return strings.HasPrefix(lower, "review rejected") || strings.Contains(lower, "review verdict returned fail")
+}
+
+func shouldUseModelFallbackForFailure(result contracts.RunnerResult, currentModel string, fallbackModel string) bool {
+	if result.Status != contracts.RunnerResultFailed {
+		return false
+	}
+	if strings.TrimSpace(currentModel) == "" || strings.TrimSpace(fallbackModel) == "" {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(currentModel), strings.TrimSpace(fallbackModel)) {
+		return false
+	}
+
+	reason := strings.TrimSpace(result.Reason)
+	if reason == "" {
+		return false
+	}
+	lower := strings.ToLower(reason)
+	for _, needle := range []string{
+		"type failure",
+		"type error",
+		"type checker",
+		"tool failure",
+		"tool call",
+		"tool error",
+		"tool unavailable",
+	} {
+		if strings.Contains(lower, needle) {
+			return true
+		}
+	}
+	return false
 }
 
 func autoLandingCommitMessage(task contracts.Task) string {
