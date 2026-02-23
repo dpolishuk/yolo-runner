@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -100,7 +101,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case runner.Event:
 		m.appendLogLines(formatRunnerEventLine(typed))
 		if typed.Message != "" {
-			m.appendLogLines(formatActionMessageLine(typed.Message))
+			if markdownMessage, ok := formatACPMessageAsMarkdown(typed.Message); ok {
+				m.markdownBubble, _ = m.markdownBubble.Update(SetMarkdownContentMsg{Content: markdownMessage})
+				m.appendLogLines(m.markdownBubble.View())
+			} else {
+				m.appendLogLines(formatActionMessageLine(typed.Message))
+			}
 		}
 		m.taskID = typed.IssueID
 		m.taskTitle = typed.Title
@@ -336,6 +342,36 @@ func formatActionMessageLine(message string) string {
 		Italic(true)
 
 	return style.Render("→ " + cleanMessage)
+}
+
+func formatACPMessageAsMarkdown(message string) (string, bool) {
+	content := strings.TrimSpace(message)
+	if content == "" {
+		return "", false
+	}
+
+	for _, prefix := range []string{"agent_message", "user_message"} {
+		if !strings.HasPrefix(content, prefix) {
+			continue
+		}
+
+		payload := strings.TrimSpace(strings.TrimPrefix(content, prefix))
+		if payload == "" {
+			return "", false
+		}
+
+		if strings.HasPrefix(payload, `"`) {
+			quoted, err := strconv.Unquote(payload)
+			if err != nil {
+				return "", false
+			}
+			return quoted, true
+		}
+
+		return payload, true
+	}
+
+	return "", false
 }
 
 func (m Model) lastOutputAge() string {
