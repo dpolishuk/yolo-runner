@@ -163,13 +163,15 @@ func (m fullscreenModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.viewport.SetContent(m.renderBody())
 		return m, nil
 	case tea.KeyMsg:
-		switch typed.String() {
-		case "ctrl+c", "q":
+		rawKey := typed.String()
+		normalizedKey := strings.ToLower(strings.TrimSpace(rawKey))
+		switch rawKey {
+		case "ctrl+c", "q", "Q", "ctrl+q", "esc", "escape":
 			return m, tea.Quit
-		case "pgup":
+		case "pgup", "pageup":
 			m.viewport.HalfViewUp()
 			return m, nil
-		case "pgdown":
+		case "pgdown", "pagedown":
 			m.viewport.HalfViewDown()
 			return m, nil
 		case "d":
@@ -184,12 +186,12 @@ func (m fullscreenModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.historyCollapsed = !m.historyCollapsed
 			m.viewport.SetContent(m.renderBody())
 			return m, nil
-		case "up", "down", "left", "right", "j", "k", "h", "l", "enter", " ":
-			key := typed.String()
-			if key == " " {
-				key = "space"
-			}
-			m.monitor.HandleKey(key)
+		case " ":
+			normalizedKey = "space"
+		}
+		switch normalizedKey {
+		case "up", "down", "left", "right", "j", "k", "h", "l", "enter", "space":
+			m.monitor.HandleKey(normalizedKey)
 			m.viewport.SetContent(m.renderBody())
 			return m, nil
 		}
