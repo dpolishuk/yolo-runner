@@ -724,6 +724,55 @@ func TestModelRendersThoughtEventInLogViewport(t *testing.T) {
 	}
 }
 
+func TestModelRendersAgentMessageContentAsMarkdownBubble(t *testing.T) {
+	fixedNow := time.Date(2026, 2, 10, 12, 0, 10, 0, time.UTC)
+	m := NewModel(func() time.Time { return fixedNow })
+
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 12})
+	m = updated.(Model)
+
+	updated, _ = m.Update(runner.Event{
+		Type:      runner.EventOpenCodeStart,
+		IssueID:   "task-1",
+		Title:     "Example Task",
+		EmittedAt: fixedNow.Add(-5 * time.Second),
+		Message:   "agent_message \"## Analysis\\n\\nAgent message with **markdown** content.\"",
+	})
+	m = updated.(Model)
+
+	view := strings.TrimSpace(m.View())
+	if strings.Contains(view, "agent_message") {
+		t.Fatalf("expected agent message to be rendered as markdown content, got: %q", view)
+	}
+	if !strings.Contains(view, "Analysis") {
+		t.Fatalf("expected markdown header in view, got: %q", view)
+	}
+	if !strings.Contains(view, "markdown") {
+		t.Fatalf("expected markdown message content in view, got: %q", view)
+	}
+
+	lines := strings.Split(view, "\n")
+	msgLineIndex := -1
+	statusBarIndex := -1
+	for i, line := range lines {
+		if strings.Contains(line, "Analysis") || strings.Contains(line, "markdown content") {
+			msgLineIndex = i
+		}
+		if strings.Contains(line, "task-1") && strings.Contains(line, "starting opencode") {
+			statusBarIndex = i
+		}
+	}
+	if msgLineIndex == -1 {
+		t.Fatalf("expected rendered markdown agent message in view, got: %q", view)
+	}
+	if statusBarIndex == -1 {
+		t.Fatalf("expected status bar in view, got: %q", view)
+	}
+	if msgLineIndex >= statusBarIndex {
+		t.Fatalf("expected agent message content to render above status bar, got message index %d status bar index %d", msgLineIndex, statusBarIndex)
+	}
+}
+
 func TestModelRendersActionMessagesInViewportWithStyle(t *testing.T) {
 	fixedNow := time.Date(2026, 2, 10, 12, 0, 10, 0, time.UTC)
 	m := NewModel(func() time.Time { return fixedNow })
