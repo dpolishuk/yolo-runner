@@ -442,6 +442,39 @@ func TestLoopBlocksTaskBelowQualityThreshold(t *testing.T) {
 	}
 }
 
+func TestLoopBlocksTaskBelowQualityThresholdWithAutoComment(t *testing.T) {
+	mgr := newFakeTaskManager(contracts.Task{
+		ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen,
+		Metadata: map[string]string{
+			"quality_score":  "45",
+			"quality_issues": "Missing acceptance criteria in task spec\nMissing testing plan with commands",
+		},
+	})
+	run := &fakeRunner{results: []contracts.RunnerResult{{Status: contracts.RunnerResultCompleted}}}
+	loop := NewLoop(mgr, run, nil, LoopOptions{ParentID: "root", QualityGateThreshold: 50})
+
+	summary, err := loop.Run(context.Background())
+	if err != nil {
+		t.Fatalf("loop failed: %v", err)
+	}
+	if summary.Blocked != 1 {
+		t.Fatalf("expected blocked summary, got %#v", summary)
+	}
+	comment := mgr.dataByID["t-1"]["quality_gate_comment"]
+	if comment == "" {
+		t.Fatalf("expected quality gate comment for blocked task")
+	}
+	if !strings.Contains(comment, "quality score 45 is below threshold 50") {
+		t.Fatalf("expected quality score context in comment, got %q", comment)
+	}
+	if !strings.Contains(comment, "Missing acceptance criteria in task spec") {
+		t.Fatalf("expected comment to include quality issues, got %q", comment)
+	}
+	if !strings.Contains(comment, "Please update the task") {
+		t.Fatalf("expected comment to include suggested fix, got %q", comment)
+	}
+}
+
 func TestLoopAllowsTaskBelowQualityThresholdWithOverride(t *testing.T) {
 	mgr := newFakeTaskManager(contracts.Task{
 		ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen,
