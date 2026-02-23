@@ -16,17 +16,22 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/egv/yolo-runner/v2/internal/version"
 )
 
 const (
 	defaultUpdateReleaseAPI = "https://api.github.com/repos/egv/yolo-runner"
 	updateBackupSuffix      = ".yolo-runner-update.bak"
 )
+
+var updateCurrentExecutable = os.Executable
 
 type updateRelease struct {
 	TagName string        `json:"tag_name"`
@@ -44,6 +49,7 @@ type updateOptions struct {
 	arch       string
 	installDir string
 	releaseAPI string
+	checkOnly  bool
 }
 
 type updateInstallRecord struct {
@@ -58,15 +64,30 @@ func runUpdate(args []string, stdout io.Writer, stderr io.Writer, client *http.C
 		return 1
 	}
 
+	if client == nil {
+		client = &http.Client{}
+	}
+
+	if options.osName == "windows" {
+		fmt.Fprintln(stderr, "Windows self-update is not currently supported. Install updates for yolo-runner tools using your distribution installer.")
+		return 1
+	}
+
+	if options.checkOnly {
+		latestTag, err := resolveUpdateLatestTag(client, options.releaseAPI)
+		if err != nil {
+			fmt.Fprintf(stderr, "failed to resolve latest release: %v\n", err)
+			return 1
+		}
+		fmt.Fprintf(stdout, "current: %s\nlatest: %s\n", version.Version, latestTag)
+		return 0
+	}
+
 	if options.installDir != "" {
 		if err := validateWindowsUpdatePath(options.osName, options.installDir); err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
-	}
-
-	if client == nil {
-		client = &http.Client{}
 	}
 
 	resolvedRelease, err := resolveUpdateRelease(client, options.releaseTag, options.releaseAPI)
@@ -117,7 +138,7 @@ func runUpdate(args []string, stdout io.Writer, stderr io.Writer, client *http.C
 
 	installDir := options.installDir
 	if installDir == "" {
-		installDir = updateDefaultInstallDir(options.osName)
+		installDir = updateDefaultInstallDir()
 	}
 	if err := validateWindowsUpdatePath(options.osName, installDir); err != nil {
 		fmt.Fprintln(stderr, err)
@@ -128,7 +149,7 @@ func runUpdate(args []string, stdout io.Writer, stderr io.Writer, client *http.C
 		return 1
 	}
 
-	if err := installUpdateArtifacts(extractDir, installDir); err != nil {
+	if err := installUpdateArtifacts(extractDir, installDir, resolvedRelease.TagName); err != nil {
 		fmt.Fprintf(stderr, "failed to install update: %v\n", err)
 		return 1
 	}
@@ -145,7 +166,9 @@ func runUpdate(args []string, stdout io.Writer, stderr io.Writer, client *http.C
 func parseUpdateOptions(args []string) (updateOptions, error) {
 	fs := flag.NewFlagSet("yolo-runner update", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	releaseTag := fs.String("release", "latest", "Release tag to install (or latest)")
+	releaseTag := fs.String("release", "", "Release tag to install (or latest)")
+	releaseTo := fs.String("to", "", "Release tag to install (or latest)")
+	checkOnly := fs.Bool("check", false, "Only print current and latest versions")
 	osInput := fs.String("os", "", "Target OS (linux, darwin, windows)")
 	archInput := fs.String("arch", "", "Target architecture (amd64, arm64)")
 	installDir := fs.String("install-dir", "", "Directory to place installed binaries")
@@ -154,8 +177,13 @@ func parseUpdateOptions(args []string) (updateOptions, error) {
 	if err := fs.Parse(args); err != nil {
 		return updateOptions{}, err
 	}
-	if strings.TrimSpace(*releaseTag) == "" {
-		return updateOptions{}, errors.New("--release cannot be empty")
+	if *checkOnly {
+		if strings.TrimSpace(*releaseTag) != "" && !strings.EqualFold(strings.TrimSpace(*releaseTag), "latest") {
+			return updateOptions{}, errors.New("--check does not accept --release")
+		}
+		if strings.TrimSpace(*releaseTo) != "" {
+			return updateOptions{}, errors.New("--check does not accept --to")
+		}
 	}
 	if strings.TrimSpace(*releaseAPI) == "" {
 		return updateOptions{}, errors.New("--release-api cannot be empty")
@@ -170,13 +198,48 @@ func parseUpdateOptions(args []string) (updateOptions, error) {
 		return updateOptions{}, err
 	}
 
+	release, err := resolveReleaseTarget(*releaseTag, *releaseTo)
+	if err != nil {
+		return updateOptions{}, err
+	}
+
 	return updateOptions{
-		releaseTag: strings.ToLower(strings.TrimSpace(*releaseTag)),
+		releaseTag: release,
 		osName:     osName,
 		arch:       arch,
 		installDir: strings.TrimSpace(*installDir),
 		releaseAPI: strings.TrimRight(strings.TrimSpace(*releaseAPI), "/"),
+		checkOnly:  *checkOnly,
 	}, nil
+}
+
+func resolveReleaseTarget(releaseTag, releaseTo string) (string, error) {
+	releaseTag = strings.TrimSpace(strings.ToLower(releaseTag))
+	releaseTo = strings.TrimSpace(strings.ToLower(releaseTo))
+	if releaseTag != "" && releaseTo != "" && releaseTag != "latest" {
+		return "", errors.New("--release and --to are mutually exclusive")
+	}
+	if releaseTag == "" {
+		releaseTag = releaseTo
+	}
+	if releaseTag == "" {
+		return "latest", nil
+	}
+	if strings.EqualFold(releaseTag, "latest") {
+		return "latest", nil
+	}
+	return updateNormalizeVersionTag(releaseTag), nil
+}
+
+func updateNormalizeVersionTag(tag string) string {
+	tag = strings.TrimSpace(strings.ToLower(tag))
+	if tag == "" {
+		return tag
+	}
+	if strings.HasPrefix(tag, "v") {
+		return tag
+	}
+	return "v" + tag
 }
 
 func resolveUpdateRelease(ctxClient *http.Client, releaseTag, apiBase string) (updateRelease, error) {
@@ -185,6 +248,7 @@ func resolveUpdateRelease(ctxClient *http.Client, releaseTag, apiBase string) (u
 	if err != nil {
 		return updateRelease{}, err
 	}
+	updateApplyGitHubHeaders(req)
 	resp, err := ctxClient.Do(req)
 	if err != nil {
 		return updateRelease{}, err
@@ -207,6 +271,42 @@ func resolveUpdateRelease(ctxClient *http.Client, releaseTag, apiBase string) (u
 		return updateRelease{}, errors.New("release has no assets")
 	}
 	return release, nil
+}
+
+func resolveUpdateLatestTag(ctxClient *http.Client, apiBase string) (string, error) {
+	metadataURL := updateMetadataURL(apiBase, "latest")
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, metadataURL, nil)
+	if err != nil {
+		return "", err
+	}
+	updateApplyGitHubHeaders(req)
+	resp, err := ctxClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("github release API returned %s: %s", resp.Status, strings.TrimSpace(string(body)))
+	}
+
+	var release updateRelease
+	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
+		return "", err
+	}
+	if release.TagName == "" {
+		return "", errors.New("release has no tag_name")
+	}
+	return release.TagName, nil
+}
+
+func updateApplyGitHubHeaders(req *http.Request) {
+	if token := strings.TrimSpace(os.Getenv("GITHUB_TOKEN")); token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("User-Agent", "yolo-runner/update")
 }
 
 func updateMetadataURL(apiBase, releaseTag string) string {
@@ -290,19 +390,17 @@ func resolveUpdateArch(raw string) (string, error) {
 	}
 }
 
-func updateDefaultInstallDir(osName string) string {
+func updateDefaultInstallDir() string {
+	exe, err := updateCurrentExecutable()
+	if err == nil && exe != "" {
+		return filepath.Dir(exe)
+	}
 	home := os.Getenv("HOME")
 	if home == "" {
 		home, _ = os.UserHomeDir()
 	}
 	if home == "" {
 		home = os.TempDir()
-	}
-	if osName == "windows" {
-		if localAppData := os.Getenv("LOCALAPPDATA"); localAppData != "" {
-			return filepath.Join(localAppData, "yolo-runner", "bin")
-		}
-		return filepath.Join(home, ".local", "bin")
 	}
 	return filepath.Join(home, ".local", "bin")
 }
@@ -346,7 +444,12 @@ func ensureWritableUpdateDirectory(installDir string) error {
 }
 
 func downloadAsset(client *http.Client, url, destination string) error {
-	resp, err := client.Get(url)
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return err
+	}
+	updateApplyGitHubHeaders(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}
@@ -528,11 +631,17 @@ func ensureUpdateTargetDir(target string) error {
 	return nil
 }
 
-func installUpdateArtifacts(extractDir, installDir string) (err error) {
+func installUpdateArtifacts(extractDir, installDir, targetTag string) (err error) {
 	relPaths, err := updateRelativeFiles(extractDir)
 	if err != nil {
 		return err
 	}
+
+	stagingDir, err := os.MkdirTemp(installDir, ".yolo-runner-update-stage-")
+	if err != nil {
+		return fmt.Errorf("create staging directory: %w", err)
+	}
+	defer os.RemoveAll(stagingDir)
 
 	var installed []string
 	var backups []updateInstallRecord
@@ -552,6 +661,17 @@ func installUpdateArtifacts(extractDir, installDir string) (err error) {
 
 	for _, relPath := range relPaths {
 		src := filepath.Join(extractDir, relPath)
+		staged := filepath.Join(stagingDir, relPath)
+		if err := ensureUpdateTargetDir(staged); err != nil {
+			return err
+		}
+		if err := copyFileForUpdate(src, staged); err != nil {
+			return err
+		}
+	}
+
+	for _, relPath := range relPaths {
+		src := filepath.Join(stagingDir, relPath)
 		dst := filepath.Join(installDir, relPath)
 		if err := ensureUpdateTargetDir(dst); err != nil {
 			return err
@@ -570,15 +690,38 @@ func installUpdateArtifacts(extractDir, installDir string) (err error) {
 			return fmt.Errorf("inspect target file %s: %w", dst, err)
 		}
 
-		if err := copyFileForUpdate(src, dst); err != nil {
+		if err := os.Rename(src, dst); err != nil {
 			return fmt.Errorf("install %s: %w", relPath, err)
 		}
 		installed = append(installed, dst)
 	}
 
+	if err := verifyInstalledBinariesVersion(installDir, relPaths, targetTag); err != nil {
+		return err
+	}
+
 	for _, restored := range backups {
 		if err := os.Remove(restored.backup); err != nil {
 			return fmt.Errorf("cleanup backup %s: %w", restored.backup, err)
+		}
+	}
+	return nil
+}
+
+func verifyInstalledBinariesVersion(installDir string, relPaths []string, targetTag string) error {
+	target := strings.TrimSpace(targetTag)
+	for _, relPath := range relPaths {
+		path := filepath.Join(installDir, relPath)
+		output, err := exec.Command(path, "--version").CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("verify version for %s: %w", relPath, err)
+		}
+		fields := strings.Fields(string(output))
+		if len(fields) == 0 {
+			return fmt.Errorf("verify version for %s: no output", relPath)
+		}
+		if fields[len(fields)-1] != target {
+			return fmt.Errorf("verify version for %s: expected %s, got %s", relPath, target, fields[len(fields)-1])
 		}
 	}
 	return nil
