@@ -2,6 +2,7 @@ package beads
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"sync"
 
@@ -12,21 +13,37 @@ import (
 type TaskManager struct {
 	adapter       *Adapter
 	runner        Runner
+	initErr       error
 	terminalMu    sync.RWMutex
 	terminalState map[string]contracts.TaskStatus
 }
 
 // NewTaskManager creates a new beads task manager
 func NewTaskManager(runner Runner) *TaskManager {
+	adapter, err := NewWithCapabilityProbe(runner)
+	if err != nil {
+		adapter = New(runner)
+	}
 	return &TaskManager{
-		adapter:       New(runner),
+		adapter:       adapter,
 		runner:        runner,
+		initErr:       err,
 		terminalState: map[string]contracts.TaskStatus{},
 	}
 }
 
+func (m *TaskManager) startupError() error {
+	if m == nil || m.initErr == nil {
+		return nil
+	}
+	return fmt.Errorf("beads capability probe failed: %w", m.initErr)
+}
+
 // NextTasks returns the next ready tasks for the given parent
 func (m *TaskManager) NextTasks(_ context.Context, parentID string) ([]contracts.TaskSummary, error) {
+	if err := m.startupError(); err != nil {
+		return nil, err
+	}
 	ready, err := m.adapter.Ready(parentID)
 	if err != nil {
 		return nil, err
@@ -60,6 +77,9 @@ func (m *TaskManager) NextTasks(_ context.Context, parentID string) ([]contracts
 
 // GetTask retrieves a task by ID
 func (m *TaskManager) GetTask(_ context.Context, taskID string) (contracts.Task, error) {
+	if err := m.startupError(); err != nil {
+		return contracts.Task{}, err
+	}
 	bead, err := m.adapter.Show(taskID)
 	if err != nil {
 		return contracts.Task{}, err
@@ -74,6 +94,9 @@ func (m *TaskManager) GetTask(_ context.Context, taskID string) (contracts.Task,
 
 // SetTaskStatus updates the status of a task
 func (m *TaskManager) SetTaskStatus(_ context.Context, taskID string, status contracts.TaskStatus) error {
+	if err := m.startupError(); err != nil {
+		return err
+	}
 	if err := m.adapter.UpdateStatus(taskID, string(status)); err != nil {
 		return err
 	}
@@ -88,13 +111,16 @@ func (m *TaskManager) SetTaskStatus(_ context.Context, taskID string, status con
 
 // SetTaskData sets additional data on a task
 func (m *TaskManager) SetTaskData(_ context.Context, taskID string, data map[string]string) error {
+	if err := m.startupError(); err != nil {
+		return err
+	}
 	keys := make([]string, 0, len(data))
 	for key := range data {
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
 	for _, key := range keys {
-		if _, err := m.runner.Run("bd", "update", taskID, "--notes", key+"="+data[key]); err != nil {
+		if err := m.adapter.UpdateNotes(taskID, key+"="+data[key]); err != nil {
 			return err
 		}
 	}
