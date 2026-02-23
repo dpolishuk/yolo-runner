@@ -306,6 +306,85 @@ func TestLoopPassesConfiguredModelToReviewRunnerRequest(t *testing.T) {
 	}
 }
 
+func TestLoopAppliesPerTaskRuntimeOverrides(t *testing.T) {
+	taskDescription := `---
+backend: codex
+model: task-model
+skillset: docs
+tools:
+  - shell
+  - git
+timeout: 45s
+mode: review
+---
+Implement task behavior.`
+	mgr := newFakeTaskManager(contracts.Task{
+		ID:          "t-1",
+		Title:       "Task 1",
+		Description: taskDescription,
+		Status:      contracts.TaskStatusOpen,
+	})
+	run := &fakeRunner{results: []contracts.RunnerResult{{Status: contracts.RunnerResultCompleted}}}
+	sink := &recordingSink{}
+	repoRoot := t.TempDir()
+	loop := NewLoop(mgr, run, sink, LoopOptions{
+		ParentID:      "root",
+		Backend:       "opencode",
+		Model:         "global-model",
+		RunnerTimeout: 2 * time.Minute,
+		RepoRoot:      repoRoot,
+	})
+
+	summary, err := loop.Run(context.Background())
+	if err != nil {
+		t.Fatalf("loop failed: %v", err)
+	}
+	if summary.Completed != 1 {
+		t.Fatalf("expected completed summary, got %#v", summary)
+	}
+	if run.requests[0].Model != "task-model" {
+		t.Fatalf("expected task model override, got %q", run.requests[0].Model)
+	}
+	if run.requests[0].Timeout != 45*time.Second {
+		t.Fatalf("expected task timeout override of 45s, got %v", run.requests[0].Timeout)
+	}
+	if run.requests[0].Metadata["runtime_model"] != "task-model" {
+		t.Fatalf("expected runtime_model metadata, got %#v", run.requests[0].Metadata)
+	}
+	if run.requests[0].Metadata["runtime_backend"] != "codex" {
+		t.Fatalf("expected runtime_backend metadata, got %#v", run.requests[0].Metadata)
+	}
+	if run.requests[0].Metadata["runtime_skillset"] != "docs" {
+		t.Fatalf("expected runtime_skillset metadata, got %#v", run.requests[0].Metadata)
+	}
+	if run.requests[0].Metadata["runtime_tools"] != "shell,git" {
+		t.Fatalf("expected runtime_tools metadata, got %#v", run.requests[0].Metadata)
+	}
+	if run.requests[0].Metadata["runtime_timeout"] != (45 * time.Second).String() {
+		t.Fatalf("expected runtime_timeout metadata, got %#v", run.requests[0].Metadata)
+	}
+	if run.requests[0].Metadata["task_mode"] != "review" {
+		t.Fatalf("expected task_mode metadata from overrides, got %#v", run.requests[0].Metadata)
+	}
+	if got := run.requests[0].Metadata["runtime_config"]; got != "true" {
+		t.Fatalf("expected runtime_config metadata flag, got %q", got)
+	}
+
+	started := eventsByType(sink.events, contracts.EventTypeRunnerStarted)
+	if len(started) != 1 {
+		t.Fatalf("expected one runner_started event, got %d", len(started))
+	}
+	if started[0].Metadata["backend"] != "codex" {
+		t.Fatalf("expected runner_started backend override, got %#v", started[0].Metadata)
+	}
+	if started[0].Metadata["model"] != "task-model" {
+		t.Fatalf("expected runner_started model override, got %#v", started[0].Metadata)
+	}
+	if started[0].Metadata["timeout"] != (45 * time.Second).String() {
+		t.Fatalf("expected runner_started timeout metadata, got %#v", started[0].Metadata)
+	}
+}
+
 func TestLoopRetriesFailedImplementationWithFallbackModel(t *testing.T) {
 	cases := []struct {
 		name   string
