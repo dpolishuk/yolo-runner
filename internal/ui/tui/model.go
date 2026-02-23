@@ -99,6 +99,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch typed := msg.(type) {
 	case runner.Event:
+		m.stopping = false
+		m.stopRequested = false
 		m.appendLogLines(formatRunnerEventLine(typed))
 		if typed.Message != "" {
 			if markdownMessage, ok := formatACPMessageAsMarkdown(typed.Message); ok {
@@ -138,6 +140,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = typed.Width
 		m.height = typed.Height
+		m.statusbar, _ = m.statusbar.Update(typed)
 		logViewportWidth, logViewportHeight := logViewportSize(typed.Width, typed.Height)
 		m.viewport.Width = logViewportWidth
 		m.viewport.Height = logViewportHeight

@@ -268,6 +268,8 @@ func TestFullscreenModelSupportsAdditionalQuitShortcuts(t *testing.T) {
 	m.detailsCollapsed = false
 	m.activityCollapsed = false
 	m.historyCollapsed = false
+	streamDoneModel, _ := m.Update(streamDoneMsg{})
+	m = streamDoneModel.(fullscreenModel)
 
 	for _, tc := range []struct {
 		name string
@@ -276,6 +278,7 @@ func TestFullscreenModelSupportsAdditionalQuitShortcuts(t *testing.T) {
 		{name: "q", msg: tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}}},
 		{name: "Q", msg: tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'Q'}}},
 		{name: "ctrl+q", msg: tea.KeyMsg{Type: tea.KeyCtrlQ}},
+		{name: "ctrl+c", msg: tea.KeyMsg{Type: tea.KeyCtrlC}},
 		{name: "esc", msg: tea.KeyMsg{Type: tea.KeyEsc}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

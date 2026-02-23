@@ -181,6 +181,90 @@ func TestModelShowsStoppingStatusWhileStopping(t *testing.T) {
 	}
 }
 
+func TestModelStateTransitionsRunningStoppingCompleted(t *testing.T) {
+	fixedNow := time.Date(2026, 2, 2, 10, 0, 0, 0, time.UTC)
+	m := NewModel(func() time.Time { return fixedNow })
+
+	updated, _ := m.Update(runner.Event{
+		Type:      runner.EventSelectTask,
+		IssueID:   "task-1",
+		Title:     "Example Task",
+		EmittedAt: fixedNow,
+	})
+	m = updated.(Model)
+
+	if !strings.Contains(m.View(), "getting task info") {
+		t.Fatalf("expected running phase before stop, got %q", m.View())
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	m = updated.(Model)
+	if !strings.Contains(m.View(), "Stopping...") {
+		t.Fatalf("expected stopping state after keypress, got %q", m.View())
+	}
+
+	updated, _ = m.Update(runner.Event{
+		Type:      runner.EventType("completed"),
+		IssueID:   "task-1",
+		Title:     "Example Task",
+		EmittedAt: fixedNow,
+	})
+	m = updated.(Model)
+	finalView := m.View()
+	if strings.Contains(finalView, "Stopping...") {
+		t.Fatalf("expected completed state to clear stop banner, got %q", finalView)
+	}
+	if !strings.Contains(finalView, "completed") {
+		t.Fatalf("expected completed phase after completion event, got %q", finalView)
+	}
+}
+
+func TestModelResizeKeepsStateAcrossTransitions(t *testing.T) {
+	fixedNow := time.Date(2026, 2, 2, 10, 0, 0, 0, time.UTC)
+	m := NewModel(func() time.Time { return fixedNow })
+
+	updated, _ := m.Update(runner.Event{
+		Type:      runner.EventSelectTask,
+		IssueID:   "task-1",
+		Title:     "Example Task",
+		EmittedAt: fixedNow,
+	})
+	m = updated.(Model)
+
+	updated, _ = m.Update(tea.WindowSizeMsg{Width: 40, Height: 6})
+	m = updated.(Model)
+	if !strings.Contains(m.View(), "getting task info") {
+		t.Fatalf("expected running phase after resize, got %q", m.View())
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	m = updated.(Model)
+	if !strings.Contains(m.View(), "Stopping...") {
+		t.Fatalf("expected stopping phase after resize, got %q", m.View())
+	}
+
+	updated, _ = m.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
+	m = updated.(Model)
+	if !strings.Contains(m.View(), "Stopping...") {
+		t.Fatalf("expected stopping state to survive resize, got %q", m.View())
+	}
+
+	updated, _ = m.Update(runner.Event{
+		Type:      runner.EventType("completed"),
+		IssueID:   "task-1",
+		Title:     "Example Task",
+		EmittedAt: fixedNow,
+	})
+	m = updated.(Model)
+	view := m.View()
+	if strings.Contains(view, "Stopping...") {
+		t.Fatalf("expected stop banner to clear after completion, got %q", view)
+	}
+	if !strings.Contains(view, "completed") {
+		t.Fatalf("expected completed phase after completion, got %q", view)
+	}
+}
+
 func TestModelStopsOnCtrlC(t *testing.T) {
 	stopCh := make(chan struct{})
 	m := NewModelWithStop(func() time.Time { return time.Unix(0, 0) }, stopCh)
