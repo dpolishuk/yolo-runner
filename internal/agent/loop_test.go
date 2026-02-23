@@ -1,9 +1,12 @@
 package agent
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -11,7 +14,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/anomalyco/yolo-runner/internal/contracts"
+	"github.com/egv/yolo-runner/v2/internal/contracts"
+	enginepkg "github.com/egv/yolo-runner/v2/internal/engine"
+	"github.com/egv/yolo-runner/v2/internal/logging"
+	"github.com/egv/yolo-runner/v2/internal/ui/tui"
 )
 
 func TestLoopCompletesTask(t *testing.T) {
@@ -32,7 +38,7 @@ func TestLoopCompletesTask(t *testing.T) {
 }
 
 func TestBuildPromptReviewRequiresStructuredVerdict(t *testing.T) {
-	prompt := buildPrompt(contracts.Task{ID: "t-1", Title: "Task 1", Description: "Check behavior"}, contracts.RunnerModeReview)
+	prompt := buildPrompt(contracts.Task{ID: "t-1", Title: "Task 1", Description: "Check behavior"}, contracts.RunnerModeReview, false)
 	if !strings.Contains(prompt, "Mode: Review") {
 		t.Fatalf("expected review mode marker in prompt, got %q", prompt)
 	}
@@ -45,7 +51,7 @@ func TestBuildPromptReviewRequiresStructuredVerdict(t *testing.T) {
 }
 
 func TestBuildPromptImplementExcludesReviewVerdictInstructions(t *testing.T) {
-	prompt := buildPrompt(contracts.Task{ID: "t-1", Title: "Task 1", Description: "Implement behavior"}, contracts.RunnerModeImplement)
+	prompt := buildPrompt(contracts.Task{ID: "t-1", Title: "Task 1", Description: "Implement behavior"}, contracts.RunnerModeImplement, false)
 	if !strings.Contains(prompt, "Mode: Implementation") {
 		t.Fatalf("expected implementation mode marker in prompt, got %q", prompt)
 	}
@@ -55,7 +61,7 @@ func TestBuildPromptImplementExcludesReviewVerdictInstructions(t *testing.T) {
 }
 
 func TestBuildPromptImplementIncludesCommandContractAndTDDChecklist(t *testing.T) {
-	prompt := buildPrompt(contracts.Task{ID: "t-1", Title: "Task 1", Description: "Implement behavior"}, contracts.RunnerModeImplement)
+	prompt := buildPrompt(contracts.Task{ID: "t-1", Title: "Task 1", Description: "Implement behavior"}, contracts.RunnerModeImplement, false)
 
 	required := []string{
 		"Command Contract:",
@@ -76,11 +82,130 @@ func TestBuildPromptImplementIncludesCommandContractAndTDDChecklist(t *testing.T
 	}
 }
 
+func TestBuildPromptImplementIncludesRedGreenRefactorWorkflowWhenTDDModeEnabled(t *testing.T) {
+	prompt := buildPrompt(contracts.Task{ID: "t-1", Title: "Task 1", Description: "Implement behavior"}, contracts.RunnerModeImplement, true)
+
+	required := []string{
+		"Strict TDD Workflow (Red-Green-Refactor):",
+		"Tests-First Gate:",
+		"- Confirm tests for the target behavior exist before implementation.",
+		"- Run tests before changes and confirm they fail to define expected behavior.",
+		"- Do not implement until tests-first gate is passing.",
+		"1. RED: Add or update a test that fails for the target behavior.",
+		"2. GREEN: Implement the minimal code required for that test to pass.",
+		"3. REFACTOR: Improve the design while preserving passing tests.",
+		"- Required sequence: test-first, targeted fail check, minimal green fix, then refactor.",
+		"- Re-run targeted tests, then run broader relevant tests.",
+		"- Stop only when all tests pass and acceptance criteria are covered.",
+	}
+	for _, needle := range required {
+		if !strings.Contains(prompt, needle) {
+			t.Fatalf("expected prompt to include %q, got %q", needle, prompt)
+		}
+	}
+}
+
+func TestLoopBlocksTDDTaskWhenNoTestsArePresent(t *testing.T) {
+	repoRoot := t.TempDir()
+	mgr := newFakeTaskManager(contracts.Task{ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen})
+	run := &fakeRunner{results: []contracts.RunnerResult{{Status: contracts.RunnerResultCompleted}}}
+	loop := NewLoop(mgr, run, nil, LoopOptions{ParentID: "root", TDDMode: true, RepoRoot: repoRoot})
+
+	summary, err := loop.Run(context.Background())
+	if err != nil {
+		t.Fatalf("loop failed: %v", err)
+	}
+	if summary.Blocked != 1 {
+		t.Fatalf("expected blocked summary, got %#v", summary)
+	}
+	if mgr.statusByID["t-1"] != contracts.TaskStatusBlocked {
+		t.Fatalf("expected blocked task status, got %s", mgr.statusByID["t-1"])
+	}
+	if len(run.requests) != 0 {
+		t.Fatalf("expected no runner requests when blocked by tdd tests-first gate, got %d", len(run.requests))
+	}
+	if got := mgr.dataByID["t-1"]["triage_reason"]; !strings.Contains(got, "tests-first") {
+		t.Fatalf("expected triage_reason to mention tests-first gate, got %q", got)
+	}
+}
+
+func TestLoopAllowsTDDTaskWhenTestsAreFailing(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, "go.mod"), []byte("module tdd-test\n\ngo 1.22\n"), 0o644); err != nil {
+		t.Fatalf("failed to write go.mod: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repoRoot, "feature_test.go"), []byte("package main\n\nimport \"testing\"\n\nfunc TestFeature(t *testing.T) {\n\tt.Fatalf(\"intentional failing test\")\n}\n"), 0o644); err != nil {
+		t.Fatalf("failed to write test file: %v", err)
+	}
+
+	mgr := newFakeTaskManager(contracts.Task{ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen})
+	run := &fakeRunner{results: []contracts.RunnerResult{{Status: contracts.RunnerResultCompleted}}}
+	loop := NewLoop(mgr, run, nil, LoopOptions{ParentID: "root", TDDMode: true, RepoRoot: repoRoot})
+
+	summary, err := loop.Run(context.Background())
+	if err != nil {
+		t.Fatalf("loop failed: %v", err)
+	}
+	if summary.Completed != 1 {
+		t.Fatalf("expected completed summary, got %#v", summary)
+	}
+	if mgr.statusByID["t-1"] != contracts.TaskStatusClosed {
+		t.Fatalf("expected closed status after completion, got %s", mgr.statusByID["t-1"])
+	}
+	if len(run.requests) != 1 {
+		t.Fatalf("expected one runner request, got %d", len(run.requests))
+	}
+	if got := run.requests[0].Mode; got != contracts.RunnerModeImplement {
+		t.Fatalf("expected implement mode request, got %s", got)
+	}
+}
+
+func TestLoopBlocksTDDTaskWhenTestsArePresentButPassing(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, "go.mod"), []byte("module tdd-test\n\ngo 1.22\n"), 0o644); err != nil {
+		t.Fatalf("failed to write go.mod: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repoRoot, "feature.go"), []byte("package main\n\nfunc Feature() bool {\n\treturn true\n}\n"), 0o644); err != nil {
+		t.Fatalf("failed to write feature file: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repoRoot, "feature_test.go"), []byte("package main\n\nimport \"testing\"\n\nfunc TestFeature(t *testing.T) {\n\tif !Feature() {\n\t\tt.Fatalf(\"feature should pass\")\n\t}\n}\n"), 0o644); err != nil {
+		t.Fatalf("failed to write test file: %v", err)
+	}
+
+	mgr := newFakeTaskManager(contracts.Task{ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen})
+	run := &fakeRunner{results: []contracts.RunnerResult{{Status: contracts.RunnerResultCompleted}}}
+	loop := NewLoop(mgr, run, nil, LoopOptions{ParentID: "root", TDDMode: true, RepoRoot: repoRoot})
+
+	summary, err := loop.Run(context.Background())
+	if err != nil {
+		t.Fatalf("loop failed: %v", err)
+	}
+	if summary.Blocked != 1 {
+		t.Fatalf("expected blocked summary, got %#v", summary)
+	}
+	if got := mgr.statusByID["t-1"]; got != contracts.TaskStatusBlocked {
+		t.Fatalf("expected blocked task status, got %s", got)
+	}
+	if len(run.requests) != 0 {
+		t.Fatalf("expected no runner requests when blocked by tdd tests-first gate, got %d", len(run.requests))
+	}
+	if got := mgr.dataByID["t-1"]["triage_reason"]; !strings.Contains(got, "tests-first") {
+		t.Fatalf("expected triage_reason to mention tests-first gate, got %q", got)
+	}
+	if got := mgr.dataByID["t-1"]["tests_present"]; got != "true" {
+		t.Fatalf("expected tests_present=true, got %q", got)
+	}
+	if got := mgr.dataByID["t-1"]["tests_failing"]; got != "false" {
+		t.Fatalf("expected tests_failing=false, got %q", got)
+	}
+}
+
 func TestBuildImplementPromptIncludesReviewFeedbackWhenRetrying(t *testing.T) {
 	prompt := buildImplementPrompt(
 		contracts.Task{ID: "t-1", Title: "Task 1", Description: "Implement behavior"},
 		"add RED/GREEN note evidence to ticket",
 		1,
+		false,
 	)
 
 	if !strings.Contains(prompt, "Review Remediation Loop: Attempt 1") {
@@ -91,6 +216,26 @@ func TestBuildImplementPromptIncludesReviewFeedbackWhenRetrying(t *testing.T) {
 	}
 	if !strings.Contains(prompt, "add RED/GREEN note evidence to ticket") {
 		t.Fatalf("expected review feedback body in prompt, got %q", prompt)
+	}
+}
+
+func TestBuildPromptRetryContextOmitsGenericReviewVerdictFailureReason(t *testing.T) {
+	task := contracts.Task{
+		ID:     "t-1",
+		Title:  "Task 1",
+		Status: contracts.TaskStatusOpen,
+		Metadata: map[string]string{
+			"review_retry_count": "1",
+			"triage_reason":      "review verdict returned fail",
+		},
+	}
+
+	prompt := buildPrompt(task, contracts.RunnerModeImplement)
+	if strings.Contains(prompt, "- review verdict returned fail") {
+		t.Fatalf("expected generic review failure placeholder to be omitted from retry blockers, got %q", prompt)
+	}
+	if !strings.Contains(prompt, "- Previous review failed; address blockers before requesting review again.") {
+		t.Fatalf("expected fallback retry blocker guidance, got %q", prompt)
 	}
 }
 
@@ -129,6 +274,472 @@ func TestLoopRetriesReviewFailThenCompletes(t *testing.T) {
 		run.modes[2] != contracts.RunnerModeImplement ||
 		run.modes[3] != contracts.RunnerModeReview {
 		t.Fatalf("unexpected runner mode sequence: %#v", run.modes)
+	}
+}
+
+func TestLoopInvokesReviewRunnerWhenReviewModeEnabled(t *testing.T) {
+	mgr := newFakeTaskManager(contracts.Task{ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen})
+	run := &fakeRunner{results: []contracts.RunnerResult{
+		{Status: contracts.RunnerResultCompleted},
+		{Status: contracts.RunnerResultCompleted, ReviewReady: true},
+	}}
+	loop := NewLoop(mgr, run, nil, LoopOptions{ParentID: "root", MaxRetries: 1, RequireReview: true, Backend: "codex", Model: "openai/gpt-5.3-codex"})
+
+	_, err := loop.Run(context.Background())
+	if err != nil {
+		t.Fatalf("loop failed: %v", err)
+	}
+	if len(run.requests) != 2 {
+		t.Fatalf("expected implement+review request count, got %d", len(run.requests))
+	}
+	if run.requests[0].Mode != contracts.RunnerModeImplement {
+		t.Fatalf("expected first request mode=implement, got %s", run.requests[0].Mode)
+	}
+	if run.requests[1].Mode != contracts.RunnerModeReview {
+		t.Fatalf("expected second request mode=review, got %s", run.requests[1].Mode)
+	}
+	if run.requests[1].Model != "openai/gpt-5.3-codex" {
+		t.Fatalf("expected review request to use configured model, got %q", run.requests[1].Model)
+	}
+}
+
+func TestLoopPassesConfiguredModelToReviewRunnerRequest(t *testing.T) {
+	mgr := newFakeTaskManager(contracts.Task{ID: "t-2", Title: "Task 2", Status: contracts.TaskStatusOpen})
+	run := &fakeRunner{results: []contracts.RunnerResult{
+		{Status: contracts.RunnerResultCompleted},
+		{Status: contracts.RunnerResultCompleted, ReviewReady: true},
+	}}
+	loop := NewLoop(mgr, run, nil, LoopOptions{ParentID: "root", MaxRetries: 1, RequireReview: true, Model: "kimi-k2", Backend: "kimi"})
+
+	_, err := loop.Run(context.Background())
+	if err != nil {
+		t.Fatalf("loop failed: %v", err)
+	}
+	if len(run.requests) != 2 {
+		t.Fatalf("expected two runner requests, got %d", len(run.requests))
+	}
+	if run.requests[0].Model != "kimi-k2" {
+		t.Fatalf("expected implement request model to be propagated, got %q", run.requests[0].Model)
+	}
+	if run.requests[1].Model != "kimi-k2" {
+		t.Fatalf("expected review request model to be propagated, got %q", run.requests[1].Model)
+	}
+}
+
+func TestLoopAppliesPerTaskRuntimeOverrides(t *testing.T) {
+	taskDescription := `---
+backend: codex
+model: task-model
+skillset: docs
+tools:
+  - shell
+  - git
+timeout: 45s
+mode: review
+---
+Implement task behavior.`
+	mgr := newFakeTaskManager(contracts.Task{
+		ID:          "t-1",
+		Title:       "Task 1",
+		Description: taskDescription,
+		Status:      contracts.TaskStatusOpen,
+	})
+	run := &fakeRunner{results: []contracts.RunnerResult{{Status: contracts.RunnerResultCompleted}}}
+	sink := &recordingSink{}
+	repoRoot := t.TempDir()
+	loop := NewLoop(mgr, run, sink, LoopOptions{
+		ParentID:      "root",
+		Backend:       "opencode",
+		Model:         "global-model",
+		RunnerTimeout: 2 * time.Minute,
+		RepoRoot:      repoRoot,
+	})
+
+	summary, err := loop.Run(context.Background())
+	if err != nil {
+		t.Fatalf("loop failed: %v", err)
+	}
+	if summary.Completed != 1 {
+		t.Fatalf("expected completed summary, got %#v", summary)
+	}
+	if run.requests[0].Model != "task-model" {
+		t.Fatalf("expected task model override, got %q", run.requests[0].Model)
+	}
+	if run.requests[0].Timeout != 45*time.Second {
+		t.Fatalf("expected task timeout override of 45s, got %v", run.requests[0].Timeout)
+	}
+	if run.requests[0].Metadata["runtime_model"] != "task-model" {
+		t.Fatalf("expected runtime_model metadata, got %#v", run.requests[0].Metadata)
+	}
+	if run.requests[0].Metadata["runtime_backend"] != "codex" {
+		t.Fatalf("expected runtime_backend metadata, got %#v", run.requests[0].Metadata)
+	}
+	if run.requests[0].Metadata["runtime_skillset"] != "docs" {
+		t.Fatalf("expected runtime_skillset metadata, got %#v", run.requests[0].Metadata)
+	}
+	if run.requests[0].Metadata["runtime_tools"] != "shell,git" {
+		t.Fatalf("expected runtime_tools metadata, got %#v", run.requests[0].Metadata)
+	}
+	if run.requests[0].Metadata["runtime_timeout"] != (45 * time.Second).String() {
+		t.Fatalf("expected runtime_timeout metadata, got %#v", run.requests[0].Metadata)
+	}
+	if run.requests[0].Metadata["task_mode"] != "review" {
+		t.Fatalf("expected task_mode metadata from overrides, got %#v", run.requests[0].Metadata)
+	}
+	if got := run.requests[0].Metadata["runtime_config"]; got != "true" {
+		t.Fatalf("expected runtime_config metadata flag, got %q", got)
+	}
+
+	started := eventsByType(sink.events, contracts.EventTypeRunnerStarted)
+	if len(started) != 1 {
+		t.Fatalf("expected one runner_started event, got %d", len(started))
+	}
+	if started[0].Metadata["backend"] != "codex" {
+		t.Fatalf("expected runner_started backend override, got %#v", started[0].Metadata)
+	}
+	if started[0].Metadata["model"] != "task-model" {
+		t.Fatalf("expected runner_started model override, got %#v", started[0].Metadata)
+	}
+	if started[0].Metadata["timeout"] != (45 * time.Second).String() {
+		t.Fatalf("expected runner_started timeout metadata, got %#v", started[0].Metadata)
+	}
+}
+
+func TestLoopRunsComplexDependencyTreeWithPerTaskOverridesAndParallelism(t *testing.T) {
+	taskDescription := func(taskModel string, tools ...string) string {
+		lines := []string{
+			"---",
+			"model: " + taskModel,
+		}
+		if len(tools) > 0 {
+			lines = append(lines, "tools:")
+			for _, tool := range tools {
+				lines = append(lines, "  - "+tool)
+			}
+		}
+		lines = append(lines, "---", "Task body")
+		return strings.Join(lines, "\n")
+	}
+
+	mgr := newFakeTaskManager(
+		contracts.Task{
+			ID:          "task-a",
+			Title:       "Task A",
+			Description: taskDescription("task-a-model", "shell"),
+			Status:      contracts.TaskStatusOpen,
+		},
+		contracts.Task{
+			ID:          "task-b",
+			Title:       "Task B",
+			Description: taskDescription("task-b-model", "git"),
+			Status:      contracts.TaskStatusOpen,
+		},
+		contracts.Task{
+			ID:     "task-c",
+			Title:  "Task C",
+			Status: contracts.TaskStatusOpen,
+		},
+		contracts.Task{
+			ID:          "task-d",
+			Title:       "Task D",
+			Description: taskDescription("task-d-model", "docs"),
+			Status:      contracts.TaskStatusOpen,
+		},
+		contracts.Task{
+			ID:          "task-e",
+			Title:       "Task E",
+			Description: taskDescription("task-e-model", "sql", "shell"),
+			Status:      contracts.TaskStatusOpen,
+		},
+		contracts.Task{
+			ID:          "task-f",
+			Title:       "Task F",
+			Description: taskDescription("task-f-model", "docker"),
+			Status:      contracts.TaskStatusOpen,
+		},
+	)
+	mgr.dependsOn = map[string][]string{
+		"task-c": {"task-a"},
+		"task-d": {"task-a", "task-b"},
+		"task-e": {"task-c"},
+		"task-f": {"task-e", "task-d"},
+	}
+
+	started := make(chan string, 6)
+	runner := &dependencyTrackingRunner{
+		started: started,
+		release: make(chan struct{}),
+	}
+	loop := NewLoop(mgr, runner, nil, LoopOptions{
+		ParentID:    "root",
+		Concurrency: 2,
+		Model:       "global-model",
+	})
+
+	type loopResult struct {
+		summary contracts.LoopSummary
+		err     error
+	}
+	resultCh := make(chan loopResult, 1)
+	go func() {
+		summary, err := loop.Run(context.Background())
+		resultCh <- loopResult{summary: summary, err: err}
+	}()
+
+	startOrder := make([]string, 0, 6)
+	startOrder = append(startOrder, <-started, <-started)
+	if startOrder[0] == startOrder[1] {
+		t.Fatalf("expected two different tasks to start first, got %q", startOrder)
+	}
+	if (startOrder[0] != "task-a" && startOrder[0] != "task-b") ||
+		(startOrder[1] != "task-a" && startOrder[1] != "task-b") {
+		t.Fatalf("expected first wave to be task-a and task-b, got %q", startOrder)
+	}
+	close(runner.release)
+
+	for len(startOrder) < 6 {
+		startOrder = append(startOrder, <-started)
+	}
+	result := <-resultCh
+	if result.err != nil {
+		t.Fatalf("loop failed: %v", result.err)
+	}
+	if result.summary.Completed != 6 {
+		t.Fatalf("expected six completed tasks, got %#v", result.summary)
+	}
+	if runner.maxActive < 2 {
+		t.Fatalf("expected parallel execution with maxActive>=2, got %d", runner.maxActive)
+	}
+
+	if startOrder[0] != "task-a" && startOrder[0] != "task-b" {
+		t.Fatalf("expected first wave to begin with task-a/task-b, got %q", startOrder[0])
+	}
+	if startOrder[1] != "task-a" && startOrder[1] != "task-b" {
+		t.Fatalf("expected first wave to begin with task-a/task-b, got %q", startOrder[1])
+	}
+	if startOrder[0] == startOrder[1] {
+		t.Fatalf("expected two different tasks in first wave, got %q", startOrder[:2])
+	}
+	startPos := map[string]int{}
+	for pos, taskID := range startOrder {
+		startPos[taskID] = pos
+	}
+	_, hasTaskA := startPos["task-a"]
+	_, hasTaskB := startPos["task-b"]
+	if !hasTaskA || !hasTaskB {
+		t.Fatalf("expected first wave task-a and task-b to start, got %q", startOrder)
+	}
+	for _, dependency := range []struct {
+		before string
+		after  string
+	}{
+		{before: "task-a", after: "task-c"},
+		{before: "task-a", after: "task-d"},
+		{before: "task-b", after: "task-d"},
+		{before: "task-c", after: "task-e"},
+		{before: "task-d", after: "task-f"},
+		{before: "task-e", after: "task-f"},
+	} {
+		beforePos, okBefore := startPos[dependency.before]
+		afterPos, okAfter := startPos[dependency.after]
+		if !okBefore || !okAfter {
+			t.Fatalf("expected both %s and %s in start order, got %q", dependency.before, dependency.after, startOrder)
+		}
+		if beforePos >= afterPos {
+			t.Fatalf("expected task %s to start before %s, got positions %d and %d", dependency.before, dependency.after, beforePos, afterPos)
+		}
+	}
+
+	requestByTask := map[string]contracts.RunnerRequest{}
+	for _, request := range runner.requests {
+		requestByTask[request.TaskID] = request
+	}
+
+	expectedModels := map[string]string{
+		"task-a": "task-a-model",
+		"task-b": "task-b-model",
+		"task-c": "global-model",
+		"task-d": "task-d-model",
+		"task-e": "task-e-model",
+		"task-f": "task-f-model",
+	}
+	expectedRuntimeTools := map[string]string{
+		"task-a": "shell",
+		"task-b": "git",
+		"task-c": "",
+		"task-d": "docs",
+		"task-e": "sql,shell",
+		"task-f": "docker",
+	}
+
+	for taskID, expectedModel := range expectedModels {
+		request, ok := requestByTask[taskID]
+		if !ok {
+			t.Fatalf("expected request for task %s", taskID)
+		}
+		if request.Model != expectedModel {
+			t.Fatalf("expected task %s to use model %q, got %q", taskID, expectedModel, request.Model)
+		}
+
+		if expectedRuntimeTools[taskID] == "" {
+			if runtimeTools, ok := request.Metadata["runtime_tools"]; ok && runtimeTools != "" {
+				t.Fatalf("expected task %s to use no per-task tools override, got %q", taskID, runtimeTools)
+			}
+			if runtimeConfig, ok := request.Metadata["runtime_config"]; ok && runtimeConfig == "true" {
+				t.Fatalf("expected task %s runtime_config=false", taskID)
+			}
+			continue
+		}
+		if request.Metadata["runtime_tools"] != expectedRuntimeTools[taskID] {
+			t.Fatalf("expected task %s runtime tools %q, got %q", taskID, expectedRuntimeTools[taskID], request.Metadata["runtime_tools"])
+		}
+		if request.Metadata["runtime_model"] != expectedModel {
+			t.Fatalf("expected task %s runtime model %q, got %q", taskID, expectedModel, request.Metadata["runtime_model"])
+		}
+		if request.Metadata["runtime_config"] != "true" {
+			t.Fatalf("expected task %s runtime_config=true, got %q", taskID, request.Metadata["runtime_config"])
+		}
+	}
+}
+
+func TestLoopRetriesFailedImplementationWithFallbackModel(t *testing.T) {
+	cases := []struct {
+		name   string
+		reason string
+	}{
+		{
+			name:   "type failure",
+			reason: "type failure: expected string but got number",
+		},
+		{
+			name:   "tool failure",
+			reason: "tool failure: shell command timed out",
+		},
+		{
+			name:   "parse failure",
+			reason: "invalid json response while parsing model output",
+		},
+		{
+			name:   "provider error",
+			reason: "provider error: 429 too many requests",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mgr := newFakeTaskManager(contracts.Task{ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen})
+			run := &fakeRunner{results: []contracts.RunnerResult{
+				{Status: contracts.RunnerResultFailed, Reason: tc.reason},
+				{Status: contracts.RunnerResultCompleted},
+			}}
+			loop := NewLoop(mgr, run, nil, LoopOptions{
+				ParentID:      "root",
+				Model:         "primary-model",
+				FallbackModel: "fallback-model",
+			})
+
+			summary, err := loop.Run(context.Background())
+			if err != nil {
+				t.Fatalf("loop failed: %v", err)
+			}
+			if summary.Completed != 1 {
+				t.Fatalf("expected task completed after fallback retry, got %#v", summary)
+			}
+			if len(run.requests) != 2 {
+				t.Fatalf("expected fallback retry request sequence, got %d requests", len(run.requests))
+			}
+			if run.requests[0].Model != "primary-model" {
+				t.Fatalf("expected first request to use primary model, got %q", run.requests[0].Model)
+			}
+			if run.requests[1].Model != "fallback-model" {
+				t.Fatalf("expected fallback request to use fallback model, got %q", run.requests[1].Model)
+			}
+		})
+	}
+}
+
+func TestLoopNoFallbackOnReviewFailureResult(t *testing.T) {
+	cases := []struct {
+		name   string
+		reason string
+	}{
+		{
+			name:   "review rejected",
+			reason: "review rejected: missing regression test for retry/backoff flow",
+		},
+		{
+			name:   "review verdict",
+			reason: "review verdict returned fail: security concern",
+		},
+		{
+			name:   "review feedback",
+			reason: "review feedback suggests API change",
+		},
+		{
+			name:   "acceptance criteria",
+			reason: "failing acceptance criteria: behavior does not match",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mgr := newFakeTaskManager(contracts.Task{ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen})
+			run := &fakeRunner{results: []contracts.RunnerResult{
+				{Status: contracts.RunnerResultFailed, Reason: tc.reason},
+			}}
+			loop := NewLoop(mgr, run, nil, LoopOptions{
+				ParentID:      "root",
+				Model:         "primary-model",
+				FallbackModel: "fallback-model",
+			})
+
+			summary, err := loop.Run(context.Background())
+			if err != nil {
+				t.Fatalf("loop failed: %v", err)
+			}
+			if summary.Failed != 1 {
+				t.Fatalf("expected failed summary, got %#v", summary)
+			}
+			if len(run.requests) != 1 {
+				t.Fatalf("expected single implement attempt, got %d requests", len(run.requests))
+			}
+			if run.requests[0].Model != "primary-model" {
+				t.Fatalf("expected primary model request, got %q", run.requests[0].Model)
+			}
+		})
+	}
+}
+
+func TestLoopLogsModelFallbackDecision(t *testing.T) {
+	mgr := newFakeTaskManager(contracts.Task{ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen})
+	run := &fakeRunner{results: []contracts.RunnerResult{
+		{Status: contracts.RunnerResultFailed, Reason: "tool failure: external tool not available"},
+		{Status: contracts.RunnerResultCompleted},
+	}}
+	sink := &recordingSink{}
+	loop := NewLoop(mgr, run, sink, LoopOptions{
+		ParentID:      "root",
+		Model:         "primary-model",
+		FallbackModel: "fallback-model",
+	})
+
+	_, err := loop.Run(context.Background())
+	if err != nil {
+		t.Fatalf("loop failed: %v", err)
+	}
+
+	runnerStarted := eventsByType(sink.events, contracts.EventTypeRunnerStarted)
+	if len(runnerStarted) != 2 {
+		t.Fatalf("expected two runner_started events for fallback attempt, got %d", len(runnerStarted))
+	}
+	fallbackStart := runnerStarted[1]
+	if fallbackStart.Metadata["decision"] != "model_fallback" {
+		t.Fatalf("expected model_fallback decision, got %#v", fallbackStart.Metadata)
+	}
+	if fallbackStart.Metadata["model_previous"] != "primary-model" {
+		t.Fatalf("expected fallback to include previous model, got %#v", fallbackStart.Metadata)
+	}
+	if fallbackStart.Metadata["model"] != "fallback-model" {
+		t.Fatalf("expected fallback runner_started model to be fallback-model, got %#v", fallbackStart.Metadata)
 	}
 }
 
@@ -408,6 +1019,177 @@ func TestLoopMarksBlockedWithReason(t *testing.T) {
 	}
 }
 
+func TestLoopBlocksTaskBelowQualityThreshold(t *testing.T) {
+	mgr := newFakeTaskManager(contracts.Task{
+		ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen,
+		Metadata: map[string]string{"quality_score": "45"},
+	})
+	run := &fakeRunner{results: []contracts.RunnerResult{{Status: contracts.RunnerResultCompleted}}}
+	loop := NewLoop(mgr, run, nil, LoopOptions{ParentID: "root", QualityGateThreshold: 50})
+
+	summary, err := loop.Run(context.Background())
+	if err != nil {
+		t.Fatalf("loop failed: %v", err)
+	}
+	if summary.Blocked != 1 {
+		t.Fatalf("expected blocked summary, got %#v", summary)
+	}
+	if mgr.statusByID["t-1"] != contracts.TaskStatusBlocked {
+		t.Fatalf("expected blocked status, got %s", mgr.statusByID["t-1"])
+	}
+	if len(run.requests) != 0 {
+		t.Fatalf("expected no runner requests when blocked by quality gate, got %d", len(run.requests))
+	}
+	if got := mgr.dataByID["t-1"]["triage_status"]; got != "blocked" {
+		t.Fatalf("expected triage_status=blocked, got %q", got)
+	}
+	if got := mgr.dataByID["t-1"]["triage_reason"]; !strings.Contains(got, "below threshold") {
+		t.Fatalf("expected triage_reason to mention quality threshold, got %q", got)
+	}
+}
+
+func TestLoopBlocksTaskBelowCoverageThreshold(t *testing.T) {
+	mgr := newFakeTaskManager(contracts.Task{
+		ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen,
+		Metadata: map[string]string{"coverage": "45"},
+	})
+	run := &fakeRunner{results: []contracts.RunnerResult{{Status: contracts.RunnerResultCompleted}}}
+	loop := NewLoop(mgr, run, nil, LoopOptions{ParentID: "root", QualityGateThreshold: 50})
+
+	summary, err := loop.Run(context.Background())
+	if err != nil {
+		t.Fatalf("loop failed: %v", err)
+	}
+	if summary.Blocked != 1 {
+		t.Fatalf("expected blocked summary, got %#v", summary)
+	}
+	if mgr.statusByID["t-1"] != contracts.TaskStatusBlocked {
+		t.Fatalf("expected blocked status, got %s", mgr.statusByID["t-1"])
+	}
+	if len(run.requests) != 0 {
+		t.Fatalf("expected no runner requests when blocked by coverage gate, got %d", len(run.requests))
+	}
+	if got := mgr.dataByID["t-1"]["triage_reason"]; !strings.Contains(got, "below threshold") {
+		t.Fatalf("expected triage_reason to mention coverage threshold, got %q", got)
+	}
+	if strings.TrimSpace(mgr.dataByID["t-1"]["quality_gate_comment"]) == "" {
+		t.Fatalf("expected quality gate comment to be stored for blocked task")
+	}
+}
+
+func TestLoopBlocksTaskBelowCoverageThresholdEvenWithHighQualityScore(t *testing.T) {
+	mgr := newFakeTaskManager(contracts.Task{
+		ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen,
+		Metadata: map[string]string{
+			"quality_score": "92",
+			"coverage":      "45",
+		},
+	})
+	run := &fakeRunner{results: []contracts.RunnerResult{{Status: contracts.RunnerResultCompleted}}}
+	loop := NewLoop(mgr, run, nil, LoopOptions{ParentID: "root", QualityGateThreshold: 50})
+
+	summary, err := loop.Run(context.Background())
+	if err != nil {
+		t.Fatalf("loop failed: %v", err)
+	}
+	if summary.Blocked != 1 {
+		t.Fatalf("expected blocked summary, got %#v", summary)
+	}
+	if mgr.statusByID["t-1"] != contracts.TaskStatusBlocked {
+		t.Fatalf("expected blocked status, got %s", mgr.statusByID["t-1"])
+	}
+	if len(run.requests) != 0 {
+		t.Fatalf("expected no runner requests when blocked by coverage gate, got %d", len(run.requests))
+	}
+	if got := mgr.dataByID["t-1"]["triage_reason"]; !strings.Contains(got, "below threshold") {
+		t.Fatalf("expected triage_reason to mention coverage threshold, got %q", got)
+	}
+}
+
+func TestLoopBlocksTaskBelowQualityThresholdWithAutoComment(t *testing.T) {
+	mgr := newFakeTaskManager(contracts.Task{
+		ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen,
+		Metadata: map[string]string{
+			"quality_score":  "45",
+			"quality_issues": "Missing acceptance criteria in task spec\nMissing testing plan with commands",
+		},
+	})
+	run := &fakeRunner{results: []contracts.RunnerResult{{Status: contracts.RunnerResultCompleted}}}
+	loop := NewLoop(mgr, run, nil, LoopOptions{ParentID: "root", QualityGateThreshold: 50})
+
+	summary, err := loop.Run(context.Background())
+	if err != nil {
+		t.Fatalf("loop failed: %v", err)
+	}
+	if summary.Blocked != 1 {
+		t.Fatalf("expected blocked summary, got %#v", summary)
+	}
+	comment := mgr.dataByID["t-1"]["quality_gate_comment"]
+	if comment == "" {
+		t.Fatalf("expected quality gate comment for blocked task")
+	}
+	if !strings.Contains(comment, "quality score 45 is below threshold 50") {
+		t.Fatalf("expected quality score context in comment, got %q", comment)
+	}
+	if !strings.Contains(comment, "Missing acceptance criteria in task spec") {
+		t.Fatalf("expected comment to include quality issues, got %q", comment)
+	}
+	if !strings.Contains(comment, "Please update the task") {
+		t.Fatalf("expected comment to include suggested fix, got %q", comment)
+	}
+}
+
+func TestLoopAllowsTaskAtOrAboveCoverageThreshold(t *testing.T) {
+	mgr := newFakeTaskManager(contracts.Task{
+		ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen,
+		Metadata: map[string]string{"coverage": "50"},
+	})
+	run := &fakeRunner{results: []contracts.RunnerResult{{Status: contracts.RunnerResultCompleted}}}
+	loop := NewLoop(mgr, run, nil, LoopOptions{ParentID: "root", QualityGateThreshold: 50})
+
+	summary, err := loop.Run(context.Background())
+	if err != nil {
+		t.Fatalf("loop failed: %v", err)
+	}
+	if summary.Completed != 1 {
+		t.Fatalf("expected completed summary, got %#v", summary)
+	}
+	if mgr.statusByID["t-1"] != contracts.TaskStatusClosed {
+		t.Fatalf("expected task to close when coverage is at threshold, got %s", mgr.statusByID["t-1"])
+	}
+	if len(run.requests) != 1 {
+		t.Fatalf("expected one runner request when coverage passes threshold, got %d", len(run.requests))
+	}
+}
+
+func TestLoopAllowsTaskBelowQualityThresholdWithOverride(t *testing.T) {
+	mgr := newFakeTaskManager(contracts.Task{
+		ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen,
+		Metadata: map[string]string{"quality_score": "45"},
+	})
+	sink := &recordingSink{}
+	run := &fakeRunner{results: []contracts.RunnerResult{{Status: contracts.RunnerResultCompleted}}}
+	loop := NewLoop(mgr, run, sink, LoopOptions{ParentID: "root", QualityGateThreshold: 50, AllowLowQuality: true})
+
+	summary, err := loop.Run(context.Background())
+	if err != nil {
+		t.Fatalf("loop failed: %v", err)
+	}
+	if summary.Completed != 1 {
+		t.Fatalf("expected completed summary, got %#v", summary)
+	}
+	if mgr.statusByID["t-1"] != contracts.TaskStatusClosed {
+		t.Fatalf("expected closed status, got %s", mgr.statusByID["t-1"])
+	}
+	warnings := eventsByType(sink.events, contracts.EventTypeRunnerWarning)
+	if len(warnings) != 1 {
+		t.Fatalf("expected one quality-gate warning, got %d", len(warnings))
+	}
+	if warnings[0].Message == "" || !strings.Contains(warnings[0].Metadata["reason"], "below threshold") {
+		t.Fatalf("expected warning with quality reason, got %#v", warnings[0].Metadata)
+	}
+}
+
 func TestLoopCreatesAndChecksOutTaskBranchBeforeRun(t *testing.T) {
 	mgr := newFakeTaskManager(contracts.Task{ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen})
 	run := &fakeRunner{results: []contracts.RunnerResult{{Status: contracts.RunnerResultCompleted}}}
@@ -433,6 +1215,191 @@ func TestLoopCreatesAndChecksOutTaskBranchBeforeRun(t *testing.T) {
 	}
 }
 
+func TestLoopStorageEnginePathUsesStorageBackendAndTaskEngine(t *testing.T) {
+	storage := newSpyStorageBackend([]contracts.Task{
+		{ID: "root", Title: "Root", Status: contracts.TaskStatusClosed},
+		{ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen, ParentID: "root"},
+	}, []contracts.TaskRelation{
+		{FromID: "root", ToID: "t-1", Type: contracts.RelationParent},
+	})
+	engine := newSpyTaskEngine(enginepkg.NewTaskEngine())
+	run := &fakeRunner{results: []contracts.RunnerResult{{Status: contracts.RunnerResultCompleted}}}
+	loop := NewLoopWithTaskEngine(storage, engine, run, nil, LoopOptions{ParentID: "root", Concurrency: 4})
+
+	summary, err := loop.Run(context.Background())
+	if err != nil {
+		t.Fatalf("loop failed: %v", err)
+	}
+	if summary.Completed != 1 {
+		t.Fatalf("expected one completed task, got %#v", summary)
+	}
+	if storage.getTaskTreeCalls == 0 {
+		t.Fatalf("expected storage GetTaskTree to be called")
+	}
+	if storage.statusSetCount("t-1", contracts.TaskStatusInProgress) == 0 {
+		t.Fatalf("expected storage SetTaskStatus to set in_progress")
+	}
+	if storage.statusSetCount("t-1", contracts.TaskStatusClosed) == 0 {
+		t.Fatalf("expected storage SetTaskStatus to set closed")
+	}
+	if engine.buildGraphCalls == 0 {
+		t.Fatalf("expected task engine BuildGraph to be called")
+	}
+	if engine.nextAvailableCalls == 0 {
+		t.Fatalf("expected task engine GetNextAvailable to be called")
+	}
+	if engine.calculateConcurrencyCalls == 0 {
+		t.Fatalf("expected task engine CalculateConcurrency to be called")
+	}
+	if engine.isCompleteCalls == 0 {
+		t.Fatalf("expected task engine IsComplete to be called")
+	}
+}
+
+func TestStorageEngineTaskManagerSetTaskStatusPropagatesTaskEngineErrors(t *testing.T) {
+	storage := newSpyStorageBackend([]contracts.Task{
+		{ID: "root", Title: "Root", Status: contracts.TaskStatusClosed},
+		{ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen, ParentID: "root"},
+	}, []contracts.TaskRelation{
+		{FromID: "root", ToID: "t-1", Type: contracts.RelationParent},
+	})
+	engine := newSpyTaskEngine(enginepkg.NewTaskEngine())
+	engine.updateTaskStatusErr = errors.New("graph update failed")
+	manager := newStorageEngineTaskManager(storage, engine, "root")
+
+	if _, err := manager.NextTasks(context.Background(), "root"); err != nil {
+		t.Fatalf("NextTasks failed: %v", err)
+	}
+
+	err := manager.SetTaskStatus(context.Background(), "t-1", contracts.TaskStatusClosed)
+	if err == nil {
+		t.Fatalf("expected SetTaskStatus to return task engine update error")
+	}
+	if !strings.Contains(err.Error(), "graph update failed") {
+		t.Fatalf("expected task engine update error, got %q", err.Error())
+	}
+	if engine.updateTaskStatusCalls == 0 {
+		t.Fatalf("expected task engine UpdateTaskStatus to be called")
+	}
+	if storage.statusSetCount("t-1", contracts.TaskStatusClosed) == 0 {
+		t.Fatalf("expected storage SetTaskStatus to be called before surfacing error")
+	}
+}
+
+func TestStorageEngineTaskManagerSetTaskStatusPersistsBackendStateChanges(t *testing.T) {
+	storage := newPersistingSpyStorageBackend([]contracts.Task{
+		{ID: "root", Title: "Root", Status: contracts.TaskStatusClosed},
+		{ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen, ParentID: "root"},
+	}, []contracts.TaskRelation{{FromID: "root", ToID: "t-1", Type: contracts.RelationParent}})
+	engine := newSpyTaskEngine(enginepkg.NewTaskEngine())
+	manager := newStorageEngineTaskManager(storage, engine, "root")
+
+	if _, err := manager.NextTasks(context.Background(), "root"); err != nil {
+		t.Fatalf("NextTasks failed: %v", err)
+	}
+
+	if err := manager.SetTaskStatus(context.Background(), "t-1", contracts.TaskStatusClosed); err != nil {
+		t.Fatalf("SetTaskStatus failed: %v", err)
+	}
+	if storage.persistStatusCount("t-1", contracts.TaskStatusClosed) == 0 {
+		t.Fatalf("expected persistence hook to record closed status")
+	}
+	if engine.updateTaskStatusCalls == 0 {
+		t.Fatalf("expected task engine graph update after persistence")
+	}
+}
+
+func TestStorageEngineTaskManagerSetTaskStatusReturnsPersistenceErrors(t *testing.T) {
+	storage := newPersistingSpyStorageBackend([]contracts.Task{
+		{ID: "root", Title: "Root", Status: contracts.TaskStatusClosed},
+		{ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen, ParentID: "root"},
+	}, []contracts.TaskRelation{{FromID: "root", ToID: "t-1", Type: contracts.RelationParent}})
+	storage.persistStatusErr = errors.New("persist failed")
+	engine := newSpyTaskEngine(enginepkg.NewTaskEngine())
+	manager := newStorageEngineTaskManager(storage, engine, "root")
+
+	if _, err := manager.NextTasks(context.Background(), "root"); err != nil {
+		t.Fatalf("NextTasks failed: %v", err)
+	}
+
+	err := manager.SetTaskStatus(context.Background(), "t-1", contracts.TaskStatusClosed)
+	if err == nil {
+		t.Fatalf("expected persistence failure")
+	}
+	if !strings.Contains(err.Error(), "persist failed") {
+		t.Fatalf("expected persistence error, got %q", err.Error())
+	}
+	if storage.statusSetCount("t-1", contracts.TaskStatusClosed) == 0 {
+		t.Fatalf("expected storage SetTaskStatus to occur before persistence error")
+	}
+	if engine.updateTaskStatusCalls != 0 {
+		t.Fatalf("expected graph update to be skipped after persistence failure")
+	}
+}
+
+func TestStorageEngineTaskManagerSetTaskDataPersistsBackendStateChanges(t *testing.T) {
+	storage := newPersistingSpyStorageBackend([]contracts.Task{
+		{ID: "root", Title: "Root", Status: contracts.TaskStatusClosed},
+		{ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen, ParentID: "root"},
+	}, []contracts.TaskRelation{{FromID: "root", ToID: "t-1", Type: contracts.RelationParent}})
+	engine := newSpyTaskEngine(enginepkg.NewTaskEngine())
+	manager := newStorageEngineTaskManager(storage, engine, "root")
+
+	if err := manager.SetTaskData(context.Background(), "t-1", map[string]string{"triage_status": "blocked"}); err != nil {
+		t.Fatalf("SetTaskData failed: %v", err)
+	}
+	if storage.persistDataCount("t-1") == 0 {
+		t.Fatalf("expected persistence hook to record task data change")
+	}
+}
+
+func TestLoopWithTaskEngineTreatsOpenRootWithTerminalChildrenAsComplete(t *testing.T) {
+	storage := newSpyStorageBackend([]contracts.Task{
+		{ID: "root", Title: "Root", Status: contracts.TaskStatusOpen},
+		{ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusClosed, ParentID: "root"},
+		{ID: "t-2", Title: "Task 2", Status: contracts.TaskStatusFailed, ParentID: "root"},
+	}, []contracts.TaskRelation{
+		{FromID: "root", ToID: "t-1", Type: contracts.RelationParent},
+		{FromID: "root", ToID: "t-2", Type: contracts.RelationParent},
+	})
+	engine := newSpyTaskEngine(enginepkg.NewTaskEngine())
+	run := &fakeRunner{}
+	loop := NewLoopWithTaskEngine(storage, engine, run, nil, LoopOptions{ParentID: "root", Concurrency: 2})
+
+	summary, err := loop.Run(context.Background())
+	if err != nil {
+		t.Fatalf("loop failed: %v", err)
+	}
+	if summary.TotalProcessed() != 0 {
+		t.Fatalf("expected no processed tasks, got %#v", summary)
+	}
+	if len(run.requests) != 0 {
+		t.Fatalf("expected runner not to be invoked, got %d calls", len(run.requests))
+	}
+	if engine.isCompleteCalls == 0 {
+		t.Fatalf("expected task engine IsComplete to be called")
+	}
+}
+
+func TestLoopReturnsErrorWhenCompletionCheckerReportsIncomplete(t *testing.T) {
+	mgr := &completionAwareTaskManager{
+		fakeTaskManager: newFakeTaskManager(),
+		complete:        false,
+	}
+	loop := NewLoop(mgr, &fakeRunner{}, nil, LoopOptions{ParentID: "root"})
+
+	summary, err := loop.Run(context.Background())
+	if err == nil {
+		t.Fatalf("expected incomplete graph error, got summary %#v", summary)
+	}
+	if !strings.Contains(err.Error(), "incomplete") {
+		t.Fatalf("expected incomplete graph error message, got %q", err.Error())
+	}
+	if mgr.isCompleteCalls == 0 {
+		t.Fatalf("expected completion checker to be called")
+	}
+}
+
 type fakeTaskManager struct {
 	mu             sync.Mutex
 	queue          []contracts.Task
@@ -448,6 +1415,21 @@ func newFakeTaskManager(tasks ...contracts.Task) *fakeTaskManager {
 		status[task.ID] = task.Status
 	}
 	return &fakeTaskManager{queue: tasks, statusByID: status, dataByID: map[string]map[string]string{}}
+}
+
+type completionAwareTaskManager struct {
+	*fakeTaskManager
+	complete        bool
+	isCompleteErr   error
+	isCompleteCalls int
+}
+
+func (m *completionAwareTaskManager) IsComplete(context.Context) (bool, error) {
+	m.isCompleteCalls++
+	if m.isCompleteErr != nil {
+		return false, m.isCompleteErr
+	}
+	return m.complete, nil
 }
 
 func (f *fakeTaskManager) NextTasks(context.Context, string) ([]contracts.TaskSummary, error) {
@@ -547,6 +1529,101 @@ func (f *fakeRunner) Run(_ context.Context, request contracts.RunnerRequest) (co
 	result := f.results[f.idx]
 	f.idx++
 	return result, nil
+}
+
+type dependencyTrackingRunner struct {
+	release   chan struct{}
+	started   chan string
+	requests  []contracts.RunnerRequest
+	active    int
+	maxActive int
+	mu        sync.Mutex
+}
+
+func (r *dependencyTrackingRunner) Run(_ context.Context, request contracts.RunnerRequest) (contracts.RunnerResult, error) {
+	r.mu.Lock()
+	r.requests = append(r.requests, request)
+	r.active++
+	if r.active > r.maxActive {
+		r.maxActive = r.active
+	}
+	r.mu.Unlock()
+
+	if r.started != nil {
+		r.started <- request.TaskID
+	}
+	if r.release != nil {
+		<-r.release
+	}
+
+	r.mu.Lock()
+	r.active--
+	r.mu.Unlock()
+	return contracts.RunnerResult{Status: contracts.RunnerResultCompleted}, nil
+}
+
+type logWritingRunner struct {
+	logPath string
+}
+
+func (r *logWritingRunner) Run(_ context.Context, request contracts.RunnerRequest) (contracts.RunnerResult, error) {
+	path := strings.TrimSpace(request.Metadata["log_path"])
+	if path == "" {
+		return contracts.RunnerResult{Status: contracts.RunnerResultFailed, Reason: "missing log_path metadata"}, nil
+	}
+	r.logPath = path
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return contracts.RunnerResult{Status: contracts.RunnerResultFailed, Reason: err.Error()}, nil
+	}
+	if err := os.WriteFile(path, []byte("ok\n"), 0o644); err != nil {
+		return contracts.RunnerResult{Status: contracts.RunnerResultFailed, Reason: err.Error()}, nil
+	}
+	return contracts.RunnerResult{Status: contracts.RunnerResultCompleted}, nil
+}
+
+func (r *logWritingRunner) LogPath() string {
+	return r.logPath
+}
+
+type structuredDecisionRunner struct {
+	result  contracts.RunnerResult
+	logPath string
+}
+
+func (r *structuredDecisionRunner) Run(_ context.Context, request contracts.RunnerRequest) (contracts.RunnerResult, error) {
+	path := strings.TrimSpace(request.Metadata["log_path"])
+	if path == "" {
+		return contracts.RunnerResult{Status: contracts.RunnerResultFailed, Reason: "missing log_path metadata"}, nil
+	}
+	r.logPath = path
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
+	if err != nil {
+		return contracts.RunnerResult{Status: contracts.RunnerResultFailed, Reason: err.Error()}, nil
+	}
+	defer file.Close()
+
+	logger := logging.NewStructuredLogger(file, "info", logging.LoggingSchemaFields{TaskID: request.TaskID})
+	if err := logger.Log("info", map[string]interface{}{
+		"message": "task execution started",
+		"outcome": "intentional failure",
+	}); err != nil {
+		return contracts.RunnerResult{Status: contracts.RunnerResultFailed, Reason: err.Error()}, nil
+	}
+	if err := logger.Log("warn", map[string]interface{}{
+		"message":  "decision event",
+		"decision": "failed",
+	}); err != nil {
+		return contracts.RunnerResult{Status: contracts.RunnerResultFailed, Reason: err.Error()}, nil
+	}
+
+	if r.result.Status == "" {
+		return contracts.RunnerResult{Status: contracts.RunnerResultFailed, Reason: "missing configured result"}, nil
+	}
+	return r.result, nil
+}
+
+func (r *structuredDecisionRunner) LogPath() string {
+	return r.logPath
 }
 
 type noopSink struct{}
@@ -1106,7 +2183,7 @@ func TestLoopEmitsRunnerStartedMetadata(t *testing.T) {
 	if event.Metadata["model"] != "openai/gpt-5.3-codex" {
 		t.Fatalf("expected model metadata, got %#v", event.Metadata)
 	}
-	if event.Metadata["log_path"] != "/repo/runner-logs/opencode/t-1.jsonl" {
+	if event.Metadata["log_path"] != "/repo/runner-logs/root/t-1/opencode/t-1.jsonl" {
 		t.Fatalf("expected log_path metadata, got %#v", event.Metadata)
 	}
 	if event.Metadata["clone_path"] != "/repo" {
@@ -1135,8 +2212,146 @@ func TestLoopEmitsRunnerStartedMetadataWithConfiguredBackend(t *testing.T) {
 	if event.Metadata["backend"] != "codex" {
 		t.Fatalf("expected backend metadata=codex, got %#v", event.Metadata)
 	}
-	if event.Metadata["log_path"] != "/repo/runner-logs/codex/t-1.jsonl" {
+	if event.Metadata["log_path"] != "/repo/runner-logs/root/t-1/codex/t-1.jsonl" {
 		t.Fatalf("expected codex log path metadata, got %#v", event.Metadata)
+	}
+}
+
+func TestLoopEmitsLogsUnderEpicTaskDirectory(t *testing.T) {
+	mgr := newFakeTaskManager(contracts.Task{ID: "t-1", Title: "Task 1", ParentID: "epic-1", Status: contracts.TaskStatusOpen})
+	runner := &logWritingRunner{}
+	sink := &recordingSink{}
+	repoRoot := t.TempDir()
+	loop := NewLoop(mgr, runner, sink, LoopOptions{ParentID: "root", RepoRoot: repoRoot, Model: "openai/gpt-5.3-codex"})
+
+	_, err := loop.Run(context.Background())
+	if err != nil {
+		t.Fatalf("loop failed: %v", err)
+	}
+	expected := filepath.Join(repoRoot, "runner-logs", "epic-1", "t-1", "opencode", "t-1.jsonl")
+	if got := runner.LogPath(); got != expected {
+		t.Fatalf("expected log to be written to %q, got %q", expected, got)
+	}
+	if _, err := os.Stat(expected); err != nil {
+		t.Fatalf("expected emitted log file %q, got err %v", expected, err)
+	}
+}
+
+func TestLoopWritesObservabilityPipelineArtifactsForFailedTask(t *testing.T) {
+	mgr := newFakeTaskManager(contracts.Task{ID: "t-1", Title: "Task 1", ParentID: "epic-1", Status: contracts.TaskStatusOpen})
+	runner := &structuredDecisionRunner{
+		result: contracts.RunnerResult{
+			Status: contracts.RunnerResultFailed,
+			Reason: "observability validation failed",
+		},
+	}
+	recording := &recordingSink{}
+	repoRoot := t.TempDir()
+	eventsPath := filepath.Join(repoRoot, "runner-logs", "agent.events.jsonl")
+	sink := contracts.NewFanoutEventSink(contracts.NewFileEventSink(eventsPath), recording)
+
+	loop := NewLoop(mgr, runner, sink, LoopOptions{ParentID: "root", RepoRoot: repoRoot, Model: "openai/gpt-5.3-codex", Backend: "opencode"})
+	summary, err := loop.Run(context.Background())
+	if err != nil {
+		t.Fatalf("loop failed: %v", err)
+	}
+	if summary.Failed != 1 {
+		t.Fatalf("expected failed summary, got %#v", summary)
+	}
+
+	expected := filepath.Join(repoRoot, "runner-logs", "epic-1", "t-1", "opencode", "t-1.jsonl")
+	if got := runner.LogPath(); got != expected {
+		t.Fatalf("expected runner log path %q, got %q", expected, got)
+	}
+	content, err := os.ReadFile(expected)
+	if err != nil {
+		t.Fatalf("expected emitted log file %q, got err %v", expected, err)
+	}
+	scanner := bufio.NewScanner(strings.NewReader(string(content)))
+	hasStructuredLine := false
+	for scanner.Scan() {
+		hasStructuredLine = true
+		if err := logging.ValidateStructuredLogLine(scanner.Bytes()); err != nil {
+			t.Fatalf("invalid structured log line %q: %v", scanner.Text(), err)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatalf("read structured log file: %v", err)
+	}
+	if !hasStructuredLine {
+		t.Fatalf("expected at least one structured log line in %q", expected)
+	}
+
+	taskData := eventsByType(recording.events, contracts.EventTypeTaskDataUpdated)
+	if len(taskData) == 0 {
+		t.Fatalf("expected task_data_updated event for failed task")
+	}
+	if taskData[len(taskData)-1].Metadata["decision"] != "failed" {
+		t.Fatalf("expected failed decision in task_data_updated metadata, got %#v", taskData[len(taskData)-1].Metadata)
+	}
+
+	taskFinished := eventsByType(recording.events, contracts.EventTypeTaskFinished)
+	if len(taskFinished) == 0 {
+		t.Fatalf("expected task_finished event for failed task")
+	}
+	if taskFinished[len(taskFinished)-1].Metadata["decision"] != "failed" {
+		t.Fatalf("expected failed decision in task_finished metadata, got %#v", taskFinished[len(taskFinished)-1].Metadata)
+	}
+
+	eventsFile, err := os.ReadFile(eventsPath)
+	if err != nil {
+		t.Fatalf("expected event file %q, got err %v", eventsPath, err)
+	}
+	if !strings.Contains(string(eventsFile), "\"decision\":\"failed\"") {
+		t.Fatalf("expected decision metadata in events file, got %q", string(eventsFile))
+	}
+
+	browser, err := tui.NewLogBrowser(filepath.Join(repoRoot, "runner-logs"))
+	if err != nil {
+		t.Fatalf("new log browser: %v", err)
+	}
+	if got := browser.CurrentTask(); got != "t-1" {
+		browser.SelectTask(1)
+		if got := browser.CurrentTask(); got != "t-1" {
+			t.Fatalf("expected log browser to select task-1, got %q", got)
+		}
+	}
+	if got := browser.CurrentLogFile(); got != expected {
+		t.Fatalf("expected log browser selected log path %q, got %q", expected, got)
+	}
+	view := browser.View()
+	if !strings.Contains(view, "t-1") || !strings.Contains(view, "level") {
+		t.Fatalf("expected log browser view to include rendered task log content, got %q", view)
+	}
+}
+
+func TestLoopEmitsSeparatedLogPathsForMultipleTasks(t *testing.T) {
+	mgr := newFakeTaskManager(
+		contracts.Task{ID: "t-1", Title: "Task 1", ParentID: "epic-1", Status: contracts.TaskStatusOpen},
+		contracts.Task{ID: "t-2", Title: "Task 2", ParentID: "epic-2", Status: contracts.TaskStatusOpen},
+	)
+	run := &fakeRunner{results: []contracts.RunnerResult{
+		{Status: contracts.RunnerResultCompleted},
+		{Status: contracts.RunnerResultCompleted},
+	}}
+	sink := &recordingSink{}
+	loop := NewLoop(mgr, run, sink, LoopOptions{ParentID: "roadmap", RepoRoot: "/repo", Model: "openai/gpt-5.3-codex"})
+
+	_, err := loop.Run(context.Background())
+	if err != nil {
+		t.Fatalf("loop failed: %v", err)
+	}
+
+	runnerStarted := eventsByType(sink.events, contracts.EventTypeRunnerStarted)
+	if len(runnerStarted) != 2 {
+		t.Fatalf("expected two runner_started events, got %d", len(runnerStarted))
+	}
+
+	if runnerStarted[0].Metadata["log_path"] != "/repo/runner-logs/epic-1/t-1/opencode/t-1.jsonl" {
+		t.Fatalf("unexpected log path for first task, got %#v", runnerStarted[0].Metadata)
+	}
+	if runnerStarted[1].Metadata["log_path"] != "/repo/runner-logs/epic-2/t-2/opencode/t-2.jsonl" {
+		t.Fatalf("unexpected log path for second task, got %#v", runnerStarted[1].Metadata)
 	}
 }
 
@@ -1351,6 +2566,95 @@ func TestLoopEmitsReviewFeedbackMetadataOnFailedReview(t *testing.T) {
 	}
 }
 
+func TestLoopEmitsDecisionMetadataForReviewRetry(t *testing.T) {
+	mgr := newFakeTaskManager(contracts.Task{ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen})
+	run := &fakeRunner{results: []contracts.RunnerResult{
+		{Status: contracts.RunnerResultCompleted},
+		{
+			Status:      contracts.RunnerResultCompleted,
+			ReviewReady: false,
+			Artifacts: map[string]string{
+				"review_verdict":       "fail",
+				"review_fail_feedback": "add retry evidence to pass",
+			},
+		},
+		{Status: contracts.RunnerResultCompleted},
+		{Status: contracts.RunnerResultCompleted, ReviewReady: true},
+	}}
+	sink := &recordingSink{}
+	loop := NewLoop(mgr, run, sink, LoopOptions{ParentID: "root", MaxRetries: 1, RequireReview: true})
+
+	_, err := loop.Run(context.Background())
+	if err != nil {
+		t.Fatalf("loop failed: %v", err)
+	}
+
+	updates := eventsByType(sink.events, contracts.EventTypeTaskDataUpdated)
+	if len(updates) != 1 {
+		t.Fatalf("expected one task_data_updated event for retry decision, got %d", len(updates))
+	}
+	if updates[0].Metadata["decision"] != "retry" {
+		t.Fatalf("expected decision=retry on retry update, got %#v", updates[0].Metadata)
+	}
+	if updates[0].Metadata["reason"] != "review rejected: add retry evidence to pass" {
+		t.Fatalf("expected resolved retry reason, got %#v", updates[0].Metadata)
+	}
+}
+
+func TestLoopEmitsDecisionMetadataForReviewFailure(t *testing.T) {
+	mgr := newFakeTaskManager(contracts.Task{ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen})
+	run := &fakeRunner{results: []contracts.RunnerResult{
+		{Status: contracts.RunnerResultCompleted},
+		{
+			Status:      contracts.RunnerResultCompleted,
+			ReviewReady: false,
+			Artifacts: map[string]string{
+				"review_verdict":       "fail",
+				"review_fail_feedback": "first reviewer blocker",
+			},
+		},
+		{Status: contracts.RunnerResultCompleted},
+		{
+			Status:      contracts.RunnerResultCompleted,
+			ReviewReady: false,
+			Artifacts: map[string]string{
+				"review_verdict":       "fail",
+				"review_fail_feedback": "second reviewer blocker",
+			},
+		},
+	}}
+	sink := &recordingSink{}
+	loop := NewLoop(mgr, run, sink, LoopOptions{ParentID: "root", MaxRetries: 1, RequireReview: true})
+
+	_, err := loop.Run(context.Background())
+	if err != nil {
+		t.Fatalf("loop failed: %v", err)
+	}
+
+	updates := eventsByType(sink.events, contracts.EventTypeTaskDataUpdated)
+	if len(updates) < 1 {
+		t.Fatalf("expected at least one task_data_updated event on final failure, got %d", len(updates))
+	}
+	finalFailure := updates[len(updates)-1]
+	if finalFailure.Metadata["decision"] != "failed" {
+		t.Fatalf("expected decision=failed on final failure, got %#v", finalFailure.Metadata)
+	}
+	if finalFailure.Metadata["triage_status"] != "failed" {
+		t.Fatalf("expected triage_status=failed on final failure, got %#v", finalFailure.Metadata)
+	}
+
+	finished := eventsByType(sink.events, contracts.EventTypeTaskFinished)
+	if len(finished) != 1 {
+		t.Fatalf("expected one task_finished event, got %d", len(finished))
+	}
+	if finished[0].Metadata["decision"] != "failed" {
+		t.Fatalf("expected task_finished decision=failed, got %#v", finished[0].Metadata)
+	}
+	if finished[0].Metadata["reason"] != "review rejected: second reviewer blocker" {
+		t.Fatalf("expected resolved failure reason, got %#v", finished[0].Metadata)
+	}
+}
+
 func TestLoopHonorsConcurrencyLimit(t *testing.T) {
 	mgr := newFakeTaskManager(
 		contracts.Task{ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen},
@@ -1398,6 +2702,108 @@ func TestLoopHonorsConcurrencyLimit(t *testing.T) {
 	}
 	if got := atomic.LoadInt32(&run.maxActive); got > 2 {
 		t.Fatalf("expected max active executions <= 2, got %d", got)
+	}
+}
+
+func TestLoopAutoConcurrencyFromDependencyGraph(t *testing.T) {
+	storage := newSpyStorageBackend(
+		[]contracts.Task{
+			{ID: "root", Title: "Root", Status: contracts.TaskStatusClosed},
+			{ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen, ParentID: "root"},
+			{ID: "t-2", Title: "Task 2", Status: contracts.TaskStatusOpen, ParentID: "root"},
+			{ID: "t-3", Title: "Task 3", Status: contracts.TaskStatusOpen, ParentID: "root"},
+			{ID: "t-4", Title: "Task 4", Status: contracts.TaskStatusOpen, ParentID: "root"},
+		},
+		[]contracts.TaskRelation{
+			{FromID: "t-1", ToID: "root", Type: contracts.RelationDependsOn},
+			{FromID: "t-2", ToID: "root", Type: contracts.RelationDependsOn},
+			{FromID: "t-3", ToID: "root", Type: contracts.RelationDependsOn},
+			{FromID: "t-4", ToID: "root", Type: contracts.RelationDependsOn},
+		},
+	)
+	run := &fakeRunner{}
+
+	engine := enginepkg.NewTaskEngine()
+	manager := newStorageEngineTaskManager(storage, engine, "root")
+	loop := NewLoop(manager, run, nil, LoopOptions{ParentID: "root", Concurrency: 0, DryRun: true})
+
+	summary, err := loop.Run(context.Background())
+	if err != nil {
+		t.Fatalf("loop failed: %v", err)
+	}
+	if got := summary.Skipped; got != 1 {
+		t.Fatalf("expected exactly one task skipped in dry run, got %d", got)
+	}
+	if loop.options.Concurrency != 4 {
+		t.Fatalf("expected auto concurrency to be 4, got %d", loop.options.Concurrency)
+	}
+}
+
+func TestLoopRespectsConfiguredConcurrencyCapForAutoCalculation(t *testing.T) {
+	storage := newSpyStorageBackend(
+		[]contracts.Task{
+			{ID: "root", Title: "Root", Status: contracts.TaskStatusClosed},
+			{ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen, ParentID: "root"},
+			{ID: "t-2", Title: "Task 2", Status: contracts.TaskStatusOpen, ParentID: "root"},
+			{ID: "t-3", Title: "Task 3", Status: contracts.TaskStatusOpen, ParentID: "root"},
+			{ID: "t-4", Title: "Task 4", Status: contracts.TaskStatusOpen, ParentID: "root"},
+		},
+		[]contracts.TaskRelation{
+			{FromID: "t-1", ToID: "root", Type: contracts.RelationDependsOn},
+			{FromID: "t-2", ToID: "root", Type: contracts.RelationDependsOn},
+			{FromID: "t-3", ToID: "root", Type: contracts.RelationDependsOn},
+			{FromID: "t-4", ToID: "root", Type: contracts.RelationDependsOn},
+		},
+	)
+	run := &fakeRunner{}
+
+	engine := enginepkg.NewTaskEngine()
+	manager := newStorageEngineTaskManager(storage, engine, "root")
+	loop := NewLoop(manager, run, nil, LoopOptions{ParentID: "root", Concurrency: 2, DryRun: true})
+
+	summary, err := loop.Run(context.Background())
+	if err != nil {
+		t.Fatalf("loop failed: %v", err)
+	}
+	if got := summary.Skipped; got != 1 {
+		t.Fatalf("expected exactly one task skipped in dry run, got %d", got)
+	}
+	if loop.options.Concurrency != 2 {
+		t.Fatalf("expected configured cap to remain 2, got %d", loop.options.Concurrency)
+	}
+}
+
+func TestLoopDefaultsToAutoConcurrencyWhenNoLimitProvided(t *testing.T) {
+	storage := newSpyStorageBackend(
+		[]contracts.Task{
+			{ID: "root", Title: "Root", Status: contracts.TaskStatusClosed},
+			{ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen, ParentID: "root"},
+			{ID: "t-2", Title: "Task 2", Status: contracts.TaskStatusOpen, ParentID: "root"},
+			{ID: "t-3", Title: "Task 3", Status: contracts.TaskStatusOpen, ParentID: "root"},
+			{ID: "t-4", Title: "Task 4", Status: contracts.TaskStatusOpen, ParentID: "root"},
+		},
+		[]contracts.TaskRelation{
+			{FromID: "t-1", ToID: "root", Type: contracts.RelationDependsOn},
+			{FromID: "t-2", ToID: "root", Type: contracts.RelationDependsOn},
+			{FromID: "t-3", ToID: "root", Type: contracts.RelationDependsOn},
+			{FromID: "t-4", ToID: "root", Type: contracts.RelationDependsOn},
+		},
+	)
+	run := &fakeRunner{}
+
+	engine := enginepkg.NewTaskEngine()
+	manager := newStorageEngineTaskManager(storage, engine, "root")
+	loop := NewLoop(manager, run, nil, LoopOptions{ParentID: "root", DryRun: true})
+
+	summary, err := loop.Run(context.Background())
+	if err != nil {
+		t.Fatalf("loop failed: %v", err)
+	}
+	if got := summary.Skipped; got != 1 {
+		t.Fatalf("expected exactly one task skipped in dry run, got %d", got)
+	}
+	if loop.options.Concurrency != 4 {
+		t.Fatalf("expected auto concurrency to default to 4, got %d", loop.options.Concurrency)
 	}
 }
 
@@ -1534,6 +2940,101 @@ func TestLoopMarksLandingQueueBlockedOnMergeFailure(t *testing.T) {
 	}
 	if hasEventType(sink.events, contracts.EventTypeMergeLanded) {
 		t.Fatalf("did not expect merge_landed event on blocked landing")
+	}
+}
+
+func TestLoopEmitsDecisionMetadataForLandingRetryAndBlocked(t *testing.T) {
+	mgr := newFakeTaskManager(contracts.Task{ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen})
+	run := &fakeRunner{results: []contracts.RunnerResult{{Status: contracts.RunnerResultCompleted}, {Status: contracts.RunnerResultCompleted, ReviewReady: true}}}
+	vcs := &fakeVCS{mergeErrs: []error{errors.New("landing failure first"), errors.New("landing failure second")}}
+	sink := &recordingSink{}
+	loop := NewLoop(mgr, run, sink, LoopOptions{ParentID: "root", VCS: vcs, MergeOnSuccess: true, RequireReview: true})
+
+	summary, err := loop.Run(context.Background())
+	if err != nil {
+		t.Fatalf("expected merge conflict to block task without failing loop, got %v", err)
+	}
+	if summary.Blocked != 1 {
+		t.Fatalf("expected blocked summary count, got %#v", summary)
+	}
+
+	mergeRetry, ok := findEventByType(sink.events, contracts.EventTypeMergeRetry)
+	if !ok {
+		t.Fatalf("expected merge_retry event")
+	}
+	if mergeRetry.Metadata["decision"] != "retry" {
+		t.Fatalf("expected decision=retry on merge_retry event, got %#v", mergeRetry.Metadata)
+	}
+	if !strings.Contains(mergeRetry.Metadata["reason"], "landing failure first") {
+		t.Fatalf("expected retry reason on merge_retry event, got %#v", mergeRetry.Metadata)
+	}
+
+	mergeBlocked, ok := findEventByType(sink.events, contracts.EventTypeMergeBlocked)
+	if !ok {
+		t.Fatalf("expected merge_blocked event")
+	}
+	if mergeBlocked.Metadata["decision"] != "blocked" {
+		t.Fatalf("expected decision=blocked on merge_blocked event, got %#v", mergeBlocked.Metadata)
+	}
+	if !strings.Contains(mergeBlocked.Metadata["reason"], "landing failure second") {
+		t.Fatalf("expected blocked reason on merge_blocked event, got %#v", mergeBlocked.Metadata)
+	}
+
+	updates := eventsByType(sink.events, contracts.EventTypeTaskDataUpdated)
+	if len(updates) == 0 {
+		t.Fatalf("expected task_data_updated events for landing")
+	}
+	foundBlocked := false
+	for _, update := range updates {
+		if update.Metadata["triage_status"] != "blocked" {
+			continue
+		}
+		foundBlocked = true
+		if update.Metadata["decision"] != "blocked" {
+			t.Fatalf("expected decision=blocked on blocked task_data_updated event, got %#v", update.Metadata)
+		}
+		if !strings.Contains(update.Metadata["reason"], "landing failure second") {
+			t.Fatalf("expected blocked task reason in task_data_updated, got %#v", update.Metadata)
+		}
+	}
+	if !foundBlocked {
+		t.Fatalf("expected blocked task_data_updated event with triage_status=blocked, got %#v", updates)
+	}
+}
+
+func TestLoopEmitsDecisionMetadataForLandingLanded(t *testing.T) {
+	mgr := newFakeTaskManager(contracts.Task{ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen})
+	run := &fakeRunner{results: []contracts.RunnerResult{{Status: contracts.RunnerResultCompleted}, {Status: contracts.RunnerResultCompleted, ReviewReady: true}}}
+	vcs := &fakeVCS{commitSHA: "deadbeef"}
+	sink := &recordingSink{}
+	loop := NewLoop(mgr, run, sink, LoopOptions{ParentID: "root", VCS: vcs, MergeOnSuccess: true, RequireReview: true})
+
+	_, err := loop.Run(context.Background())
+	if err != nil {
+		t.Fatalf("loop failed: %v", err)
+	}
+
+	mergeLanded, ok := findEventByType(sink.events, contracts.EventTypeMergeLanded)
+	if !ok {
+		t.Fatalf("expected merge_landed event")
+	}
+	if mergeLanded.Metadata["decision"] != "landed" {
+		t.Fatalf("expected decision=landed on merge_landed event, got %#v", mergeLanded.Metadata)
+	}
+
+	updates := eventsByType(sink.events, contracts.EventTypeTaskDataUpdated)
+	foundLanded := false
+	for _, update := range updates {
+		if update.Metadata["landing_status"] != "landed" {
+			continue
+		}
+		foundLanded = true
+		if update.Metadata["decision"] != "landed" {
+			t.Fatalf("expected landing_status landed update to include decision=landed, got %#v", update.Metadata)
+		}
+	}
+	if !foundLanded {
+		t.Fatalf("expected landing_status=landed task_data_updated event, got %#v", updates)
 	}
 }
 
@@ -1720,6 +3221,111 @@ func TestLoopUsesIsolatedClonePerTaskAndCleansUp(t *testing.T) {
 
 	if cloneMgr.CleanupCount() != 2 {
 		t.Fatalf("expected clone cleanup for each task, got %d", cloneMgr.CleanupCount())
+	}
+}
+
+func TestLoopUsesRealCloneManagerForParallelTasksAndCleansUpWorktrees(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is required")
+	}
+
+	repoRoot := t.TempDir()
+	runGit(t, repoRoot, "init")
+	readmePath := filepath.Join(repoRoot, "README.md")
+	if err := os.WriteFile(readmePath, []byte("hello\n"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	runGit(t, repoRoot, "add", "README.md")
+	runGit(t, repoRoot, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "init")
+
+	cloneBase := t.TempDir()
+	cloneManager := NewGitCloneManager(cloneBase)
+	runner := &parallelBlockingRepoRunner{
+		expected:   2,
+		startedAll: make(chan struct{}),
+		release:    make(chan struct{}),
+	}
+	loop := NewLoop(newFakeTaskManager(
+		contracts.Task{ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen},
+		contracts.Task{ID: "t-2", Title: "Task 2", Status: contracts.TaskStatusOpen},
+	), runner, nil, LoopOptions{
+		ParentID:     "root",
+		RepoRoot:     repoRoot,
+		Concurrency:  2,
+		CloneManager: cloneManager,
+	})
+
+	type loopResult struct {
+		summary contracts.LoopSummary
+		err     error
+	}
+	resultCh := make(chan loopResult, 1)
+	go func() {
+		summary, err := loop.Run(context.Background())
+		resultCh <- loopResult{summary: summary, err: err}
+	}()
+
+	select {
+	case <-runner.startedAll:
+	case <-time.After(5 * time.Second):
+		close(runner.release)
+		result := <-resultCh
+		t.Fatalf("timed out waiting for parallel task starts: summary=%#v err=%v", result.summary, result.err)
+	}
+
+	repoRoots := runner.RepoRootsByTask()
+	if len(repoRoots) != 2 {
+		close(runner.release)
+		_ = <-resultCh
+		t.Fatalf("expected two repo roots, got %#v", repoRoots)
+	}
+	if repoRoots["t-1"] == repoRoots["t-2"] {
+		close(runner.release)
+		_ = <-resultCh
+		t.Fatalf("expected isolated clone path per task, got shared path %q", repoRoots["t-1"])
+	}
+	for taskID, root := range repoRoots {
+		if _, err := os.Stat(root); err != nil {
+			close(runner.release)
+			_ = <-resultCh
+			t.Fatalf("expected live clone for %s at %q: %v", taskID, root, err)
+		}
+		if root == repoRoot {
+			close(runner.release)
+			_ = <-resultCh
+			t.Fatalf("expected task clone path, got source repo root for %s", taskID)
+		}
+		if _, err := os.Stat(filepath.Join(root, "README.md")); err != nil {
+			close(runner.release)
+			_ = <-resultCh
+			t.Fatalf("expected cloned file for %s at %q: %v", taskID, root, err)
+		}
+		if filepath.Dir(root) != filepath.Clean(cloneBase) {
+			close(runner.release)
+			_ = <-resultCh
+			t.Fatalf("expected clone under %q, got %q", cloneBase, root)
+		}
+	}
+
+	close(runner.release)
+	result := <-resultCh
+	if result.err != nil {
+		t.Fatalf("loop failed: %v", result.err)
+	}
+	if result.summary.Completed != 2 {
+		t.Fatalf("expected two completed tasks, got %#v", result.summary)
+	}
+	for _, root := range repoRoots {
+		if _, err := os.Stat(root); !os.IsNotExist(err) {
+			t.Fatalf("expected clone path cleaned up, got %v for %q", err, root)
+		}
+	}
+	entries, err := os.ReadDir(cloneBase)
+	if err != nil {
+		t.Fatalf("read clone base: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("expected temporary clone base directory to be empty, got %d entries", len(entries))
 	}
 }
 
@@ -2123,6 +3729,43 @@ func (r *repoRecordingRunner) RepoRootsByTask() map[string]string {
 	return out
 }
 
+type parallelBlockingRepoRunner struct {
+	expected   int
+	mu         sync.Mutex
+	byTaskID   map[string]string
+	started    int
+	startedAll chan struct{}
+	release    chan struct{}
+}
+
+func (r *parallelBlockingRepoRunner) Run(_ context.Context, request contracts.RunnerRequest) (contracts.RunnerResult, error) {
+	r.mu.Lock()
+	if r.byTaskID == nil {
+		r.byTaskID = map[string]string{}
+	}
+	r.byTaskID[request.TaskID] = request.RepoRoot
+	r.started++
+	if r.started == r.expected {
+		close(r.startedAll)
+	}
+	r.mu.Unlock()
+
+	if r.release != nil {
+		<-r.release
+	}
+	return contracts.RunnerResult{Status: contracts.RunnerResultCompleted}, nil
+}
+
+func (r *parallelBlockingRepoRunner) RepoRootsByTask() map[string]string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make(map[string]string, len(r.byTaskID))
+	for taskID, repoRoot := range r.byTaskID {
+		out[taskID] = repoRoot
+	}
+	return out
+}
+
 type fakeCloneManager struct {
 	mu          sync.Mutex
 	cleanupByID map[string]int
@@ -2192,4 +3835,197 @@ func TestRunnerLogBackendDirSupportsClaude(t *testing.T) {
 	if got := runnerLogBackendDir("claude"); got != "claude" {
 		t.Fatalf("expected claude backend dir, got %q", got)
 	}
+}
+
+type statusTransition struct {
+	taskID string
+	status contracts.TaskStatus
+}
+
+type spyStorageBackend struct {
+	mu               sync.Mutex
+	tasks            map[string]contracts.Task
+	relations        []contracts.TaskRelation
+	getTaskTreeCalls int
+	setStatusCalls   []statusTransition
+}
+
+func newSpyStorageBackend(tasks []contracts.Task, relations []contracts.TaskRelation) *spyStorageBackend {
+	byID := make(map[string]contracts.Task, len(tasks))
+	for _, task := range tasks {
+		byID[task.ID] = task
+	}
+	return &spyStorageBackend{tasks: byID, relations: append([]contracts.TaskRelation(nil), relations...)}
+}
+
+func (s *spyStorageBackend) GetTaskTree(_ context.Context, rootID string) (*contracts.TaskTree, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.getTaskTreeCalls++
+	root, ok := s.tasks[rootID]
+	if !ok {
+		return nil, fmt.Errorf("missing root task %q", rootID)
+	}
+	tasks := make(map[string]contracts.Task, len(s.tasks))
+	for taskID, task := range s.tasks {
+		tasks[taskID] = task
+	}
+	return &contracts.TaskTree{
+		Root:      root,
+		Tasks:     tasks,
+		Relations: append([]contracts.TaskRelation(nil), s.relations...),
+	}, nil
+}
+
+func (s *spyStorageBackend) GetTask(_ context.Context, taskID string) (*contracts.Task, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	task, ok := s.tasks[taskID]
+	if !ok {
+		return nil, errors.New("missing task")
+	}
+	copy := task
+	return &copy, nil
+}
+
+func (s *spyStorageBackend) SetTaskStatus(_ context.Context, taskID string, status contracts.TaskStatus) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	task, ok := s.tasks[taskID]
+	if !ok {
+		return errors.New("missing task")
+	}
+	task.Status = status
+	s.tasks[taskID] = task
+	s.setStatusCalls = append(s.setStatusCalls, statusTransition{taskID: taskID, status: status})
+	return nil
+}
+
+func (s *spyStorageBackend) SetTaskData(_ context.Context, taskID string, data map[string]string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	task, ok := s.tasks[taskID]
+	if !ok {
+		return errors.New("missing task")
+	}
+	if len(data) > 0 {
+		if task.Metadata == nil {
+			task.Metadata = map[string]string{}
+		}
+		for key, value := range data {
+			task.Metadata[key] = value
+		}
+	}
+	s.tasks[taskID] = task
+	return nil
+}
+
+func (s *spyStorageBackend) statusSetCount(taskID string, status contracts.TaskStatus) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	count := 0
+	for _, call := range s.setStatusCalls {
+		if call.taskID == taskID && call.status == status {
+			count++
+		}
+	}
+	return count
+}
+
+type persistingSpyStorageBackend struct {
+	*spyStorageBackend
+	persistStatusErr   error
+	persistDataErr     error
+	persistStatusCalls []statusTransition
+	persistDataCalls   []string
+}
+
+func newPersistingSpyStorageBackend(tasks []contracts.Task, relations []contracts.TaskRelation) *persistingSpyStorageBackend {
+	return &persistingSpyStorageBackend{spyStorageBackend: newSpyStorageBackend(tasks, relations)}
+}
+
+func (s *persistingSpyStorageBackend) PersistTaskStatusChange(_ context.Context, taskID string, status contracts.TaskStatus) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.persistStatusCalls = append(s.persistStatusCalls, statusTransition{taskID: taskID, status: status})
+	if s.persistStatusErr != nil {
+		return s.persistStatusErr
+	}
+	return nil
+}
+
+func (s *persistingSpyStorageBackend) PersistTaskDataChange(_ context.Context, taskID string, _ map[string]string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.persistDataCalls = append(s.persistDataCalls, taskID)
+	if s.persistDataErr != nil {
+		return s.persistDataErr
+	}
+	return nil
+}
+
+func (s *persistingSpyStorageBackend) persistStatusCount(taskID string, status contracts.TaskStatus) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	count := 0
+	for _, call := range s.persistStatusCalls {
+		if call.taskID == taskID && call.status == status {
+			count++
+		}
+	}
+	return count
+}
+
+func (s *persistingSpyStorageBackend) persistDataCount(taskID string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	count := 0
+	for _, persisted := range s.persistDataCalls {
+		if persisted == taskID {
+			count++
+		}
+	}
+	return count
+}
+
+type spyTaskEngine struct {
+	delegate                  contracts.TaskEngine
+	buildGraphCalls           int
+	nextAvailableCalls        int
+	calculateConcurrencyCalls int
+	updateTaskStatusCalls     int
+	updateTaskStatusErr       error
+	isCompleteCalls           int
+}
+
+func newSpyTaskEngine(delegate contracts.TaskEngine) *spyTaskEngine {
+	return &spyTaskEngine{delegate: delegate}
+}
+
+func (s *spyTaskEngine) BuildGraph(tree *contracts.TaskTree) (*contracts.TaskGraph, error) {
+	s.buildGraphCalls++
+	return s.delegate.BuildGraph(tree)
+}
+
+func (s *spyTaskEngine) GetNextAvailable(graph *contracts.TaskGraph) []contracts.TaskSummary {
+	s.nextAvailableCalls++
+	return s.delegate.GetNextAvailable(graph)
+}
+
+func (s *spyTaskEngine) CalculateConcurrency(graph *contracts.TaskGraph, opts contracts.ConcurrencyOptions) int {
+	s.calculateConcurrencyCalls++
+	return s.delegate.CalculateConcurrency(graph, opts)
+}
+
+func (s *spyTaskEngine) UpdateTaskStatus(graph *contracts.TaskGraph, taskID string, status contracts.TaskStatus) error {
+	s.updateTaskStatusCalls++
+	if s.updateTaskStatusErr != nil {
+		return s.updateTaskStatusErr
+	}
+	return s.delegate.UpdateTaskStatus(graph, taskID, status)
+}
+
+func (s *spyTaskEngine) IsComplete(graph *contracts.TaskGraph) bool {
+	s.isCompleteCalls++
+	return s.delegate.IsComplete(graph)
 }

@@ -12,7 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/anomalyco/yolo-runner/internal/contracts"
+	"github.com/egv/yolo-runner/v2/internal/contracts"
+	"github.com/egv/yolo-runner/v2/internal/linear"
 )
 
 func TestRunMainParsesFlagsAndInvokesRun(t *testing.T) {
@@ -51,6 +52,35 @@ func TestRunMainParsesFlagsAndInvokesRun(t *testing.T) {
 	}
 	if got.stream {
 		t.Fatalf("expected stream=false by default")
+	}
+}
+
+func TestRunMainParsesQualityGateFlagsAndOverride(t *testing.T) {
+	called := false
+	var got runConfig
+	run := func(_ context.Context, cfg runConfig) error {
+		called = true
+		got = cfg
+		return nil
+	}
+
+	code := RunMain([]string{
+		"--repo", "/repo",
+		"--root", "root-1",
+		"--quality-threshold", "7",
+		"--allow-low-quality",
+	}, run)
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d", code)
+	}
+	if !called {
+		t.Fatalf("expected run function to be called")
+	}
+	if got.qualityThreshold != 7 {
+		t.Fatalf("expected quality-threshold=7, got %d", got.qualityThreshold)
+	}
+	if !got.allowLowQuality {
+		t.Fatalf("expected allow-low-quality=true, got false")
 	}
 }
 
@@ -253,6 +283,40 @@ func TestRunMainUsesProfileDefaultBackendWhenBackendFlagsAreUnset(t *testing.T) 
 	}
 	if got.backend != backendClaude {
 		t.Fatalf("expected profile default backend=%q, got %q", backendClaude, got.backend)
+	}
+}
+
+func TestRunMainUsesModeFromConfigWhenModeFlagUnset(t *testing.T) {
+	repoRoot := t.TempDir()
+	writeTrackerConfigYAML(t, repoRoot, `
+profiles:
+  default:
+    tracker:
+      type: tk
+agent:
+  mode: ui
+`)
+
+	called := false
+	var got runConfig
+	run := func(_ context.Context, cfg runConfig) error {
+		called = true
+		got = cfg
+		return nil
+	}
+
+	code := RunMain([]string{"--repo", repoRoot, "--root", "root-1"}, run)
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d", code)
+	}
+	if !called {
+		t.Fatalf("expected run function to be called")
+	}
+	if got.mode != agentModeUI {
+		t.Fatalf("expected mode from config=%q, got %q", agentModeUI, got.mode)
+	}
+	if !got.stream {
+		t.Fatalf("expected mode ui to enable streaming")
 	}
 }
 
@@ -541,6 +605,58 @@ func TestRunMainParsesStreamFlag(t *testing.T) {
 	}
 }
 
+func TestRunMainParsesModeFlag(t *testing.T) {
+	repoRoot := t.TempDir()
+	writeTrackerConfigYAML(t, repoRoot, `
+profiles:
+  default:
+    tracker:
+      type: tk
+`)
+	called := false
+	var got runConfig
+	run := func(_ context.Context, cfg runConfig) error {
+		called = true
+		got = cfg
+		return nil
+	}
+
+	code := RunMain([]string{"--repo", repoRoot, "--root", "root-1", "--mode", "ui"}, run)
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d", code)
+	}
+	if !called {
+		t.Fatalf("expected run function to be called")
+	}
+	if got.mode != agentModeUI {
+		t.Fatalf("expected mode=%q, got %q", agentModeUI, got.mode)
+	}
+	if !got.stream {
+		t.Fatalf("expected mode ui to enable streaming")
+	}
+}
+
+func TestRunMainParsesTDDFlag(t *testing.T) {
+	called := false
+	var got runConfig
+	run := func(_ context.Context, cfg runConfig) error {
+		called = true
+		got = cfg
+		return nil
+	}
+
+	code := RunMain([]string{"--repo", "/repo", "--root", "root-1", "--tdd"}, run)
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d", code)
+	}
+	if !called {
+		t.Fatalf("expected run function to be called")
+	}
+	if !got.tddMode {
+		t.Fatalf("expected tdd mode to be true")
+	}
+}
+
 func TestRunMainUsesZeroRunnerTimeoutByDefault(t *testing.T) {
 	called := false
 	var got runConfig
@@ -763,6 +879,12 @@ func TestRunWithComponentsStreamEmitsRunStartedWithParameters(t *testing.T) {
 	if !strings.Contains(out, `"type":"run_started"`) {
 		t.Fatalf("expected run_started event in stdout, got %q", out)
 	}
+	if !strings.Contains(out, `"type":"run_finished"`) {
+		t.Fatalf("expected run_finished event in stdout, got %q", out)
+	}
+	if !strings.Contains(out, `"status":"completed"`) {
+		t.Fatalf("expected completed status in run_finished metadata, got %q", out)
+	}
 	if !strings.Contains(out, `"root_id":"yr-2y0b"`) {
 		t.Fatalf("expected root_id in run_started metadata, got %q", out)
 	}
@@ -853,6 +975,60 @@ func TestRunWithComponentsVerboseStreamEmitsAllRunnerOutput(t *testing.T) {
 	out := string(data)
 	if got := strings.Count(out, `"type":"runner_output"`); got != 4 {
 		t.Fatalf("expected full runner_output count=4, got %d output=%q", got, out)
+	}
+}
+
+func TestRunWithComponentsModeUILaunchesYoloTUIAndRoutesOutput(t *testing.T) {
+	originalLaunch := launchYoloTUI
+	t.Cleanup(func() {
+		launchYoloTUI = originalLaunch
+	})
+
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	launched := false
+	launchYoloTUI = func() (io.WriteCloser, func() error, error) {
+		launched = true
+		return writer, func() error { return writer.Close() }, nil
+	}
+
+	repoRoot := initGitRepo(t)
+	mgr := &testTaskManager{tasks: []contracts.Task{{ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen}}}
+	runner := &testRunner{}
+	cfg := runConfig{
+		repoRoot:             repoRoot,
+		rootID:               "root",
+		dryRun:               true,
+		stream:               true,
+		mode:                 agentModeUI,
+		concurrency:          1,
+		watchdogTimeout:      10 * time.Minute,
+		watchdogInterval:     5 * time.Second,
+		streamOutputBuffer:   64,
+		streamOutputInterval: 150 * time.Millisecond,
+	}
+
+	runErr := runWithComponents(context.Background(), cfg, mgr, runner, nil)
+	if runErr != nil {
+		t.Fatalf("runWithComponents failed: %v", runErr)
+	}
+	raw, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("read reader: %v", err)
+	}
+	if err := reader.Close(); err != nil {
+		t.Fatalf("close reader: %v", err)
+	}
+	if !launched {
+		t.Fatalf("expected yolo-tui launch for ui mode")
+	}
+	if !strings.Contains(string(raw), `"type":"run_started"`) {
+		t.Fatalf("expected run_started output in ui sink, got %q", string(raw))
+	}
+	if !strings.Contains(string(raw), `"type":"run_finished"`) {
+		t.Fatalf("expected run_finished output in ui sink, got %q", string(raw))
 	}
 }
 
@@ -1039,6 +1215,21 @@ func TestRunMainRejectsNegativeRetryBudget(t *testing.T) {
 	}
 }
 
+func TestRunMainRejectsNegativeQualityThreshold(t *testing.T) {
+	called := false
+	code := RunMain([]string{"--repo", "/repo", "--root", "root-1", "--quality-threshold", "-1"}, func(context.Context, runConfig) error {
+		called = true
+		return nil
+	})
+
+	if code != 1 {
+		t.Fatalf("expected exit code 1 when quality-threshold is negative, got %d", code)
+	}
+	if called {
+		t.Fatalf("expected run function not to be called for invalid quality-threshold")
+	}
+}
+
 func TestRunMainPrintsActionableTaxonomyMessageOnRunError(t *testing.T) {
 	run := func(context.Context, runConfig) error {
 		return errors.New("git checkout task/t-1 failed")
@@ -1117,6 +1308,153 @@ profiles:
 	}
 }
 
+func TestDefaultRunRestoresWorkingDirectory(t *testing.T) {
+	repoRoot := initGitRepo(t)
+	writeTrackerConfigYAML(t, repoRoot, `
+profiles:
+  default:
+    tracker:
+      type: tk
+`)
+
+	originalFactory := newTKStorageBackend
+	t.Cleanup(func() {
+		newTKStorageBackend = originalFactory
+	})
+	manager := &countingNoReadyTaskManager{
+		rootTask: contracts.Task{
+			ID:     "root",
+			Title:  "Root",
+			Status: contracts.TaskStatusClosed,
+		},
+	}
+	newTKStorageBackend = func(string) (contracts.StorageBackend, error) {
+		return taskManagerStorageBackend{taskManager: manager}, nil
+	}
+
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd before defaultRun: %v", err)
+	}
+
+	runErr := defaultRun(context.Background(), runConfig{
+		repoRoot:         repoRoot,
+		rootID:           "root",
+		backend:          backendCodex,
+		concurrency:      1,
+		dryRun:           true,
+		watchdogTimeout:  10 * time.Minute,
+		watchdogInterval: 5 * time.Second,
+	})
+	if runErr != nil {
+		t.Fatalf("defaultRun failed: %v", runErr)
+	}
+
+	restoredWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd after defaultRun: %v", err)
+	}
+	if restoredWD != originalWD {
+		t.Fatalf("expected defaultRun to restore cwd to %q, got %q", originalWD, restoredWD)
+	}
+}
+
+func TestDefaultRunTrackerProfilesUseStorageBackendPathWhenNoReadyChildren(t *testing.T) {
+	tests := []struct {
+		name        string
+		configYAML  string
+		installMock func(t *testing.T, manager contracts.TaskManager)
+	}{
+		{
+			name: "tk",
+			configYAML: `
+profiles:
+  default:
+    tracker:
+      type: tk
+`,
+			installMock: func(t *testing.T, manager contracts.TaskManager) {
+				t.Helper()
+				originalFactory := newTKStorageBackend
+				t.Cleanup(func() {
+					newTKStorageBackend = originalFactory
+				})
+				newTKStorageBackend = func(string) (contracts.StorageBackend, error) {
+					return taskManagerStorageBackend{taskManager: manager}, nil
+				}
+			},
+		},
+		{
+			name: "linear",
+			configYAML: `
+profiles:
+  default:
+    tracker:
+      type: linear
+      linear:
+        scope:
+          workspace: anomaly
+        auth:
+          token_env: LINEAR_TOKEN
+`,
+			installMock: func(t *testing.T, manager contracts.TaskManager) {
+				t.Helper()
+				t.Setenv("LINEAR_TOKEN", "lin_api_test")
+				originalFactory := newLinearStorageBackend
+				t.Cleanup(func() {
+					newLinearStorageBackend = originalFactory
+				})
+				newLinearStorageBackend = func(linear.Config) (contracts.StorageBackend, error) {
+					return taskManagerStorageBackend{taskManager: manager}, nil
+				}
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			repoRoot := initGitRepo(t)
+			writeTrackerConfigYAML(t, repoRoot, tc.configYAML)
+
+			originalWD, err := os.Getwd()
+			if err != nil {
+				t.Fatalf("getwd: %v", err)
+			}
+			t.Cleanup(func() {
+				_ = os.Chdir(originalWD)
+			})
+
+			manager := &countingNoReadyTaskManager{
+				rootTask: contracts.Task{
+					ID:     "root",
+					Title:  "Root",
+					Status: contracts.TaskStatusClosed,
+				},
+			}
+			tc.installMock(t, manager)
+
+			runErr := defaultRun(context.Background(), runConfig{
+				repoRoot:         repoRoot,
+				rootID:           "root",
+				backend:          backendCodex,
+				concurrency:      1,
+				dryRun:           true,
+				watchdogTimeout:  10 * time.Minute,
+				watchdogInterval: 5 * time.Second,
+			})
+			if runErr != nil {
+				t.Fatalf("defaultRun failed: %v", runErr)
+			}
+			if manager.nextTasksCalls == 0 {
+				t.Fatalf("expected NextTasks to be called")
+			}
+			if manager.getTaskCalls == 0 {
+				t.Fatalf("expected storage-backed path to consult root task via GetTask")
+			}
+		})
+	}
+}
+
 func captureStderr(t *testing.T, fn func()) string {
 	t.Helper()
 	original := os.Stderr
@@ -1161,5 +1499,32 @@ type blockingSink struct {
 
 func (b blockingSink) Emit(context.Context, contracts.Event) error {
 	<-b.block
+	return nil
+}
+
+type countingNoReadyTaskManager struct {
+	rootTask       contracts.Task
+	nextTasksCalls int
+	getTaskCalls   int
+}
+
+func (m *countingNoReadyTaskManager) NextTasks(context.Context, string) ([]contracts.TaskSummary, error) {
+	m.nextTasksCalls++
+	return nil, nil
+}
+
+func (m *countingNoReadyTaskManager) GetTask(_ context.Context, taskID string) (contracts.Task, error) {
+	m.getTaskCalls++
+	if taskID == m.rootTask.ID {
+		return m.rootTask, nil
+	}
+	return contracts.Task{}, errors.New("task not found")
+}
+
+func (m *countingNoReadyTaskManager) SetTaskStatus(context.Context, string, contracts.TaskStatus) error {
+	return nil
+}
+
+func (m *countingNoReadyTaskManager) SetTaskData(context.Context, string, map[string]string) error {
 	return nil
 }

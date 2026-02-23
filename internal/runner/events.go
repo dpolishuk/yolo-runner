@@ -25,6 +25,7 @@ type Event struct {
 	ProgressCompleted int       `json:"progress_completed"`
 	ProgressTotal     int       `json:"progress_total"`
 	Model             string    `json:"model"`
+	Message           string    `json:"message"`
 	Thought           string    `json:"thought"` // Agent thoughts in markdown format
 	EmittedAt         time.Time `json:"emitted_at"`
 }
@@ -37,6 +38,9 @@ func (e Event) RunnerEventTitle() string { return e.Title }
 
 // RunnerEventThought exposes the event thought for UI adapters.
 func (e Event) RunnerEventThought() string { return e.Thought }
+
+// RunnerEventMessage exposes the event message for UI adapters.
+func (e Event) RunnerEventMessage() string { return e.Message }
 
 type EventEmitter interface {
 	Emit(event Event)

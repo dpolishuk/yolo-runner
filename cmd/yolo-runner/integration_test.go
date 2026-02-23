@@ -10,11 +10,11 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/anomalyco/yolo-runner/internal/beads"
-	"github.com/anomalyco/yolo-runner/internal/exec"
-	"github.com/anomalyco/yolo-runner/internal/runner"
-	"github.com/anomalyco/yolo-runner/internal/ui/tui"
-	"github.com/anomalyco/yolo-runner/internal/vcs/git"
+	"github.com/egv/yolo-runner/v2/internal/beads"
+	"github.com/egv/yolo-runner/v2/internal/exec"
+	"github.com/egv/yolo-runner/v2/internal/runner"
+	"github.com/egv/yolo-runner/v2/internal/ui/tui"
+	"github.com/egv/yolo-runner/v2/internal/vcs/git"
 )
 
 func TestIntegration_AllRequirementsWorkTogether(t *testing.T) {

@@ -8,7 +8,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/anomalyco/yolo-runner/internal/runner"
+	"github.com/egv/yolo-runner/v2/internal/runner"
 )
 
 func TestModelUsesBubblesSpinnerNotCustomFrames(t *testing.T) {
@@ -178,6 +178,131 @@ func TestModelShowsStoppingStatusWhileStopping(t *testing.T) {
 	}
 	if strings.Contains(view, "q: stop runner") {
 		t.Fatalf("expected quit hint to be removed from view, got %q", view)
+	}
+}
+
+func TestModelStateTransitionsRunningStoppingCompleted(t *testing.T) {
+	fixedNow := time.Date(2026, 2, 2, 10, 0, 0, 0, time.UTC)
+	m := NewModel(func() time.Time { return fixedNow })
+
+	updated, _ := m.Update(runner.Event{
+		Type:      runner.EventSelectTask,
+		IssueID:   "task-1",
+		Title:     "Example Task",
+		EmittedAt: fixedNow,
+	})
+	m = updated.(Model)
+
+	if !strings.Contains(m.View(), "getting task info") {
+		t.Fatalf("expected running phase before stop, got %q", m.View())
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	m = updated.(Model)
+	if !strings.Contains(m.View(), "Stopping...") {
+		t.Fatalf("expected stopping state after keypress, got %q", m.View())
+	}
+
+	updated, _ = m.Update(runner.Event{
+		Type:      runner.EventType("completed"),
+		IssueID:   "task-1",
+		Title:     "Example Task",
+		EmittedAt: fixedNow,
+	})
+	m = updated.(Model)
+	finalView := m.View()
+	if strings.Contains(finalView, "Stopping...") {
+		t.Fatalf("expected completed state to clear stop banner, got %q", finalView)
+	}
+	if !strings.Contains(finalView, "completed") {
+		t.Fatalf("expected completed phase after completion event, got %q", finalView)
+	}
+}
+
+func TestModelStopBannerPersistsAcrossNonTerminalTransitions(t *testing.T) {
+	fixedNow := time.Date(2026, 2, 2, 10, 0, 0, 0, time.UTC)
+	m := NewModel(func() time.Time { return fixedNow })
+
+	updated, _ := m.Update(runner.Event{
+		Type:      runner.EventSelectTask,
+		IssueID:   "task-1",
+		Title:     "Example Task",
+		EmittedAt: fixedNow,
+	})
+	m = updated.(Model)
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	m = updated.(Model)
+	if !strings.Contains(m.View(), "Stopping...") {
+		t.Fatalf("expected stop state immediately after keypress, got %q", m.View())
+	}
+
+	updated, _ = m.Update(runner.Event{
+		Type:      runner.EventGitStatus,
+		IssueID:   "task-1",
+		Title:     "Example Task",
+		EmittedAt: fixedNow,
+	})
+	m = updated.(Model)
+	if !strings.Contains(m.View(), "Stopping...") {
+		t.Fatalf("expected stop state to persist across non-terminal updates, got %q", m.View())
+	}
+
+	updated, _ = m.Update(runner.Event{
+		Type:      runner.EventOpenCodeEnd,
+		IssueID:   "task-1",
+		Title:     "Example Task",
+		EmittedAt: fixedNow,
+	})
+	m = updated.(Model)
+	if strings.Contains(m.View(), "Stopping...") {
+		t.Fatalf("expected stop state to clear after terminal event, got %q", m.View())
+	}
+}
+
+func TestModelResizeKeepsStateAcrossTransitions(t *testing.T) {
+	fixedNow := time.Date(2026, 2, 2, 10, 0, 0, 0, time.UTC)
+	m := NewModel(func() time.Time { return fixedNow })
+
+	updated, _ := m.Update(runner.Event{
+		Type:      runner.EventSelectTask,
+		IssueID:   "task-1",
+		Title:     "Example Task",
+		EmittedAt: fixedNow,
+	})
+	m = updated.(Model)
+
+	updated, _ = m.Update(tea.WindowSizeMsg{Width: 40, Height: 6})
+	m = updated.(Model)
+	if !strings.Contains(m.View(), "getting task info") {
+		t.Fatalf("expected running phase after resize, got %q", m.View())
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	m = updated.(Model)
+	if !strings.Contains(m.View(), "Stopping...") {
+		t.Fatalf("expected stopping phase after resize, got %q", m.View())
+	}
+
+	updated, _ = m.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
+	m = updated.(Model)
+	if !strings.Contains(m.View(), "Stopping...") {
+		t.Fatalf("expected stopping state to survive resize, got %q", m.View())
+	}
+
+	updated, _ = m.Update(runner.Event{
+		Type:      runner.EventType("completed"),
+		IssueID:   "task-1",
+		Title:     "Example Task",
+		EmittedAt: fixedNow,
+	})
+	m = updated.(Model)
+	view := m.View()
+	if strings.Contains(view, "Stopping...") {
+		t.Fatalf("expected stop banner to clear after completion, got %q", view)
+	}
+	if !strings.Contains(view, "completed") {
+		t.Fatalf("expected completed phase after completion, got %q", view)
 	}
 }
 
@@ -680,6 +805,149 @@ func TestModelRendersAgentThoughtsAsMarkdown(t *testing.T) {
 	// The viewport should contain to markdown content
 	if !strings.Contains(view, "This is a") {
 		t.Fatalf("expected markdown content in view, got: %q", view)
+	}
+}
+
+func TestModelRendersThoughtEventInLogViewport(t *testing.T) {
+	fixedNow := time.Date(2026, 2, 10, 12, 0, 10, 0, time.UTC)
+	m := NewModel(func() time.Time { return fixedNow })
+
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 12})
+	m = updated.(Model)
+
+	updated, _ = m.Update(runner.Event{
+		Type:      runner.EventOpenCodeStart,
+		IssueID:   "task-1",
+		Title:     "Example Task",
+		EmittedAt: fixedNow.Add(-5 * time.Second),
+		Thought:   "## Analysis\n\nAgent should inspect the repository before editing files.",
+	})
+	m = updated.(Model)
+
+	view := strings.TrimSpace(m.View())
+	lines := strings.Split(view, "\n")
+
+	thoughtLineIndex := -1
+	statusBarIndex := -1
+	for i, line := range lines {
+		if strings.Contains(line, "Analysis") || strings.Contains(line, "inspect the repository") {
+			thoughtLineIndex = i
+		}
+		if strings.Contains(line, "task-1") && strings.Contains(line, "starting opencode") {
+			statusBarIndex = i
+		}
+	}
+
+	if thoughtLineIndex == -1 {
+		t.Fatalf("expected rendered thought content in log viewport, got: %q", view)
+	}
+	if statusBarIndex == -1 {
+		t.Fatalf("expected status bar in view, got: %q", view)
+	}
+	if thoughtLineIndex >= statusBarIndex {
+		t.Fatalf("expected thought content to render above status bar, got thought index %d status bar index %d", thoughtLineIndex, statusBarIndex)
+	}
+}
+
+func TestModelRendersAgentMessageContentAsMarkdownBubble(t *testing.T) {
+	fixedNow := time.Date(2026, 2, 10, 12, 0, 10, 0, time.UTC)
+	m := NewModel(func() time.Time { return fixedNow })
+
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 12})
+	m = updated.(Model)
+
+	updated, _ = m.Update(runner.Event{
+		Type:      runner.EventOpenCodeStart,
+		IssueID:   "task-1",
+		Title:     "Example Task",
+		EmittedAt: fixedNow.Add(-5 * time.Second),
+		Message:   "agent_message \"## Analysis\\n\\nAgent message with **markdown** content.\"",
+	})
+	m = updated.(Model)
+
+	view := strings.TrimSpace(m.View())
+	if strings.Contains(view, "agent_message") {
+		t.Fatalf("expected agent message to be rendered as markdown content, got: %q", view)
+	}
+	if !strings.Contains(view, "Analysis") {
+		t.Fatalf("expected markdown header in view, got: %q", view)
+	}
+	if !strings.Contains(view, "markdown") {
+		t.Fatalf("expected markdown message content in view, got: %q", view)
+	}
+
+	lines := strings.Split(view, "\n")
+	msgLineIndex := -1
+	statusBarIndex := -1
+	for i, line := range lines {
+		if strings.Contains(line, "Analysis") || strings.Contains(line, "markdown content") {
+			msgLineIndex = i
+		}
+		if strings.Contains(line, "task-1") && strings.Contains(line, "starting opencode") {
+			statusBarIndex = i
+		}
+	}
+	if msgLineIndex == -1 {
+		t.Fatalf("expected rendered markdown agent message in view, got: %q", view)
+	}
+	if statusBarIndex == -1 {
+		t.Fatalf("expected status bar in view, got: %q", view)
+	}
+	if msgLineIndex >= statusBarIndex {
+		t.Fatalf("expected agent message content to render above status bar, got message index %d status bar index %d", msgLineIndex, statusBarIndex)
+	}
+}
+
+func TestModelRendersActionMessagesInViewportWithStyle(t *testing.T) {
+	fixedNow := time.Date(2026, 2, 10, 12, 0, 10, 0, time.UTC)
+	m := NewModel(func() time.Time { return fixedNow })
+
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 12})
+	m = updated.(Model)
+
+	updated, _ = m.Update(runner.Event{
+		Type:      runner.EventSelectTask,
+		IssueID:   "task-1",
+		Title:     "Example Task",
+		EmittedAt: fixedNow.Add(-6 * time.Second),
+	})
+	m = updated.(Model)
+
+	actionMessage := "Inspecting local git status"
+	updated, _ = m.Update(runner.Event{
+		Type:      runner.EventBeadsUpdate,
+		IssueID:   "task-1",
+		Title:     "Example Task",
+		EmittedAt: fixedNow.Add(-5 * time.Second),
+		Message:   actionMessage,
+	})
+	m = updated.(Model)
+
+	expectedStyled := formatActionMessageLine(actionMessage)
+	view := strings.TrimSpace(m.View())
+	if !strings.Contains(view, expectedStyled) {
+		t.Fatalf("expected styled action message in view, got: %q", view)
+	}
+
+	lines := strings.Split(view, "\n")
+	styleLineIndex := -1
+	statusBarIndex := -1
+	for i, line := range lines {
+		if strings.Contains(line, expectedStyled) {
+			styleLineIndex = i
+		}
+		if strings.Contains(line, "task-1") && strings.Contains(line, "updating task status") {
+			statusBarIndex = i
+		}
+	}
+	if styleLineIndex == -1 {
+		t.Fatalf("expected action message line in log viewport, got: %q", view)
+	}
+	if statusBarIndex == -1 {
+		t.Fatalf("expected status bar in view, got: %q", view)
+	}
+	if styleLineIndex >= statusBarIndex {
+		t.Fatalf("expected styled action message above status bar, got action message index %d status bar index %d", styleLineIndex, statusBarIndex)
 	}
 }
 

@@ -1,4 +1,4 @@
-default_profile: beads
+default_profile: github
 profiles:
   beads:
     tracker:
@@ -17,4 +17,9 @@ profiles:
           token_env: GITHUB_TOKEN
 agent:
   backend: codex
-  model: gpt-5.3-codex
+  model: gpt-5.3-codex-spark
+  concurrency: 3
+  runner_timeout: 20m
+  watchdog_timeout: 10m
+  watchdog_interval: 5s
+  retry_budget: 5

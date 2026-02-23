@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -9,7 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/anomalyco/yolo-runner/internal/runner"
+	"github.com/egv/yolo-runner/v2/internal/runner"
 )
 
 type Model struct {
@@ -98,7 +99,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch typed := msg.(type) {
 	case runner.Event:
+		terminalEvent := isTerminalRunnerEvent(typed.Type)
+		if terminalEvent {
+			m.stopping = false
+			m.stopRequested = false
+		} else if m.stopping {
+			m.stopRequested = true
+		} else {
+			m.stopRequested = false
+		}
 		m.appendLogLines(formatRunnerEventLine(typed))
+		if typed.Message != "" {
+			if markdownMessage, ok := formatACPMessageAsMarkdown(typed.Message); ok {
+				m.markdownBubble, _ = m.markdownBubble.Update(SetMarkdownContentMsg{Content: markdownMessage})
+				m.appendLogLines(m.markdownBubble.View())
+			} else {
+				m.appendLogLines(formatActionMessageLine(typed.Message))
+			}
+		}
 		m.taskID = typed.IssueID
 		m.taskTitle = typed.Title
 		m.phase = getPhaseLabel(typed.Type)
@@ -120,6 +138,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		spinner := m.spinner.View()
 		updateMsg := UpdateStatusBarMsg{Event: typed, LastOutputAge: age, Spinner: spinner}
 		m.statusbar, _ = m.statusbar.Update(updateMsg)
+		if m.stopping && !terminalEvent {
+			m.statusbar, _ = m.statusbar.Update(StopStatusBarMsg{})
+		}
 		return m, tea.Batch(cmd, statusbarCmd)
 	case OutputMsg:
 		m.lastOutputAt = m.now()
@@ -129,6 +150,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = typed.Width
 		m.height = typed.Height
+		m.statusbar, _ = m.statusbar.Update(typed)
 		logViewportWidth, logViewportHeight := logViewportSize(typed.Width, typed.Height)
 		m.viewport.Width = logViewportWidth
 		m.viewport.Height = logViewportHeight
@@ -233,6 +255,17 @@ func getEventTypeForPhase(phase string) runner.EventType {
 	}
 }
 
+func isTerminalRunnerEvent(eventType runner.EventType) bool {
+	switch eventType {
+	case runner.EventOpenCodeEnd, runner.EventBeadsClose, runner.EventBeadsVerify, runner.EventBeadsSync:
+		return true
+	case runner.EventType("completed"):
+		return true
+	default:
+		return false
+	}
+}
+
 func (m Model) View() string {
 	logBubbleHeight := m.height - statusbarHeight
 	if logBubbleHeight < 0 {
@@ -316,6 +349,53 @@ func formatRunnerEventLine(event runner.Event) string {
 		parts = append(parts, "event update")
 	}
 	return strings.Join(parts, " ")
+}
+
+func formatActionMessageLine(message string) string {
+	if message == "" {
+		return ""
+	}
+
+	cleanMessage := strings.TrimSpace(message)
+	if cleanMessage == "" {
+		return ""
+	}
+
+	style := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#8ca0d7")).
+		Italic(true)
+
+	return style.Render("→ " + cleanMessage)
+}
+
+func formatACPMessageAsMarkdown(message string) (string, bool) {
+	content := strings.TrimSpace(message)
+	if content == "" {
+		return "", false
+	}
+
+	for _, prefix := range []string{"agent_message", "user_message"} {
+		if !strings.HasPrefix(content, prefix) {
+			continue
+		}
+
+		payload := strings.TrimSpace(strings.TrimPrefix(content, prefix))
+		if payload == "" {
+			return "", false
+		}
+
+		if strings.HasPrefix(payload, `"`) {
+			quoted, err := strconv.Unquote(payload)
+			if err != nil {
+				return "", false
+			}
+			return quoted, true
+		}
+
+		return payload, true
+	}
+
+	return "", false
 }
 
 func (m Model) lastOutputAge() string {

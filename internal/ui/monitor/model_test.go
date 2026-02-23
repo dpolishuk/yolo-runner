@@ -2,10 +2,11 @@ package monitor
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
-	"github.com/anomalyco/yolo-runner/internal/contracts"
+	"github.com/egv/yolo-runner/v2/internal/contracts"
 )
 
 func TestModelTracksCurrentTaskPhaseAgeAndHistory(t *testing.T) {
@@ -281,6 +282,208 @@ func TestModelSupportsExpandCollapseViaEnterSpaceAndVimKeys(t *testing.T) {
 	assertContains(t, view, "> [+] worker-0 severity=warning")
 }
 
+func TestModelSupportsSpacebarShortcutLiteralForToggle(t *testing.T) {
+	now := time.Date(2026, 2, 10, 12, 11, 0, 0, time.UTC)
+	model := NewModel(func() time.Time { return now })
+
+	model.Apply(contracts.Event{Type: contracts.EventTypeRunStarted, Metadata: map[string]string{"root_id": "yr-2y0b"}, Timestamp: now.Add(-10 * time.Second)})
+	model.Apply(contracts.Event{Type: contracts.EventTypeTaskStarted, TaskID: "task-1", TaskTitle: "First", WorkerID: "worker-0", QueuePos: 1, Timestamp: now.Add(-9 * time.Second)})
+	model.Apply(contracts.Event{Type: contracts.EventTypeRunnerWarning, TaskID: "task-1", WorkerID: "worker-0", Message: "stalled", Timestamp: now.Add(-8 * time.Second)})
+
+	model.HandleKey("down")
+	model.HandleKey(" ")
+	view := model.View()
+	assertContains(t, view, "> [+] Workers severity=warning")
+
+	model.HandleKey(" ")
+	view = model.View()
+	assertContains(t, view, "> [-] Workers severity=warning")
+	assertContains(t, view, "[+] worker-0 severity=warning")
+}
+
+func TestModelPanelMarksCompletedTaskInTaskPanel(t *testing.T) {
+	now := time.Date(2026, 2, 10, 12, 15, 0, 0, time.UTC)
+	model := NewModel(func() time.Time { return now })
+	model.panelExpand["tasks"] = true
+
+	model.Apply(contracts.Event{
+		Type:      contracts.EventTypeTaskStarted,
+		TaskID:    "task-1",
+		TaskTitle: "First",
+		WorkerID:  "worker-0",
+		QueuePos:  1,
+		Timestamp: now.Add(-8 * time.Second),
+	})
+	model.Apply(contracts.Event{
+		Type:      contracts.EventTypeRunnerFinished,
+		TaskID:    "task-1",
+		TaskTitle: "First",
+		WorkerID:  "worker-0",
+		Message:   "completed",
+		Timestamp: now.Add(-6 * time.Second),
+	})
+
+	state := model.UIState()
+	line, ok := panelLineForTask(state.PanelLines, "task-1")
+	if !ok {
+		t.Fatalf("expected panel line for task-1, got %#v", state.PanelLines)
+	}
+	if !strings.Contains(line.Label, "✅") || !strings.HasPrefix(line.Label, "✅ ") {
+		t.Fatalf("expected completed marker in panel label, got %#v", line.Label)
+	}
+}
+
+func TestModelPanelDoesNotMarkInProgressTaskAsCompleted(t *testing.T) {
+	now := time.Date(2026, 2, 10, 12, 16, 0, 0, time.UTC)
+	model := NewModel(func() time.Time { return now })
+	model.panelExpand["tasks"] = true
+
+	model.Apply(contracts.Event{
+		Type:      contracts.EventTypeTaskStarted,
+		TaskID:    "task-1",
+		TaskTitle: "In Progress",
+		WorkerID:  "worker-0",
+		QueuePos:  1,
+		Timestamp: now.Add(-5 * time.Second),
+	})
+
+	state := model.UIState()
+	line, ok := panelLineForTask(state.PanelLines, "task-1")
+	if !ok {
+		t.Fatalf("expected panel line for task-1, got %#v", state.PanelLines)
+	}
+	if strings.Contains(line.Label, "✅") {
+		t.Fatalf("did not expect completed marker on in-progress task, got %#v", line.Label)
+	}
+}
+
+func TestModelUIPanelLinesExposeCompletedTaskState(t *testing.T) {
+	now := time.Date(2026, 2, 10, 12, 17, 0, 0, time.UTC)
+	model := NewModel(func() time.Time { return now })
+	model.panelRowsDirty = true
+	model.panelExpand["tasks"] = true
+
+	model.Apply(contracts.Event{
+		Type:      contracts.EventTypeTaskStarted,
+		TaskID:    "task-1",
+		TaskTitle: "Completed",
+		QueuePos:  1,
+		Timestamp: now.Add(-8 * time.Second),
+	})
+	model.Apply(contracts.Event{
+		Type:      contracts.EventTypeTaskFinished,
+		TaskID:    "task-1",
+		TaskTitle: "Completed",
+		Message:   "done",
+		Timestamp: now.Add(-6 * time.Second),
+	})
+	model.Apply(contracts.Event{
+		Type:      contracts.EventTypeTaskStarted,
+		TaskID:    "task-2",
+		TaskTitle: "In Progress",
+		QueuePos:  2,
+		Timestamp: now.Add(-4 * time.Second),
+	})
+
+	state := model.UIState()
+	completed, ok := panelLineForTask(state.PanelLines, "task-1")
+	if !ok {
+		t.Fatalf("expected panel line for task-1, got %#v", state.PanelLines)
+	}
+	if !completed.Completed {
+		t.Fatalf("expected completed task line to be marked completed, got %#v", completed)
+	}
+	inProgress, ok := panelLineForTask(state.PanelLines, "task-2")
+	if !ok {
+		t.Fatalf("expected panel line for task-2, got %#v", state.PanelLines)
+	}
+	if inProgress.Completed {
+		t.Fatalf("did not expect in-progress task line to be marked completed, got %#v", inProgress)
+	}
+}
+
+func TestModelCompletedTaskMarkerPersistsWhilePanelScrolls(t *testing.T) {
+	now := time.Date(2026, 2, 10, 12, 18, 0, 0, time.UTC)
+	model := NewModel(func() time.Time { return now })
+	model.SetViewportHeight(5)
+	model.panelExpand["tasks"] = true
+
+	for i := 1; i <= 12; i++ {
+		model.Apply(contracts.Event{
+			Type:      contracts.EventTypeTaskStarted,
+			TaskID:    fmt.Sprintf("task-%02d", i),
+			TaskTitle: fmt.Sprintf("Task %02d", i),
+			QueuePos:  i,
+			Timestamp: now.Add(time.Duration(-i) * time.Second),
+		})
+	}
+	model.Apply(contracts.Event{
+		Type:      contracts.EventTypeTaskFinished,
+		TaskID:    "task-07",
+		TaskTitle: "Task 07",
+		Message:   "completed",
+		Timestamp: now.Add(-1 * time.Second),
+	})
+
+	visibleRows := model.panelRows()
+	completedRow, ok := panelRowForTask(visibleRows, "task-07")
+	if !ok {
+		t.Fatalf("expected task-07 in panel rows, got %#v", visibleRows)
+	}
+	if !completedRow.completed {
+		t.Fatalf("expected completed marker state for task-07 before scrolling, got %#v", completedRow)
+	}
+
+	for i := 0; i < 6; i++ {
+		model.HandleKey("down")
+		model.HandleKey("down")
+		model.HandleKey("up")
+
+		completedRow, ok = panelRowForTask(model.panelRows(), "task-07")
+		if !ok {
+			t.Fatalf("expected task-07 in panel rows after scroll step %d, got %#v", i, model.panelRows())
+		}
+		if !completedRow.completed {
+			t.Fatalf("expected completed marker state for task-07 after scroll step %d, got %#v", i, completedRow)
+		}
+
+		state := model.UIState()
+		if visibleLine, visible := panelLineForTask(state.PanelLines, "task-07"); visible && !visibleLine.Completed {
+			t.Fatalf("expected visible task-07 line to remain completed during scroll step %d, got %#v", i, visibleLine)
+		}
+	}
+}
+
+func TestModelInvalidKeysDoNotCorruptPanelNavigationState(t *testing.T) {
+	now := time.Date(2026, 2, 10, 12, 12, 0, 0, time.UTC)
+	model := NewModel(func() time.Time { return now })
+
+	model.Apply(contracts.Event{Type: contracts.EventTypeRunStarted, Metadata: map[string]string{"root_id": "yr-2y0b"}, Timestamp: now.Add(-10 * time.Second)})
+	model.Apply(contracts.Event{Type: contracts.EventTypeTaskStarted, TaskID: "task-1", TaskTitle: "First", WorkerID: "worker-0", QueuePos: 1, Timestamp: now.Add(-9 * time.Second)})
+	model.Apply(contracts.Event{Type: contracts.EventTypeRunnerWarning, TaskID: "task-1", WorkerID: "worker-0", Message: "stalled", Timestamp: now.Add(-8 * time.Second)})
+
+	model.HandleKey("down")
+	model.HandleKey("down")
+
+	beforeCursor := model.panelCursor
+	beforeRowsDirty := model.panelRowsDirty
+	beforeExpand := clonePanelExpand(model.panelExpand)
+
+	for _, key := range []string{"", "tab", "foo", "ctrl+x", "escape", "invalid"} {
+		model.HandleKey(key)
+	}
+
+	if model.panelCursor != beforeCursor {
+		t.Fatalf("expected panel cursor to remain %d, got %d", beforeCursor, model.panelCursor)
+	}
+	if model.panelRowsDirty != beforeRowsDirty {
+		t.Fatalf("expected panelRowsDirty to remain %t, got %t", beforeRowsDirty, model.panelRowsDirty)
+	}
+	if !panelExpandEquals(beforeExpand, model.panelExpand) {
+		t.Fatalf("expected panel expansion state to be unchanged")
+	}
+}
+
 func TestModelBoundsHistoryWithPerformanceControls(t *testing.T) {
 	now := time.Date(2026, 2, 10, 12, 11, 0, 0, time.UTC)
 	model := NewModel(func() time.Time { return now })
@@ -377,6 +580,46 @@ func TestModelBuildsStructuredUIStateWithWorkerActivity(t *testing.T) {
 	}
 }
 
+func TestModelCountsDoneTasksAsCompleted(t *testing.T) {
+	now := time.Date(2026, 2, 10, 12, 14, 0, 0, time.UTC)
+	model := NewModel(func() time.Time { return now })
+
+	model.Apply(contracts.Event{
+		Type:      contracts.EventTypeTaskStarted,
+		TaskID:    "task-1",
+		TaskTitle: "First",
+		WorkerID:  "worker-0",
+		QueuePos:  1,
+		Timestamp: now.Add(-8 * time.Second),
+	})
+	model.Apply(contracts.Event{
+		Type:      contracts.EventTypeTaskFinished,
+		TaskID:    "task-1",
+		TaskTitle: "First",
+		Message:   "done",
+		Timestamp: now.Add(-6 * time.Second),
+	})
+	model.Apply(contracts.Event{
+		Type:      contracts.EventTypeTaskStarted,
+		TaskID:    "task-2",
+		TaskTitle: "Second",
+		WorkerID:  "worker-1",
+		QueuePos:  2,
+		Timestamp: now.Add(-4 * time.Second),
+	})
+
+	metrics := model.UIState().StatusMetrics
+	if metrics.completed != 1 {
+		t.Fatalf("expected completed=1, got %d", metrics.completed)
+	}
+	if metrics.total != 2 {
+		t.Fatalf("expected total=2, got %d", metrics.total)
+	}
+	if metrics.inProgress != 1 {
+		t.Fatalf("expected in_progress=1, got %d", metrics.inProgress)
+	}
+}
+
 func assertContains(t *testing.T, text string, expected string) {
 	t.Helper()
 	if !contains(text, expected) {
@@ -389,6 +632,48 @@ func assertNotContains(t *testing.T, text string, expected string) {
 	if contains(text, expected) {
 		t.Fatalf("did not expect %q in %q", expected, text)
 	}
+}
+
+func clonePanelExpand(in map[string]bool) map[string]bool {
+	out := make(map[string]bool, len(in))
+	for id, expanded := range in {
+		out[id] = expanded
+	}
+	return out
+}
+
+func panelLineForTask(state []UIPanelLine, taskID string) (UIPanelLine, bool) {
+	for _, line := range state {
+		if line.ID == "task:"+taskID {
+			return line, true
+		}
+	}
+	return UIPanelLine{}, false
+}
+
+func panelRowForTask(rows []panelRow, taskID string) (panelRow, bool) {
+	target := taskID
+	if !strings.HasPrefix(taskID, "task:") {
+		target = "task:" + taskID
+	}
+	for _, row := range rows {
+		if row.id == target {
+			return row, true
+		}
+	}
+	return panelRow{}, false
+}
+
+func panelExpandEquals(a map[string]bool, b map[string]bool) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for id, aExpanded := range a {
+		if bExpanded, ok := b[id]; !ok || bExpanded != aExpanded {
+			return false
+		}
+	}
+	return true
 }
 
 func contains(text string, sub string) bool {

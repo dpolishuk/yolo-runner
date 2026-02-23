@@ -14,6 +14,7 @@ type RunnerEvent interface {
 	RunnerEventType() string
 	RunnerEventTitle() string
 	RunnerEventThought() string
+	RunnerEventMessage() string
 }
 
 // EventRouter routes ACP updates (from opencode) and runner events (from yolo-runner)
@@ -87,6 +88,9 @@ func (er *EventRouter) RouteRunnerEvent(event RunnerEvent) error {
 	}
 	if thought := event.RunnerEventThought(); thought != "" {
 		parts = append(parts, thought)
+	}
+	if message := event.RunnerEventMessage(); message != "" {
+		parts = append(parts, message)
 	}
 
 	er.store.AddLogEntry(strings.Join(parts, " "))

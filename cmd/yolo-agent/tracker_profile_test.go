@@ -3,15 +3,17 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/anomalyco/yolo-runner/internal/beads"
-	"github.com/anomalyco/yolo-runner/internal/contracts"
-	githubtracker "github.com/anomalyco/yolo-runner/internal/github"
-	"github.com/anomalyco/yolo-runner/internal/linear"
+	"github.com/egv/yolo-runner/v2/internal/beads"
+	"github.com/egv/yolo-runner/v2/internal/contracts"
+	enginepkg "github.com/egv/yolo-runner/v2/internal/engine"
+	githubtracker "github.com/egv/yolo-runner/v2/internal/github"
+	"github.com/egv/yolo-runner/v2/internal/linear"
 )
 
 func TestResolveTrackerProfileDefaultsToTKWhenConfigMissing(t *testing.T) {
@@ -231,7 +233,7 @@ profiles:
       type: github
       github:
         scope:
-          owner: anomalyco
+          owner: egv
         auth:
           token_env: GITHUB_TOKEN
 `)
@@ -257,7 +259,7 @@ profiles:
       type: github
       github:
         scope:
-          owner: anomalyco
+          owner: egv
           repo: yolo-runner
 `)
 
@@ -282,7 +284,7 @@ profiles:
       type: github
       github:
         scope:
-          owner: anomalyco
+          owner: egv
           repo: yolo-runner
         auth:
           token_env: GITHUB_TOKEN
@@ -309,7 +311,7 @@ profiles:
       type: github
       github:
         scope:
-          owner: anomalyco
+          owner: egv
           repo: yolo-runner,another-repo
         auth:
           token_env: GITHUB_TOKEN
@@ -491,7 +493,7 @@ func TestBuildTaskManagerForTrackerSupportsGitHub(t *testing.T) {
 			Type: trackerTypeGitHub,
 			GitHub: &githubTrackerModel{
 				Scope: githubScopeModel{
-					Owner: "anomalyco",
+					Owner: "egv",
 					Repo:  "yolo-runner",
 				},
 				Auth: githubAuthModel{
@@ -506,13 +508,125 @@ func TestBuildTaskManagerForTrackerSupportsGitHub(t *testing.T) {
 	if manager == nil {
 		t.Fatalf("expected non-nil github task manager")
 	}
-	if got.Owner != "anomalyco" {
+	if got.Owner != "egv" {
 		t.Fatalf("expected owner to be wired, got %q", got.Owner)
 	}
 	if got.Repo != "yolo-runner" {
 		t.Fatalf("expected repo to be wired, got %q", got.Repo)
 	}
 	if got.Token != "ghp_test" {
+		t.Fatalf("expected token to be loaded from env, got %q", got.Token)
+	}
+}
+
+func TestBuildStorageBackendForTrackerSupportsGitHub(t *testing.T) {
+	t.Setenv("GITHUB_TOKEN", "ghp_test")
+	originalFactory := newGitHubStorageBackend
+	t.Cleanup(func() {
+		newGitHubStorageBackend = originalFactory
+	})
+
+	var got githubtracker.Config
+	newGitHubStorageBackend = func(cfg githubtracker.Config) (contracts.StorageBackend, error) {
+		got = cfg
+		return staticStorageBackend{}, nil
+	}
+
+	backend, err := buildStorageBackendForTracker(t.TempDir(), resolvedTrackerProfile{
+		Name: "github",
+		Tracker: trackerModel{
+			Type: trackerTypeGitHub,
+			GitHub: &githubTrackerModel{
+				Scope: githubScopeModel{
+					Owner: "egv",
+					Repo:  "yolo-runner",
+				},
+				Auth: githubAuthModel{
+					TokenEnv: "GITHUB_TOKEN",
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("expected github storage backend to build, got %v", err)
+	}
+	if backend == nil {
+		t.Fatalf("expected non-nil github storage backend")
+	}
+	if got.Owner != "egv" {
+		t.Fatalf("expected owner to be wired, got %q", got.Owner)
+	}
+	if got.Repo != "yolo-runner" {
+		t.Fatalf("expected repo to be wired, got %q", got.Repo)
+	}
+	if got.Token != "ghp_test" {
+		t.Fatalf("expected token to be loaded from env, got %q", got.Token)
+	}
+}
+
+func TestBuildStorageBackendForTrackerSupportsTK(t *testing.T) {
+	originalFactory := newTKStorageBackend
+	t.Cleanup(func() {
+		newTKStorageBackend = originalFactory
+	})
+
+	repoRoot := t.TempDir()
+	var gotRepoRoot string
+	newTKStorageBackend = func(root string) (contracts.StorageBackend, error) {
+		gotRepoRoot = root
+		return staticStorageBackend{}, nil
+	}
+
+	backend, err := buildStorageBackendForTracker(repoRoot, resolvedTrackerProfile{
+		Name: "default",
+		Tracker: trackerModel{
+			Type: trackerTypeTK,
+		},
+	})
+	if err != nil {
+		t.Fatalf("expected tk storage backend to build, got %v", err)
+	}
+	if backend == nil {
+		t.Fatalf("expected non-nil tk storage backend")
+	}
+	if gotRepoRoot != repoRoot {
+		t.Fatalf("expected tk storage backend factory to receive repo root %q, got %q", repoRoot, gotRepoRoot)
+	}
+}
+
+func TestBuildStorageBackendForTrackerSupportsLinear(t *testing.T) {
+	t.Setenv("LINEAR_TOKEN", "lin_api_test")
+	originalFactory := newLinearStorageBackend
+	t.Cleanup(func() {
+		newLinearStorageBackend = originalFactory
+	})
+
+	var got linear.Config
+	newLinearStorageBackend = func(cfg linear.Config) (contracts.StorageBackend, error) {
+		got = cfg
+		return staticStorageBackend{}, nil
+	}
+
+	backend, err := buildStorageBackendForTracker(t.TempDir(), resolvedTrackerProfile{
+		Name: "linear",
+		Tracker: trackerModel{
+			Type: trackerTypeLinear,
+			Linear: &linearTrackerModel{
+				Scope: linearScopeModel{Workspace: "anomaly"},
+				Auth:  linearAuthModel{TokenEnv: "LINEAR_TOKEN"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("expected linear storage backend to build, got %v", err)
+	}
+	if backend == nil {
+		t.Fatalf("expected non-nil linear storage backend")
+	}
+	if got.Workspace != "anomaly" {
+		t.Fatalf("expected workspace to be wired, got %q", got.Workspace)
+	}
+	if got.Token != "lin_api_test" {
 		t.Fatalf("expected token to be loaded from env, got %q", got.Token)
 	}
 }
@@ -533,7 +647,7 @@ func TestBuildTaskManagerForTrackerWrapsGitHubAuthErrors(t *testing.T) {
 			Type: trackerTypeGitHub,
 			GitHub: &githubTrackerModel{
 				Scope: githubScopeModel{
-					Owner: "anomalyco",
+					Owner: "egv",
 					Repo:  "yolo-runner",
 				},
 				Auth: githubAuthModel{
@@ -571,6 +685,116 @@ func TestBuildTaskManagerForTrackerRejectsUnsupportedType(t *testing.T) {
 	}
 }
 
+func TestBuildStorageBackendForTrackerTKSkipsDanglingDependencyRelations(t *testing.T) {
+	originalFactory := newTKStorageBackend
+	t.Cleanup(func() {
+		newTKStorageBackend = originalFactory
+	})
+	newTKStorageBackend = func(string) (contracts.StorageBackend, error) {
+		return taskManagerStorageBackend{taskManager: newFallbackScenarioTaskManager()}, nil
+	}
+
+	backend, err := buildStorageBackendForTracker(t.TempDir(), resolvedTrackerProfile{
+		Name: "default",
+		Tracker: trackerModel{
+			Type: trackerTypeTK,
+		},
+	})
+	if err != nil {
+		t.Fatalf("build tk fallback backend: %v", err)
+	}
+
+	assertFallbackBackendGraphBuildsWithReadyTask(t, backend)
+}
+
+func TestBuildStorageBackendForTrackerLinearSkipsDanglingDependencyRelations(t *testing.T) {
+	t.Setenv("LINEAR_TOKEN", "lin_api_test")
+	originalFactory := newLinearStorageBackend
+	t.Cleanup(func() {
+		newLinearStorageBackend = originalFactory
+	})
+	newLinearStorageBackend = func(linear.Config) (contracts.StorageBackend, error) {
+		return taskManagerStorageBackend{taskManager: newFallbackScenarioTaskManager()}, nil
+	}
+
+	backend, err := buildStorageBackendForTracker(t.TempDir(), resolvedTrackerProfile{
+		Name: "linear",
+		Tracker: trackerModel{
+			Type: trackerTypeLinear,
+			Linear: &linearTrackerModel{
+				Scope: linearScopeModel{Workspace: "anomaly"},
+				Auth:  linearAuthModel{TokenEnv: "LINEAR_TOKEN"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("build linear fallback backend: %v", err)
+	}
+
+	assertFallbackBackendGraphBuildsWithReadyTask(t, backend)
+}
+
+func TestBuildStorageBackendForTrackerTKUsesTaskManagerTreeForCompletion(t *testing.T) {
+	originalFactory := newTKStorageBackend
+	t.Cleanup(func() {
+		newTKStorageBackend = originalFactory
+	})
+	newTKStorageBackend = func(string) (contracts.StorageBackend, error) {
+		return taskManagerStorageBackend{taskManager: newFallbackCompletionTaskManager()}, nil
+	}
+
+	backend, err := buildStorageBackendForTracker(t.TempDir(), resolvedTrackerProfile{
+		Name: "default",
+		Tracker: trackerModel{
+			Type: trackerTypeTK,
+		},
+	})
+	if err != nil {
+		t.Fatalf("build tk fallback backend: %v", err)
+	}
+
+	assertFallbackBackendTreatsOpenRootWithTerminalChildrenAsComplete(t, backend)
+}
+
+func TestBuildStorageBackendForTrackerLinearUsesTaskManagerTreeForCompletion(t *testing.T) {
+	t.Setenv("LINEAR_TOKEN", "lin_api_test")
+	originalFactory := newLinearStorageBackend
+	t.Cleanup(func() {
+		newLinearStorageBackend = originalFactory
+	})
+	newLinearStorageBackend = func(linear.Config) (contracts.StorageBackend, error) {
+		return taskManagerStorageBackend{taskManager: newFallbackCompletionTaskManager()}, nil
+	}
+
+	backend, err := buildStorageBackendForTracker(t.TempDir(), resolvedTrackerProfile{
+		Name: "linear",
+		Tracker: trackerModel{
+			Type: trackerTypeLinear,
+			Linear: &linearTrackerModel{
+				Scope: linearScopeModel{Workspace: "anomaly"},
+				Auth:  linearAuthModel{TokenEnv: "LINEAR_TOKEN"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("build linear fallback backend: %v", err)
+	}
+
+	assertFallbackBackendTreatsOpenRootWithTerminalChildrenAsComplete(t, backend)
+}
+
+func TestTaskManagerStorageBackendGetTaskReturnsNilWhenTaskManagerReturnsEmptyTask(t *testing.T) {
+	backend := taskManagerStorageBackend{taskManager: staticTaskManager{}}
+
+	task, err := backend.GetTask(context.Background(), "missing")
+	if err != nil {
+		t.Fatalf("GetTask returned error: %v", err)
+	}
+	if task != nil {
+		t.Fatalf("expected nil task for missing lookup, got %#v", task)
+	}
+}
+
 func TestResolveProfileSelectionPolicyPrefersFlag(t *testing.T) {
 	got := resolveProfileSelectionPolicy(profileSelectionInput{
 		FlagValue: "qa",
@@ -602,6 +826,184 @@ func writeTrackerConfigYAML(t *testing.T, repoRoot string, payload string) {
 	}
 }
 
+func assertFallbackBackendGraphBuildsWithReadyTask(t *testing.T, backend contracts.StorageBackend) {
+	t.Helper()
+
+	tree, err := backend.GetTaskTree(context.Background(), "root")
+	if err != nil {
+		t.Fatalf("GetTaskTree returned error: %v", err)
+	}
+
+	for _, relation := range tree.Relations {
+		if _, ok := tree.Tasks[relation.FromID]; !ok {
+			t.Fatalf("relation %q references missing from task %q", relation.Type, relation.FromID)
+		}
+		if _, ok := tree.Tasks[relation.ToID]; !ok {
+			t.Fatalf("relation %q references missing to task %q", relation.Type, relation.ToID)
+		}
+	}
+
+	taskEngine := enginepkg.NewTaskEngine()
+	graph, err := taskEngine.BuildGraph(tree)
+	if err != nil {
+		t.Fatalf("BuildGraph returned error: %v", err)
+	}
+	ready := taskEngine.GetNextAvailable(graph)
+	if len(ready) != 1 || ready[0].ID != "task-ready" {
+		t.Fatalf("expected task-ready to remain runnable, got %#v", ready)
+	}
+}
+
+func assertFallbackBackendTreatsOpenRootWithTerminalChildrenAsComplete(t *testing.T, backend contracts.StorageBackend) {
+	t.Helper()
+
+	tree, err := backend.GetTaskTree(context.Background(), "root")
+	if err != nil {
+		t.Fatalf("GetTaskTree returned error: %v", err)
+	}
+
+	taskEngine := enginepkg.NewTaskEngine()
+	graph, err := taskEngine.BuildGraph(tree)
+	if err != nil {
+		t.Fatalf("BuildGraph returned error: %v", err)
+	}
+
+	ready := taskEngine.GetNextAvailable(graph)
+	if len(ready) != 0 {
+		t.Fatalf("expected no runnable tasks for terminal child graph, got %#v", ready)
+	}
+	if !taskEngine.IsComplete(graph) {
+		t.Fatalf("expected open root with terminal children to be complete")
+	}
+}
+
+func newFallbackScenarioTaskManager() *fallbackScenarioTaskManager {
+	return &fallbackScenarioTaskManager{
+		nextTasks: []contracts.TaskSummary{
+			{ID: "task-ready", Title: "Task ready"},
+		},
+		tasks: map[string]contracts.Task{
+			"root": {
+				ID:     "root",
+				Title:  "Root",
+				Status: contracts.TaskStatusOpen,
+			},
+			"task-ready": {
+				ID:       "task-ready",
+				Title:    "Task ready",
+				ParentID: "root",
+				Status:   contracts.TaskStatusOpen,
+				Metadata: map[string]string{
+					"dependencies": "task-closed",
+				},
+			},
+			"task-closed": {
+				ID:       "task-closed",
+				Title:    "Task closed dependency",
+				ParentID: "root",
+				Status:   contracts.TaskStatusClosed,
+			},
+		},
+	}
+}
+
+type fallbackScenarioTaskManager struct {
+	nextTasks []contracts.TaskSummary
+	tasks     map[string]contracts.Task
+}
+
+func (m *fallbackScenarioTaskManager) NextTasks(_ context.Context, _ string) ([]contracts.TaskSummary, error) {
+	return append([]contracts.TaskSummary(nil), m.nextTasks...), nil
+}
+
+func (m *fallbackScenarioTaskManager) GetTask(_ context.Context, taskID string) (contracts.Task, error) {
+	task, ok := m.tasks[taskID]
+	if !ok {
+		return contracts.Task{}, fmt.Errorf("task %q not found", taskID)
+	}
+	return task, nil
+}
+
+func (m *fallbackScenarioTaskManager) SetTaskStatus(_ context.Context, _ string, _ contracts.TaskStatus) error {
+	return nil
+}
+
+func (m *fallbackScenarioTaskManager) SetTaskData(_ context.Context, _ string, _ map[string]string) error {
+	return nil
+}
+
+type fallbackCompletionTaskManager struct {
+	tree  contracts.TaskTree
+	tasks map[string]contracts.Task
+}
+
+func newFallbackCompletionTaskManager() *fallbackCompletionTaskManager {
+	tasks := map[string]contracts.Task{
+		"root": {
+			ID:     "root",
+			Title:  "Root",
+			Status: contracts.TaskStatusOpen,
+		},
+		"task-closed": {
+			ID:       "task-closed",
+			Title:    "Closed task",
+			ParentID: "root",
+			Status:   contracts.TaskStatusClosed,
+		},
+		"task-failed": {
+			ID:       "task-failed",
+			Title:    "Failed task",
+			ParentID: "root",
+			Status:   contracts.TaskStatusFailed,
+		},
+	}
+	return &fallbackCompletionTaskManager{
+		tree: contracts.TaskTree{
+			Root: tasks["root"],
+			Tasks: map[string]contracts.Task{
+				"root":        tasks["root"],
+				"task-closed": tasks["task-closed"],
+				"task-failed": tasks["task-failed"],
+			},
+			Relations: []contracts.TaskRelation{
+				{FromID: "root", ToID: "task-closed", Type: contracts.RelationParent},
+				{FromID: "root", ToID: "task-failed", Type: contracts.RelationParent},
+			},
+		},
+		tasks: tasks,
+	}
+}
+
+func (m *fallbackCompletionTaskManager) GetTaskTree(_ context.Context, _ string) (*contracts.TaskTree, error) {
+	tree := m.tree
+	tree.Tasks = map[string]contracts.Task{}
+	for id, task := range m.tree.Tasks {
+		tree.Tasks[id] = task
+	}
+	tree.Relations = append([]contracts.TaskRelation(nil), m.tree.Relations...)
+	return &tree, nil
+}
+
+func (m *fallbackCompletionTaskManager) NextTasks(_ context.Context, _ string) ([]contracts.TaskSummary, error) {
+	return nil, nil
+}
+
+func (m *fallbackCompletionTaskManager) GetTask(_ context.Context, taskID string) (contracts.Task, error) {
+	task, ok := m.tasks[taskID]
+	if !ok {
+		return contracts.Task{}, fmt.Errorf("task %q not found", taskID)
+	}
+	return task, nil
+}
+
+func (m *fallbackCompletionTaskManager) SetTaskStatus(_ context.Context, _ string, _ contracts.TaskStatus) error {
+	return nil
+}
+
+func (m *fallbackCompletionTaskManager) SetTaskData(_ context.Context, _ string, _ map[string]string) error {
+	return nil
+}
+
 type staticTaskManager struct{}
 
 func (staticTaskManager) NextTasks(_ context.Context, _ string) ([]contracts.TaskSummary, error) {
@@ -617,5 +1019,23 @@ func (staticTaskManager) SetTaskStatus(_ context.Context, _ string, _ contracts.
 }
 
 func (staticTaskManager) SetTaskData(_ context.Context, _ string, _ map[string]string) error {
+	return nil
+}
+
+type staticStorageBackend struct{}
+
+func (staticStorageBackend) GetTaskTree(_ context.Context, _ string) (*contracts.TaskTree, error) {
+	return &contracts.TaskTree{}, nil
+}
+
+func (staticStorageBackend) GetTask(_ context.Context, _ string) (*contracts.Task, error) {
+	return &contracts.Task{}, nil
+}
+
+func (staticStorageBackend) SetTaskStatus(_ context.Context, _ string, _ contracts.TaskStatus) error {
+	return nil
+}
+
+func (staticStorageBackend) SetTaskData(_ context.Context, _ string, _ map[string]string) error {
 	return nil
 }

@@ -1,7 +1,7 @@
 ---
 id: yr-b3z3
 parent: yr-abz7
-status: open
+status: closed
 deps: []
 links: []
 created: 2026-02-21T20:22:56Z

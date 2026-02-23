@@ -1,7 +1,7 @@
 ---
 id: yr-io10
 parent: yr-abz7
-status: open
+status: closed
 deps: [yr-b3z3]
 links: []
 created: 2026-02-21T20:23:46Z

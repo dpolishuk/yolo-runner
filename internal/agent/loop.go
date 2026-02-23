@@ -3,15 +3,28 @@ package agent
 import (
 	"context"
 	"fmt"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/anomalyco/yolo-runner/internal/contracts"
-	"github.com/anomalyco/yolo-runner/internal/scheduler"
+	"github.com/egv/yolo-runner/v2/internal/contracts"
+	"github.com/egv/yolo-runner/v2/internal/scheduler"
+	"github.com/egv/yolo-runner/v2/internal/tk"
 )
+
+type taskRuntimeConfig struct {
+	backend   string
+	model     string
+	skillset  string
+	tools     []string
+	mode      string
+	timeout   time.Duration
+	useConfig bool
+}
 
 type taskLock interface {
 	TryLock(taskID string) bool
@@ -41,11 +54,15 @@ type LoopOptions struct {
 	RepoRoot             string
 	Backend              string
 	Model                string
+	FallbackModel        string
 	RunnerTimeout        time.Duration
 	WatchdogTimeout      time.Duration
 	WatchdogInterval     time.Duration
 	HeartbeatInterval    time.Duration
 	NoOutputWarningAfter time.Duration
+	TDDMode              bool
+	QualityGateThreshold int
+	AllowLowQuality      bool
 	VCS                  contracts.VCS
 	RequireReview        bool
 	MergeOnSuccess       bool
@@ -65,6 +82,14 @@ type Loop struct {
 	workerStartHook func(workerID int)
 }
 
+type taskConcurrencyCalculator interface {
+	CalculateConcurrency(ctx context.Context, maxWorkers int) (int, error)
+}
+
+type taskCompletionChecker interface {
+	IsComplete(ctx context.Context) (bool, error)
+}
+
 func NewLoop(tasks contracts.TaskManager, runner contracts.AgentRunner, events contracts.EventSink, options LoopOptions) *Loop {
 	return &Loop{
 		tasks:          tasks,
@@ -78,8 +103,32 @@ func NewLoop(tasks contracts.TaskManager, runner contracts.AgentRunner, events c
 	}
 }
 
+func NewLoopWithTaskEngine(storage contracts.StorageBackend, taskEngine contracts.TaskEngine, runner contracts.AgentRunner, events contracts.EventSink, options LoopOptions) *Loop {
+	taskManager := newStorageEngineTaskManager(storage, taskEngine, options.ParentID)
+	return NewLoop(taskManager, runner, events, options)
+}
+
 func (l *Loop) Run(ctx context.Context) (contracts.LoopSummary, error) {
 	summary := contracts.LoopSummary{}
+	requestedConcurrency := l.options.Concurrency
+	if requestedConcurrency < 0 {
+		requestedConcurrency = 1
+	}
+	if calculator, ok := l.tasks.(taskConcurrencyCalculator); ok {
+		recommended, err := calculator.CalculateConcurrency(ctx, requestedConcurrency)
+		if err != nil {
+			return summary, err
+		}
+		if requestedConcurrency == 0 || recommended > 0 {
+			l.options.Concurrency = recommended
+		} else {
+			l.options.Concurrency = requestedConcurrency
+		}
+	} else if requestedConcurrency == 0 {
+		l.options.Concurrency = 1
+	} else {
+		l.options.Concurrency = requestedConcurrency
+	}
 	if l.options.Concurrency <= 0 {
 		l.options.Concurrency = 1
 	}
@@ -188,6 +237,15 @@ func (l *Loop) Run(ctx context.Context) (contracts.LoopSummary, error) {
 		}
 
 		if len(inFlight) == 0 {
+			if completionChecker, ok := l.tasks.(taskCompletionChecker); ok {
+				complete, err := completionChecker.IsComplete(ctx)
+				if err != nil {
+					return summary, err
+				}
+				if !complete {
+					return summary, fmt.Errorf("task graph incomplete/stalled: no tasks in flight and no tasks available for parent %q", strings.TrimSpace(l.options.ParentID))
+				}
+			}
 			return summary, nil
 		}
 
@@ -213,7 +271,166 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 	}
 	_ = l.emit(ctx, contracts.Event{Type: contracts.EventTypeTaskStarted, TaskID: task.ID, TaskTitle: task.Title, WorkerID: worker, QueuePos: queuePos, Message: task.Title, Timestamp: time.Now().UTC()})
 
+	taskRuntime, err := resolveTaskRuntimeConfig(task, l.options)
+	if err != nil {
+		return summary, err
+	}
+
+	epicID := strings.TrimSpace(task.ParentID)
+	if epicID == "" {
+		epicID = strings.TrimSpace(l.options.ParentID)
+	}
+
+	if qualityScore, ok := taskExecutionThresholdScore(task.Metadata); ok && l.options.QualityGateThreshold > 0 && qualityScore < l.options.QualityGateThreshold {
+		qualityGateReason := fmt.Sprintf("quality score %d is below threshold %d", qualityScore, l.options.QualityGateThreshold)
+		qualityComment := qualityGateComment(task.Metadata, qualityScore, l.options.QualityGateThreshold)
+		qualityMetadata := map[string]string{
+			"quality_score":        strconv.Itoa(qualityScore),
+			"quality_threshold":    strconv.Itoa(l.options.QualityGateThreshold),
+			"quality_gate":         "true",
+			"quality_gate_comment": qualityComment,
+		}
+		if l.options.AllowLowQuality {
+			warningMetadata := map[string]string{
+				"quality_threshold": strconv.Itoa(l.options.QualityGateThreshold),
+				"quality_score":     strconv.Itoa(qualityScore),
+				"reason":            qualityGateReason,
+			}
+			for key, value := range qualityMetadata {
+				warningMetadata[key] = value
+			}
+			_ = l.emit(ctx, contracts.Event{
+				Type:      contracts.EventTypeRunnerWarning,
+				TaskID:    task.ID,
+				TaskTitle: task.Title,
+				WorkerID:  worker,
+				ClonePath: l.options.RepoRoot,
+				QueuePos:  queuePos,
+				Message:   "quality gate threshold overridden by --allow-low-quality",
+				Metadata:  warningMetadata,
+				Timestamp: time.Now().UTC(),
+			})
+		} else {
+			blockedData := map[string]string{
+				"triage_status":        "blocked",
+				"triage_reason":        qualityGateReason,
+				"quality_score":        strconv.Itoa(qualityScore),
+				"quality_threshold":    strconv.Itoa(l.options.QualityGateThreshold),
+				"quality_gate":         "true",
+				"quality_gate_comment": qualityComment,
+			}
+			blockedData = appendDecisionMetadata(blockedData, "blocked", qualityGateReason)
+			if err := l.markTaskBlockedWithData(task.ID, blockedData); err != nil {
+				return summary, err
+			}
+			if err := l.tasks.SetTaskStatus(ctx, task.ID, contracts.TaskStatusBlocked); err != nil {
+				return summary, err
+			}
+			finishedMetadata := map[string]string{
+				"triage_status":     "blocked",
+				"triage_reason":     qualityGateReason,
+				"quality_score":     strconv.Itoa(qualityScore),
+				"quality_threshold": strconv.Itoa(l.options.QualityGateThreshold),
+				"quality_gate":      "true",
+			}
+			finishedMetadata = appendDecisionMetadata(finishedMetadata, "blocked", qualityGateReason)
+			_ = l.emit(ctx, contracts.Event{
+				Type:      contracts.EventTypeTaskFinished,
+				TaskID:    task.ID,
+				TaskTitle: task.Title,
+				WorkerID:  worker,
+				ClonePath: l.options.RepoRoot,
+				QueuePos:  queuePos,
+				Message:   string(contracts.TaskStatusBlocked),
+				Metadata:  finishedMetadata,
+				Timestamp: time.Now().UTC(),
+			})
+			if err := l.tasks.SetTaskData(ctx, task.ID, blockedData); err != nil {
+				return summary, err
+			}
+			_ = l.emit(ctx, contracts.Event{
+				Type:      contracts.EventTypeTaskDataUpdated,
+				TaskID:    task.ID,
+				TaskTitle: task.Title,
+				WorkerID:  worker,
+				ClonePath: l.options.RepoRoot,
+				QueuePos:  queuePos,
+				Metadata:  blockedData,
+				Timestamp: time.Now().UTC(),
+			})
+			if err := l.clearTaskTerminalState(task.ID); err != nil {
+				return summary, err
+			}
+			summary.Blocked++
+			return summary, nil
+		}
+	}
+
 	taskRepoRoot := l.options.RepoRoot
+	if l.options.TDDMode {
+		testsPresent, testsFailing, err := hasTestsForTDDMode(l.options.RepoRoot)
+		if err != nil {
+			return summary, err
+		}
+		if !testsFailing {
+			reason := "tdd mode tests-first gate requires tests to be present and currently failing before implementation"
+			if !testsPresent {
+				reason = "tdd mode tests-first gate requires adding tests before implementation"
+			}
+			blockedData := map[string]string{
+				"triage_status": "blocked",
+				"triage_reason": reason,
+				"tdd_mode":      "true",
+				"tests_present": strconv.FormatBool(testsPresent),
+				"tests_failing": strconv.FormatBool(testsFailing),
+			}
+			blockedData = appendDecisionMetadata(blockedData, "blocked", reason)
+			if err := l.markTaskBlockedWithData(task.ID, blockedData); err != nil {
+				return summary, err
+			}
+			if err := l.tasks.SetTaskStatus(ctx, task.ID, contracts.TaskStatusBlocked); err != nil {
+				return summary, err
+			}
+			finishedMetadata := map[string]string{
+				"triage_status": "blocked",
+				"triage_reason": reason,
+				"tdd_mode":      "true",
+				"tests_present": strconv.FormatBool(testsPresent),
+				"tests_failing": strconv.FormatBool(testsFailing),
+			}
+			finishedMetadata = appendDecisionMetadata(finishedMetadata, "blocked", reason)
+			_ = l.emit(ctx, contracts.Event{
+				Type:      contracts.EventTypeTaskFinished,
+				TaskID:    task.ID,
+				TaskTitle: task.Title,
+				WorkerID:  worker,
+				ClonePath: taskRepoRoot,
+				QueuePos:  queuePos,
+				Message:   string(contracts.TaskStatusBlocked),
+				Metadata:  finishedMetadata,
+				Timestamp: time.Now().UTC(),
+			})
+			if err := l.tasks.SetTaskData(ctx, task.ID, blockedData); err != nil {
+				return summary, err
+			}
+			_ = l.emit(ctx, contracts.Event{
+				Type:      contracts.EventTypeTaskDataUpdated,
+				TaskID:    task.ID,
+				TaskTitle: task.Title,
+				WorkerID:  worker,
+				ClonePath: taskRepoRoot,
+				QueuePos:  queuePos,
+				Metadata:  blockedData,
+				Timestamp: time.Now().UTC(),
+			})
+			if err := l.clearTaskTerminalState(task.ID); err != nil {
+				return summary, err
+			}
+			summary.Blocked++
+			return summary, nil
+		}
+	}
+
 	if l.cloneManager != nil {
 		clonePath, cloneErr := l.cloneManager.CloneForTask(ctx, task.ID, l.options.RepoRoot)
 		if cloneErr != nil {
@@ -245,16 +462,39 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 
 	reviewRetries := 0
 	reviewRetryFeedback := ""
+	implementModel := taskRuntime.model
+	if implementModel == "" {
+		implementModel = strings.TrimSpace(l.options.Model)
+	}
+	fallbackModel := strings.TrimSpace(l.options.FallbackModel)
+	usedModelFallback := false
+	modelBeforeFallback := ""
+	modelFallbackReason := ""
+	taskBackend := taskRuntime.backend
+	if taskBackend == "" {
+		taskBackend = strings.TrimSpace(l.options.Backend)
+	}
 	for {
 		reviewFailed := false
 		if err := l.tasks.SetTaskStatus(ctx, task.ID, contracts.TaskStatusInProgress); err != nil {
 			return summary, err
 		}
-
-		implementLogPath := defaultRunnerLogPath(taskRepoRoot, task.ID, l.options.Backend)
-		implementStartMeta := buildRunnerStartedMetadata(contracts.RunnerModeImplement, l.options.Backend, l.options.Model, taskRepoRoot, implementLogPath, time.Now().UTC())
+		implementLogPath := defaultRunnerLogPath(taskRepoRoot, task.ID, epicID, taskBackend)
+		if err := ensureRunnerLogDirectory(taskRepoRoot, implementLogPath); err != nil {
+			return summary, err
+		}
+		implementStartMeta := buildRunnerStartedMetadata(contracts.RunnerModeImplement, taskBackend, implementModel, taskRepoRoot, implementLogPath, time.Now().UTC())
+		appendTaskRuntimeMetadata(implementStartMeta, taskRuntime)
+		if usedModelFallback {
+			implementStartMeta = appendDecisionMetadata(implementStartMeta, "model_fallback", modelFallbackReason)
+			implementStartMeta["model_previous"] = modelBeforeFallback
+			if fallbackModel != "" {
+				implementStartMeta["model_fallback"] = fallbackModel
+			}
+		}
 		_ = l.emit(ctx, contracts.Event{Type: contracts.EventTypeRunnerStarted, TaskID: task.ID, TaskTitle: task.Title, WorkerID: worker, ClonePath: taskRepoRoot, QueuePos: queuePos, Message: string(contracts.RunnerModeImplement), Metadata: implementStartMeta, Timestamp: time.Now().UTC()})
 		requestMetadata := map[string]string{"log_path": implementLogPath, "clone_path": taskRepoRoot}
+		appendTaskRuntimeMetadata(requestMetadata, taskRuntime)
 		if l.options.WatchdogTimeout > 0 {
 			requestMetadata["watchdog_timeout"] = l.options.WatchdogTimeout.String()
 		}
@@ -267,9 +507,9 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 			ParentID: l.options.ParentID,
 			Mode:     contracts.RunnerModeImplement,
 			RepoRoot: taskRepoRoot,
-			Model:    l.options.Model,
-			Timeout:  l.options.RunnerTimeout,
-			Prompt:   buildImplementPrompt(task, reviewRetryFeedback, reviewRetries),
+			Model:    implementModel,
+			Timeout:  taskRuntime.timeout,
+			Prompt:   buildImplementPrompt(task, reviewRetryFeedback, reviewRetries, l.options.TDDMode),
 			Metadata: requestMetadata,
 		}, task.ID, task.Title, worker, taskRepoRoot, queuePos)
 		if err != nil {
@@ -284,10 +524,15 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 				"review_retry_count": fmt.Sprintf("%d", reviewRetries),
 			}
 			_ = l.emit(ctx, contracts.Event{Type: contracts.EventTypeReviewStarted, TaskID: task.ID, TaskTitle: task.Title, WorkerID: worker, ClonePath: taskRepoRoot, QueuePos: queuePos, Metadata: reviewTelemetry, Timestamp: time.Now().UTC()})
-			reviewLogPath := defaultRunnerLogPath(taskRepoRoot, task.ID, l.options.Backend)
-			reviewStartMeta := buildRunnerStartedMetadata(contracts.RunnerModeReview, l.options.Backend, l.options.Model, taskRepoRoot, reviewLogPath, time.Now().UTC())
+			reviewLogPath := defaultRunnerLogPath(taskRepoRoot, task.ID, epicID, taskBackend)
+			if err := ensureRunnerLogDirectory(taskRepoRoot, reviewLogPath); err != nil {
+				return summary, err
+			}
+			reviewStartMeta := buildRunnerStartedMetadata(contracts.RunnerModeReview, taskBackend, implementModel, taskRepoRoot, reviewLogPath, time.Now().UTC())
+			appendTaskRuntimeMetadata(reviewStartMeta, taskRuntime)
 			_ = l.emit(ctx, contracts.Event{Type: contracts.EventTypeRunnerStarted, TaskID: task.ID, TaskTitle: task.Title, WorkerID: worker, ClonePath: taskRepoRoot, QueuePos: queuePos, Message: string(contracts.RunnerModeReview), Metadata: reviewStartMeta, Timestamp: time.Now().UTC()})
 			reviewMetadata := map[string]string{"log_path": reviewLogPath, "clone_path": taskRepoRoot}
+			appendTaskRuntimeMetadata(reviewMetadata, taskRuntime)
 			if l.options.WatchdogTimeout > 0 {
 				reviewMetadata["watchdog_timeout"] = l.options.WatchdogTimeout.String()
 			}
@@ -300,9 +545,9 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 				ParentID: l.options.ParentID,
 				Mode:     contracts.RunnerModeReview,
 				RepoRoot: taskRepoRoot,
-				Model:    l.options.Model,
-				Timeout:  l.options.RunnerTimeout,
-				Prompt:   buildPrompt(task, contracts.RunnerModeReview),
+				Model:    implementModel,
+				Timeout:  taskRuntime.timeout,
+				Prompt:   buildPrompt(task, contracts.RunnerModeReview, false),
 				Metadata: reviewMetadata,
 			}, task.ID, task.Title, worker, taskRepoRoot, queuePos)
 			if reviewErr != nil {
@@ -323,7 +568,8 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 				if l.options.WatchdogInterval > 0 {
 					verdictMetadata["watchdog_interval"] = l.options.WatchdogInterval.String()
 				}
-				verdictStartMeta := buildRunnerStartedMetadata(contracts.RunnerModeReview, l.options.Backend, l.options.Model, taskRepoRoot, reviewLogPath, time.Now().UTC())
+				verdictStartMeta := buildRunnerStartedMetadata(contracts.RunnerModeReview, taskBackend, implementModel, taskRepoRoot, reviewLogPath, time.Now().UTC())
+				appendTaskRuntimeMetadata(verdictStartMeta, taskRuntime)
 				verdictStartMeta["review_phase"] = "verdict_retry"
 				_ = l.emit(ctx, contracts.Event{Type: contracts.EventTypeRunnerStarted, TaskID: task.ID, TaskTitle: task.Title, WorkerID: worker, ClonePath: taskRepoRoot, QueuePos: queuePos, Message: string(contracts.RunnerModeReview), Metadata: verdictStartMeta, Timestamp: time.Now().UTC()})
 
@@ -332,8 +578,8 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 					ParentID: l.options.ParentID,
 					Mode:     contracts.RunnerModeReview,
 					RepoRoot: taskRepoRoot,
-					Model:    l.options.Model,
-					Timeout:  l.options.RunnerTimeout,
+					Model:    implementModel,
+					Timeout:  taskRuntime.timeout,
 					Prompt:   buildReviewVerdictPrompt(task),
 					Metadata: verdictMetadata,
 				}, task.ID, task.Title, worker, taskRepoRoot, queuePos)
@@ -387,6 +633,7 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 				autoCommitSHA := ""
 				buildLandingMetadata := func(status string, attempt int, reason string) map[string]string {
 					metadata := map[string]string{"landing_status": status}
+					metadata = appendDecisionMetadata(metadata, status, reason)
 					if attempt > 0 {
 						metadata["landing_attempt"] = fmt.Sprintf("%d", attempt)
 					}
@@ -417,7 +664,7 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 						Timestamp: time.Now().UTC(),
 					})
 				}
-				emitMergeQueueEvent(contracts.EventTypeMergeQueued, map[string]string{"landing_status": string(landingState.State())})
+				emitMergeQueueEvent(contracts.EventTypeMergeQueued, appendDecisionMetadata(map[string]string{"landing_status": string(landingState.State())}, string(landingState.State()), ""))
 				_ = l.emit(ctx, contracts.Event{Type: contracts.EventTypeTaskDataUpdated, TaskID: task.ID, TaskTitle: task.Title, WorkerID: worker, ClonePath: taskRepoRoot, QueuePos: queuePos, Metadata: buildLandingMetadata(string(landingState.State()), 0, ""), Timestamp: time.Now().UTC()})
 				if l.landingLock != nil {
 					l.landingLock.Lock()
@@ -451,13 +698,13 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 						_ = landingState.Apply(scheduler.LandingEventFailedRetryable)
 						_ = l.emit(ctx, contracts.Event{Type: contracts.EventTypeTaskDataUpdated, TaskID: task.ID, TaskTitle: task.Title, WorkerID: worker, ClonePath: taskRepoRoot, QueuePos: queuePos, Metadata: buildLandingMetadata(string(landingState.State()), attempt, landingReason), Timestamp: time.Now().UTC()})
 						if attempt < 2 {
-							emitMergeQueueEvent(contracts.EventTypeMergeRetry, map[string]string{
+							emitMergeQueueEvent(contracts.EventTypeMergeRetry, appendDecisionMetadata(map[string]string{
 								"landing_status":  string(landingState.State()),
 								"landing_attempt": fmt.Sprintf("%d", attempt),
 								"triage_reason":   landingReason,
-							})
+							}, "retry", landingReason))
 							if isMergeConflictError(landingReason) {
-								remediationResult := l.runLandingMergeConflictRemediation(ctx, task, taskVCS, taskBranch, worker, taskRepoRoot, queuePos, landingReason)
+								remediationResult := l.runLandingMergeConflictRemediation(ctx, task, taskVCS, taskBranch, worker, taskRepoRoot, queuePos, landingReason, taskRuntime)
 								if remediationResult.Status != contracts.RunnerResultCompleted {
 									remediationReason := strings.TrimSpace(remediationResult.Reason)
 									if remediationReason == "" {
@@ -472,10 +719,10 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 							}
 							_ = landingState.Apply(scheduler.LandingEventRequeued)
 							_ = l.emit(ctx, contracts.Event{Type: contracts.EventTypeTaskDataUpdated, TaskID: task.ID, TaskTitle: task.Title, WorkerID: worker, ClonePath: taskRepoRoot, QueuePos: queuePos, Metadata: buildLandingMetadata(string(landingState.State()), 0, ""), Timestamp: time.Now().UTC()})
-							emitMergeQueueEvent(contracts.EventTypeMergeQueued, map[string]string{
+							emitMergeQueueEvent(contracts.EventTypeMergeQueued, appendDecisionMetadata(map[string]string{
 								"landing_status":  string(landingState.State()),
 								"landing_attempt": fmt.Sprintf("%d", attempt+1),
-							})
+							}, string(landingState.State()), ""))
 							continue
 						}
 						landingBlocked = true
@@ -507,22 +754,23 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 					_ = l.emit(ctx, contracts.Event{Type: contracts.EventTypePushCompleted, TaskID: task.ID, TaskTitle: task.Title, WorkerID: worker, ClonePath: taskRepoRoot, QueuePos: queuePos, Metadata: pushMetadata, Timestamp: time.Now().UTC()})
 					_ = landingState.Apply(scheduler.LandingEventSucceeded)
 					_ = l.emit(ctx, contracts.Event{Type: contracts.EventTypeTaskDataUpdated, TaskID: task.ID, TaskTitle: task.Title, WorkerID: worker, ClonePath: taskRepoRoot, QueuePos: queuePos, Metadata: buildLandingMetadata(string(landingState.State()), 0, ""), Timestamp: time.Now().UTC()})
-					emitMergeQueueEvent(contracts.EventTypeMergeLanded, map[string]string{
+					emitMergeQueueEvent(contracts.EventTypeMergeLanded, appendDecisionMetadata(map[string]string{
 						"landing_status":  string(landingState.State()),
 						"landing_attempt": fmt.Sprintf("%d", attempt),
-					})
+					}, "landed", landingReason))
 					break
 				}
 
 				if landingBlocked {
-					emitMergeQueueEvent(contracts.EventTypeMergeBlocked, map[string]string{
+					emitMergeQueueEvent(contracts.EventTypeMergeBlocked, appendDecisionMetadata(map[string]string{
 						"landing_status": string(landingState.State()),
 						"triage_reason":  landingReason,
-					})
+					}, "blocked", landingReason))
 					blockedData := map[string]string{"triage_status": "blocked", "landing_status": string(landingState.State())}
 					if landingReason != "" {
 						blockedData["triage_reason"] = landingReason
 					}
+					blockedData = appendDecisionMetadata(blockedData, "blocked", landingReason)
 					if autoCommitSHA != "" {
 						blockedData["auto_commit_sha"] = autoCommitSHA
 					}
@@ -536,6 +784,7 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 					if landingReason != "" {
 						finishedMetadata["triage_reason"] = landingReason
 					}
+					finishedMetadata = appendDecisionMetadata(finishedMetadata, "blocked", landingReason)
 					_ = l.emit(ctx, contracts.Event{Type: contracts.EventTypeTaskFinished, TaskID: task.ID, TaskTitle: task.Title, WorkerID: worker, ClonePath: taskRepoRoot, QueuePos: queuePos, Message: string(contracts.TaskStatusBlocked), Metadata: finishedMetadata, Timestamp: time.Now().UTC()})
 					if err := l.tasks.SetTaskData(ctx, task.ID, blockedData); err != nil {
 						return summary, err
@@ -562,6 +811,7 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 			if result.Reason != "" {
 				blockedData["triage_reason"] = result.Reason
 			}
+			blockedData = appendDecisionMetadata(blockedData, "blocked", result.Reason)
 			blockedData = appendReviewOutcomeMetadata(blockedData, result)
 			if err := l.markTaskBlockedWithData(task.ID, blockedData); err != nil {
 				return summary, err
@@ -573,6 +823,7 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 			if result.Reason != "" {
 				finishedMetadata["triage_reason"] = result.Reason
 			}
+			finishedMetadata = appendDecisionMetadata(finishedMetadata, "blocked", result.Reason)
 			finishedMetadata = appendReviewOutcomeMetadata(finishedMetadata, result)
 			_ = l.emit(ctx, contracts.Event{Type: contracts.EventTypeTaskFinished, TaskID: task.ID, TaskTitle: task.Title, WorkerID: worker, ClonePath: taskRepoRoot, QueuePos: queuePos, Message: string(contracts.TaskStatusBlocked), Metadata: finishedMetadata, Timestamp: time.Now().UTC()})
 			if err := l.tasks.SetTaskData(ctx, task.ID, blockedData); err != nil {
@@ -585,6 +836,14 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 			summary.Blocked++
 			return summary, nil
 		case contracts.RunnerResultFailed:
+			if !reviewFailed && !usedModelFallback && shouldUseModelFallbackForFailure(result, implementModel, fallbackModel) {
+				usedModelFallback = true
+				modelFallbackReason = strings.TrimSpace(result.Reason)
+				modelBeforeFallback = implementModel
+				implementModel = fallbackModel
+				continue
+			}
+
 			reviewFail := reviewFailed || isReviewFailResult(result)
 			if reviewFail {
 				feedback := strings.TrimSpace(reviewFailFeedbackFromArtifacts(result))
@@ -602,6 +861,7 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 					if strings.TrimSpace(result.Reason) != "" {
 						retryData["triage_reason"] = strings.TrimSpace(result.Reason)
 					}
+					retryData = appendDecisionMetadata(retryData, "retry", result.Reason)
 					if err := l.tasks.SetTaskData(ctx, task.ID, retryData); err != nil {
 						return summary, err
 					}
@@ -622,6 +882,7 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 			if result.Reason != "" {
 				failedData["triage_reason"] = result.Reason
 			}
+			failedData = appendDecisionMetadata(failedData, "failed", result.Reason)
 			if reviewFail || reviewRetries > 0 {
 				failedData["review_retry_count"] = fmt.Sprintf("%d", reviewRetries)
 			}
@@ -640,6 +901,7 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 			if result.Reason != "" {
 				finishedMetadata["triage_reason"] = result.Reason
 			}
+			finishedMetadata = appendDecisionMetadata(finishedMetadata, "failed", result.Reason)
 			finishedMetadata = appendReviewOutcomeMetadata(finishedMetadata, result)
 			_ = l.emit(ctx, contracts.Event{Type: contracts.EventTypeTaskFinished, TaskID: task.ID, TaskTitle: task.Title, WorkerID: worker, ClonePath: taskRepoRoot, QueuePos: queuePos, Message: string(contracts.TaskStatusFailed), Metadata: finishedMetadata, Timestamp: time.Now().UTC()})
 			summary.Failed++
@@ -649,6 +911,7 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 			if result.Reason != "" {
 				failedData["triage_reason"] = result.Reason
 			}
+			failedData = appendDecisionMetadata(failedData, "failed", result.Reason)
 			failedData = appendReviewOutcomeMetadata(failedData, result)
 			if err := l.tasks.SetTaskData(ctx, task.ID, failedData); err != nil {
 				return summary, err
@@ -664,6 +927,7 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 			if result.Reason != "" {
 				finishedMetadata["triage_reason"] = result.Reason
 			}
+			finishedMetadata = appendDecisionMetadata(finishedMetadata, "failed", result.Reason)
 			finishedMetadata = appendReviewOutcomeMetadata(finishedMetadata, result)
 			_ = l.emit(ctx, contracts.Event{Type: contracts.EventTypeTaskFinished, TaskID: task.ID, TaskTitle: task.Title, WorkerID: worker, ClonePath: taskRepoRoot, QueuePos: queuePos, Message: string(contracts.TaskStatusFailed), Metadata: finishedMetadata, Timestamp: time.Now().UTC()})
 			summary.Failed++
@@ -794,19 +1058,38 @@ func (l *Loop) runRunnerWithMonitoring(ctx context.Context, request contracts.Ru
 	return result, err
 }
 
-func (l *Loop) runLandingMergeConflictRemediation(ctx context.Context, task contracts.Task, taskVCS contracts.VCS, taskBranch string, worker string, taskRepoRoot string, queuePos int, mergeFailureReason string) contracts.RunnerResult {
+func (l *Loop) runLandingMergeConflictRemediation(ctx context.Context, task contracts.Task, taskVCS contracts.VCS, taskBranch string, worker string, taskRepoRoot string, queuePos int, mergeFailureReason string, runtime taskRuntimeConfig) contracts.RunnerResult {
 	if taskVCS != nil && strings.TrimSpace(taskBranch) != "" {
 		if err := taskVCS.Checkout(ctx, taskBranch); err != nil {
 			return contracts.RunnerResult{Status: contracts.RunnerResultFailed, Reason: fmt.Sprintf("git checkout %s failed: %v", taskBranch, err)}
 		}
 	}
 
-	remediationLogPath := defaultRunnerLogPath(taskRepoRoot, task.ID, l.options.Backend)
-	remediationStartMeta := buildRunnerStartedMetadata(contracts.RunnerModeImplement, l.options.Backend, l.options.Model, taskRepoRoot, remediationLogPath, time.Now().UTC())
+	epicID := strings.TrimSpace(task.ParentID)
+	if epicID == "" {
+		epicID = strings.TrimSpace(l.options.ParentID)
+	}
+
+	runtimeBackend := strings.TrimSpace(runtime.backend)
+	if runtimeBackend == "" {
+		runtimeBackend = strings.TrimSpace(l.options.Backend)
+	}
+	runtimeModel := strings.TrimSpace(runtime.model)
+	if runtimeModel == "" {
+		runtimeModel = strings.TrimSpace(l.options.Model)
+	}
+
+	remediationLogPath := defaultRunnerLogPath(taskRepoRoot, task.ID, epicID, runtimeBackend)
+	if err := ensureRunnerLogDirectory(taskRepoRoot, remediationLogPath); err != nil {
+		return contracts.RunnerResult{Status: contracts.RunnerResultFailed, Reason: err.Error()}
+	}
+	remediationStartMeta := buildRunnerStartedMetadata(contracts.RunnerModeImplement, runtimeBackend, runtimeModel, taskRepoRoot, remediationLogPath, time.Now().UTC())
+	remediationStartMeta = appendTaskRuntimeMetadata(remediationStartMeta, runtime)
 	remediationStartMeta["landing_phase"] = "merge_conflict_remediation"
 	_ = l.emit(ctx, contracts.Event{Type: contracts.EventTypeRunnerStarted, TaskID: task.ID, TaskTitle: task.Title, WorkerID: worker, ClonePath: taskRepoRoot, QueuePos: queuePos, Message: string(contracts.RunnerModeImplement), Metadata: remediationStartMeta, Timestamp: time.Now().UTC()})
 
 	remediationMetadata := map[string]string{"log_path": remediationLogPath, "clone_path": taskRepoRoot, "landing_phase": "merge_conflict_remediation"}
+	remediationMetadata = appendTaskRuntimeMetadata(remediationMetadata, runtime)
 	if l.options.WatchdogTimeout > 0 {
 		remediationMetadata["watchdog_timeout"] = l.options.WatchdogTimeout.String()
 	}
@@ -819,8 +1102,8 @@ func (l *Loop) runLandingMergeConflictRemediation(ctx context.Context, task cont
 		ParentID: l.options.ParentID,
 		Mode:     contracts.RunnerModeImplement,
 		RepoRoot: taskRepoRoot,
-		Model:    l.options.Model,
-		Timeout:  l.options.RunnerTimeout,
+		Model:    runtimeModel,
+		Timeout:  runtime.timeout,
 		Prompt:   buildMergeConflictRemediationPrompt(task, taskBranch, mergeFailureReason),
 		Metadata: remediationMetadata,
 	}, task.ID, task.Title, worker, taskRepoRoot, queuePos)
@@ -832,7 +1115,87 @@ func (l *Loop) runLandingMergeConflictRemediation(ctx context.Context, task cont
 	return result
 }
 
-func buildPrompt(task contracts.Task, mode contracts.RunnerMode) string {
+func resolveTaskRuntimeConfig(task contracts.Task, options LoopOptions) (taskRuntimeConfig, error) {
+	backend := strings.TrimSpace(options.Backend)
+	model := strings.TrimSpace(options.Model)
+	timeout := options.RunnerTimeout
+
+	taskRuntime := taskRuntimeConfig{
+		backend: backend,
+		model:   model,
+		timeout: timeout,
+	}
+
+	overrides, hasOverrides, err := tk.ParseTicketFrontmatterFromDescription(task.Description)
+	if err != nil {
+		return taskRuntime, err
+	}
+	if !hasOverrides {
+		return taskRuntime, nil
+	}
+
+	taskRuntime.useConfig = true
+	if strings.TrimSpace(overrides.Backend) != "" {
+		taskRuntime.backend = strings.TrimSpace(overrides.Backend)
+	}
+	if strings.TrimSpace(overrides.Model) != "" {
+		taskRuntime.model = strings.TrimSpace(overrides.Model)
+	}
+	if strings.TrimSpace(overrides.Skillset) != "" {
+		taskRuntime.skillset = strings.TrimSpace(overrides.Skillset)
+	}
+	if len(overrides.Tools) > 0 {
+		taskRuntime.tools = append([]string{}, overrides.Tools...)
+	}
+	if strings.TrimSpace(overrides.Mode) != "" {
+		taskRuntime.mode = strings.TrimSpace(overrides.Mode)
+	}
+	if overrides.HasTimeout {
+		taskRuntime.timeout = overrides.Timeout
+	}
+	return taskRuntime, nil
+}
+
+func appendTaskRuntimeMetadata(metadata map[string]string, runtime taskRuntimeConfig) map[string]string {
+	if metadata == nil {
+		metadata = map[string]string{}
+	}
+	if runtime.useConfig {
+		metadata["runtime_config"] = "true"
+	}
+	if strings.TrimSpace(runtime.backend) != "" {
+		if strings.TrimSpace(metadata["backend"]) == "" {
+			metadata["backend"] = strings.TrimSpace(runtime.backend)
+		}
+		metadata["runtime_backend"] = strings.TrimSpace(runtime.backend)
+	}
+	if strings.TrimSpace(runtime.model) != "" {
+		if strings.TrimSpace(metadata["model"]) == "" {
+			metadata["model"] = strings.TrimSpace(runtime.model)
+		}
+		metadata["runtime_model"] = strings.TrimSpace(runtime.model)
+	}
+	if strings.TrimSpace(runtime.skillset) != "" {
+		metadata["skillset"] = strings.TrimSpace(runtime.skillset)
+		metadata["runtime_skillset"] = strings.TrimSpace(runtime.skillset)
+	}
+	if runtime.timeout >= 0 {
+		metadata["timeout"] = runtime.timeout.String()
+		metadata["runtime_timeout"] = runtime.timeout.String()
+	}
+	if len(runtime.tools) > 0 {
+		tools := strings.Join(runtime.tools, ",")
+		metadata["tools"] = tools
+		metadata["runtime_tools"] = tools
+	}
+	if strings.TrimSpace(runtime.mode) != "" {
+		metadata["task_mode"] = strings.TrimSpace(strings.ToLower(runtime.mode))
+		metadata["runtime_mode"] = strings.TrimSpace(strings.ToLower(runtime.mode))
+	}
+	return compactMetadata(metadata)
+}
+
+func buildPrompt(task contracts.Task, mode contracts.RunnerMode, tddMode bool) string {
 	modeLine := "Implementation"
 	if mode == contracts.RunnerModeReview {
 		modeLine = "Review"
@@ -856,14 +1219,30 @@ func buildPrompt(task contracts.Task, mode contracts.RunnerMode) string {
 			"- Do not call task-selection/status tools (the runner owns task state).",
 			"- Keep edits scoped to files required for this task.",
 		}, "\n"))
-		sections = append(sections, strings.Join([]string{
-			"Strict TDD Checklist:",
-			"[ ] Add or update a test that fails for the target behavior.",
-			"[ ] Run the targeted test and confirm it fails before implementation.",
-			"[ ] Implement the minimal code change required for the test to pass.",
-			"[ ] Re-run targeted tests, then run broader relevant tests.",
-			"[ ] Stop only when all tests pass and acceptance criteria are covered.",
-		}, "\n"))
+		if tddMode {
+			sections = append(sections, strings.Join([]string{
+				"Strict TDD Workflow (Red-Green-Refactor):",
+				"Tests-First Gate:",
+				"- Confirm tests for the target behavior exist before implementation.",
+				"- Run tests before changes and confirm they fail to define expected behavior.",
+				"- Do not implement until tests-first gate is passing.",
+				"1. RED: Add or update a test that fails for the target behavior.",
+				"2. GREEN: Implement the minimal code required for that test to pass.",
+				"3. REFACTOR: Improve the design while preserving passing tests.",
+				"- Required sequence: test-first, targeted fail check, minimal green fix, then refactor.",
+				"- Re-run targeted tests, then run broader relevant tests.",
+				"- Stop only when all tests pass and acceptance criteria are covered.",
+			}, "\n"))
+		} else {
+			sections = append(sections, strings.Join([]string{
+				"Strict TDD Checklist:",
+				"[ ] Add or update a test that fails for the target behavior.",
+				"[ ] Run the targeted test and confirm it fails before implementation.",
+				"[ ] Implement the minimal code change required for the test to pass.",
+				"[ ] Re-run targeted tests, then run broader relevant tests.",
+				"[ ] Stop only when all tests pass and acceptance criteria are covered.",
+			}, "\n"))
+		}
 		if retryAttempt, blockers := reviewRetryPromptContext(task.Metadata); retryAttempt > 0 {
 			retrySection := []string{
 				"Retry Context:",
@@ -884,6 +1263,51 @@ func buildPrompt(task contracts.Task, mode contracts.RunnerMode) string {
 	return strings.Join(sections, "\n\n")
 }
 
+func hasTestsForTDDMode(repoRoot string) (bool, bool, error) {
+	root := strings.TrimSpace(repoRoot)
+	if root == "" {
+		return false, false, nil
+	}
+
+	found := false
+	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			if info.Name() == ".git" || info.Name() == "node_modules" || info.Name() == "vendor" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if strings.Contains(filepath.Base(path), "_test.") {
+			found = true
+		}
+		return nil
+	})
+	if err != nil {
+		return false, false, err
+	}
+	if !found {
+		return false, false, nil
+	}
+	failing, err := hasFailingTestsForTDDMode(root)
+	return found, failing, err
+}
+
+func hasFailingTestsForTDDMode(repoRoot string) (bool, error) {
+	cmd := exec.Command("go", "test", "./...")
+	cmd.Dir = repoRoot
+	_, err := cmd.CombinedOutput()
+	if err == nil {
+		return false, nil
+	}
+	if _, ok := err.(*exec.ExitError); ok {
+		return true, nil
+	}
+	return false, fmt.Errorf("run tests for tdd mode: %w", err)
+}
+
 func reviewRetryPromptContext(metadata map[string]string) (int, string) {
 	if len(metadata) == 0 {
 		return 0, ""
@@ -895,20 +1319,98 @@ func reviewRetryPromptContext(metadata map[string]string) (int, string) {
 	return retryAttempt, reviewRetryBlockersFromMetadata(metadata)
 }
 
+func taskQualityScore(metadata map[string]string) (int, bool) {
+	raw := strings.TrimSpace(metadata["quality_score"])
+	if raw == "" {
+		return 0, false
+	}
+	score, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, false
+	}
+	return score, true
+}
+
+func taskExecutionThresholdScore(metadata map[string]string) (int, bool) {
+	if score, ok := taskCoverageScore(metadata); ok {
+		return score, true
+	}
+	if score, ok := taskQualityScore(metadata); ok {
+		return score, true
+	}
+	return 0, false
+}
+
+func taskCoverageScore(metadata map[string]string) (int, bool) {
+	raw := strings.TrimSpace(metadata["coverage"])
+	if raw == "" {
+		return 0, false
+	}
+	score, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, false
+	}
+	return score, true
+}
+
+func qualityGateComment(metadata map[string]string, score int, threshold int) string {
+	parts := []string{
+		fmt.Sprintf("quality score %d is below threshold %d", score, threshold),
+		"",
+	}
+
+	issues := qualityGateIssues(metadata)
+	if len(issues) == 0 {
+		return strings.Join(append(parts, "Please update the task to address these issues and rerun validation."), "\n")
+	}
+
+	formattedIssues := make([]string, 0, len(issues))
+	for _, issue := range issues {
+		formattedIssues = append(formattedIssues, "- "+issue)
+	}
+	insertAt := len(parts) - 1
+	parts = append(parts[:insertAt], append([]string{"Quality issues:"}, formattedIssues...)...)
+	parts = append(parts, "Please update the task to address these issues and rerun validation.")
+	return strings.Join(parts, "\n")
+}
+
+func qualityGateIssues(metadata map[string]string) []string {
+	raw := strings.TrimSpace(metadata["quality_issues"])
+	if raw == "" {
+		return nil
+	}
+	lines := strings.Split(raw, "\n")
+	issues := make([]string, 0, len(lines))
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		trimmed = strings.TrimPrefix(trimmed, "- ")
+		trimmed = strings.TrimPrefix(trimmed, "* ")
+		trimmed = strings.TrimSpace(trimmed)
+		if trimmed == "" {
+			continue
+		}
+		issues = append(issues, trimmed)
+	}
+	return issues
+}
+
 func reviewRetryBlockersFromMetadata(metadata map[string]string) string {
 	if len(metadata) == 0 {
 		return ""
 	}
 	for _, key := range []string{"review_fail_feedback", "review_feedback", "triage_reason"} {
 		if blocker := strings.TrimSpace(metadata[key]); blocker != "" {
+			if strings.EqualFold(blocker, "review verdict returned fail") {
+				continue
+			}
 			return blocker
 		}
 	}
 	return ""
 }
 
-func buildImplementPrompt(task contracts.Task, reviewFeedback string, reviewRetryCount int) string {
-	prompt := buildPrompt(task, contracts.RunnerModeImplement)
+func buildImplementPrompt(task contracts.Task, reviewFeedback string, reviewRetryCount int, tddMode bool) string {
+	prompt := buildPrompt(task, contracts.RunnerModeImplement, tddMode)
 	feedback := strings.TrimSpace(reviewFeedback)
 	if feedback == "" || reviewRetryCount <= 0 {
 		return prompt
@@ -926,7 +1428,7 @@ func buildImplementPrompt(task contracts.Task, reviewFeedback string, reviewRetr
 }
 
 func buildMergeConflictRemediationPrompt(task contracts.Task, taskBranch string, mergeFailureReason string) string {
-	base := buildImplementPrompt(task, "", 0)
+	base := buildImplementPrompt(task, "", 0, false)
 	sections := []string{
 		base,
 		strings.Join([]string{
@@ -972,6 +1474,69 @@ func isReviewFailResult(result contracts.RunnerResult) bool {
 	return strings.HasPrefix(lower, "review rejected") || strings.Contains(lower, "review verdict returned fail")
 }
 
+func shouldUseModelFallbackForFailure(result contracts.RunnerResult, currentModel string, fallbackModel string) bool {
+	return isRecoverableModelFailureResult(result, currentModel, fallbackModel)
+}
+
+func isRecoverableModelFailureReason(reason string) bool {
+	text := strings.ToLower(strings.TrimSpace(reason))
+	if text == "" {
+		return false
+	}
+
+	// Explicitly avoid fallback on review-style failures; those are handled by
+	// the dedicated review retry path.
+	for _, needle := range []string{
+		"review rejected",
+		"review verdict",
+		"review feedback",
+		"failing acceptance criteria",
+	} {
+		if strings.Contains(text, needle) {
+			return false
+		}
+	}
+
+	for _, needle := range []string{
+		"type failure",
+		"type error",
+		"type checker",
+		"type mismatch",
+		"type check",
+		"type validation",
+		"type annotation",
+		"tool failure",
+		"tool call",
+		"tool call failed",
+		"tool unavailable",
+		"tool error",
+		"tool execution",
+		"tool timed out",
+		"tool timeout",
+		"tool response",
+		"parse failure",
+		"invalid json",
+		"json parse",
+		"invalid json response",
+		"malformed output",
+		"provider error",
+		"rate limit",
+		"too many requests",
+		"quota exceeded",
+		"429",
+	} {
+		if strings.Contains(text, needle) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func isRecoverableModelFailureResult(result contracts.RunnerResult, currentModel string, fallbackModel string) bool {
+	return isRecoverableModelFailureReason(result.Reason) && strings.TrimSpace(currentModel) != "" && strings.TrimSpace(fallbackModel) != "" && !strings.EqualFold(strings.TrimSpace(currentModel), strings.TrimSpace(fallbackModel))
+}
+
 func autoLandingCommitMessage(task contracts.Task) string {
 	taskID := strings.TrimSpace(task.ID)
 	if taskID == "" {
@@ -995,11 +1560,32 @@ func buildReviewVerdictPrompt(task contracts.Task) string {
 	return strings.Join(sections, "\n")
 }
 
-func defaultRunnerLogPath(repoRoot string, taskID string, backend string) string {
+func defaultRunnerLogPath(repoRoot string, taskID string, epicID string, backend string) string {
 	if strings.TrimSpace(repoRoot) == "" || strings.TrimSpace(taskID) == "" {
 		return ""
 	}
-	return filepath.Join(repoRoot, "runner-logs", runnerLogBackendDir(backend), taskID+".jsonl")
+	parts := []string{repoRoot, "runner-logs"}
+	if epicID = strings.TrimSpace(epicID); epicID != "" {
+		parts = append(parts, epicID)
+	}
+	parts = append(parts, strings.TrimSpace(taskID))
+	parts = append(parts, runnerLogBackendDir(backend))
+	parts = append(parts, taskID+".jsonl")
+	return filepath.Join(parts...)
+}
+
+func ensureRunnerLogDirectory(repoRoot string, logPath string) error {
+	if strings.TrimSpace(repoRoot) == "" {
+		return nil
+	}
+	if _, err := os.Stat(repoRoot); err != nil {
+		return nil
+	}
+	logPath = strings.TrimSpace(logPath)
+	if logPath == "" {
+		return nil
+	}
+	return os.MkdirAll(filepath.Dir(logPath), 0o755)
 }
 
 func runnerLogBackendDir(backend string) string {
@@ -1092,6 +1678,19 @@ func appendReviewOutcomeMetadata(metadata map[string]string, result contracts.Ru
 	}
 	if feedback := reviewFailFeedbackFromArtifacts(result); feedback != "" {
 		metadata["review_fail_feedback"] = feedback
+	}
+	return metadata
+}
+
+func appendDecisionMetadata(metadata map[string]string, decision string, reason string) map[string]string {
+	if metadata == nil {
+		metadata = map[string]string{}
+	}
+	if decision = strings.TrimSpace(decision); decision != "" {
+		metadata["decision"] = decision
+	}
+	if reason = strings.TrimSpace(reason); reason != "" {
+		metadata["reason"] = reason
 	}
 	return metadata
 }

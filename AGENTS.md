@@ -25,3 +25,43 @@ If a run is interrupted, reset state before restarting:
 2. Move interrupted task(s) back from `in_progress` to `open` if needed.
 3. Remove stale clone(s) under `.yolo-runner/clones/<task-id>`.
 4. Clear stale `in_flight` entries in `.yolo-runner/scheduler-state.json`.
+
+## yolo-runner / yolo-agent Examples
+
+Prefer `yolo-agent` for new runs (legacy `yolo-runner` remains compatibility mode).
+
+### GitHub profile + TUI streaming
+
+```bash
+export GITHUB_TOKEN=<github-personal-access-token>
+
+./bin/yolo-agent \
+  --repo . \
+  --root <github-epic-issue-number> \
+  --profile github \
+  --agent-backend codex \
+  --model gpt-5.3-codex-spark \
+  --concurrency 3 \
+  --runner-timeout 20m \
+  --watchdog-timeout 10m \
+  --watchdog-interval 5s \
+  --events "runner-logs/github-$(date +%Y%m%d_%H%M%S).events.jsonl" \
+  --stream | ./bin/yolo-tui --events-stdin
+```
+
+### Config-driven run (uses `.yolo-runner/config.yaml` defaults)
+
+```bash
+export GITHUB_TOKEN=<github-personal-access-token>
+
+./bin/yolo-agent \
+  --repo . \
+  --root <github-epic-issue-number> \
+  --stream | ./bin/yolo-tui --events-stdin
+```
+
+### Legacy compatibility command
+
+```bash
+./bin/yolo-runner --repo . --root <root-id> --model gpt-5.3-codex-spark
+```

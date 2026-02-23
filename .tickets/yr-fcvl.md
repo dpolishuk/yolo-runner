@@ -1,7 +1,7 @@
 ---
 id: yr-fcvl
 parent: yr-abz7
-status: open
+status: closed
 deps: [yr-ho6u, yr-1o1m]
 links: []
 created: 2026-02-21T20:24:45Z

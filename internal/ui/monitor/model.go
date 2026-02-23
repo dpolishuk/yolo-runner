@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/anomalyco/yolo-runner/internal/contracts"
+	"github.com/egv/yolo-runner/v2/internal/contracts"
 )
 
 type Model struct {
@@ -62,13 +62,14 @@ type UIState struct {
 }
 
 type UIPanelLine struct {
-	ID       string
-	Depth    int
-	Label    string
-	Severity string
-	Selected bool
-	Expanded bool
-	Leaf     bool
+	ID        string
+	Depth     int
+	Label     string
+	Completed bool
+	Severity  string
+	Selected  bool
+	Expanded  bool
+	Leaf      bool
 }
 
 type UIWorkerSummary struct {
@@ -198,6 +199,9 @@ func (m *Model) PerformanceSnapshot() PerformanceSnapshot {
 
 func (m *Model) HandleKey(key string) {
 	rows := m.panelRows()
+	if key == " " {
+		key = "space"
+	}
 	if len(rows) == 0 {
 		m.panelCursor = 0
 		return
@@ -451,13 +455,14 @@ func (m *Model) uiPanelLines() []UIPanelLine {
 	for i := start; i < end; i++ {
 		row := rows[i]
 		lines = append(lines, UIPanelLine{
-			ID:       row.id,
-			Depth:    row.indent,
-			Label:    row.label,
-			Severity: row.severity,
-			Selected: i == cursor,
-			Expanded: row.expanded,
-			Leaf:     !row.hasChildren,
+			ID:        row.id,
+			Depth:     row.indent,
+			Label:     row.label,
+			Completed: row.completed,
+			Severity:  row.severity,
+			Selected:  i == cursor,
+			Expanded:  row.expanded,
+			Leaf:      !row.hasChildren,
 		})
 	}
 	if hidden := len(rows) - end; hidden > 0 {
@@ -552,6 +557,7 @@ type panelRow struct {
 	id          string
 	indent      int
 	label       string
+	completed   bool
 	severity    string
 	hasChildren bool
 	expanded    bool
@@ -587,7 +593,8 @@ func (m *Model) panelRows() []panelRow {
 					rows = append(rows, panelRow{
 						id:          "worker:" + workerID + ":task:" + task.TaskID,
 						indent:      3,
-						label:       renderCurrentTask(task.TaskID, task.Title),
+						label:       renderTaskPanelLabel(task),
+						completed:   isTaskCompleted(task),
 						severity:    deriveTaskSeverity(task),
 						hasChildren: false,
 					})
@@ -604,7 +611,8 @@ func (m *Model) panelRows() []panelRow {
 			rows = append(rows, panelRow{
 				id:          "task:" + taskID,
 				indent:      2,
-				label:       renderCurrentTask(task.TaskID, task.Title),
+				label:       renderTaskPanelLabel(task),
+				completed:   isTaskCompleted(task),
 				severity:    deriveTaskSeverity(task),
 				hasChildren: false,
 			})
@@ -840,7 +848,7 @@ func normalizeTerminalStatus(status string) string {
 }
 
 func isCompletedTerminalStatus(status string) bool {
-	return status == "completed" || status == "closed"
+	return status == "completed" || status == "closed" || status == "done"
 }
 
 func isTerminalStatus(status string) bool {
@@ -853,7 +861,7 @@ func severityFromTerminalStatus(status string) string {
 		return "error"
 	case "blocked":
 		return "warning"
-	case "completed", "closed":
+	case "completed", "closed", "done":
 		return "info"
 	default:
 		return "none"
@@ -995,6 +1003,18 @@ func renderCurrentTask(id string, title string) string {
 		return id
 	}
 	return id + " - " + title
+}
+
+func renderTaskPanelLabel(task TaskState) string {
+	label := renderCurrentTask(task.TaskID, task.Title)
+	if isTaskCompleted(task) {
+		return "✅ " + label
+	}
+	return label
+}
+
+func isTaskCompleted(task TaskState) bool {
+	return isCompletedTerminalStatus(normalizeTerminalStatus(task.TerminalStatus))
 }
 
 func renderHistoryLine(event contracts.Event) string {

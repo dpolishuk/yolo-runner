@@ -7,7 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/anomalyco/yolo-runner/internal/runner"
+	"github.com/egv/yolo-runner/v2/internal/runner"
 )
 
 // TestStatusBarIsBubbleTeaComponent verifies that StatusBar follows Bubble Tea patterns

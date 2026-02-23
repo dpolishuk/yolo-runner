@@ -6,7 +6,7 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/anomalyco/yolo-runner/internal/contracts"
+	"github.com/egv/yolo-runner/v2/internal/contracts"
 )
 
 // TaskManager implements contracts.TaskManager for beads tracker

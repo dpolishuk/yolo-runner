@@ -9,6 +9,7 @@ import (
 type yoloAgentConfigDefaults struct {
 	Backend          string
 	Model            string
+	Mode             string
 	Concurrency      *int
 	RunnerTimeout    *time.Duration
 	WatchdogTimeout  *time.Duration
@@ -25,9 +26,14 @@ func resolveYoloAgentConfigDefaults(model yoloAgentConfigModel) (yoloAgentConfig
 	if err != nil {
 		return yoloAgentConfigDefaults{}, err
 	}
+	mode, err := normalizeAndValidateAgentMode(model.Mode, "agent.mode")
+	if err != nil {
+		return yoloAgentConfigDefaults{}, err
+	}
 	defaults := yoloAgentConfigDefaults{
 		Backend: backend,
 		Model:   strings.TrimSpace(model.Model),
+		Mode:    mode,
 	}
 
 	if model.Concurrency != nil {
@@ -86,6 +92,18 @@ func normalizeAndValidateAgentBackend(raw string) (string, error) {
 		return "", fmt.Errorf("agent.backend in %s must be one of: %s", trackerConfigRelPath, strings.Join(supportedBackends(matrix), ", "))
 	}
 	return normalized, nil
+}
+
+func normalizeAndValidateAgentMode(raw string, field string) (string, error) {
+	value := strings.ToLower(strings.TrimSpace(raw))
+	if value == "" {
+		return "", nil
+	}
+	switch value {
+	case agentModeStream, agentModeUI:
+		return value, nil
+	}
+	return "", fmt.Errorf("%s in %s must be one of: %s, %s", field, trackerConfigRelPath, agentModeStream, agentModeUI)
 }
 
 func parseAgentDuration(field string, raw string) (*time.Duration, error) {

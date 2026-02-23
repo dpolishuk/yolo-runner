@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,13 +13,15 @@ import (
 	"sync"
 	"time"
 
-	"github.com/anomalyco/yolo-runner/internal/agent"
-	"github.com/anomalyco/yolo-runner/internal/claude"
-	"github.com/anomalyco/yolo-runner/internal/codex"
-	"github.com/anomalyco/yolo-runner/internal/contracts"
-	"github.com/anomalyco/yolo-runner/internal/kimi"
-	"github.com/anomalyco/yolo-runner/internal/opencode"
-	gitvcs "github.com/anomalyco/yolo-runner/internal/vcs/git"
+	"github.com/egv/yolo-runner/v2/internal/agent"
+	"github.com/egv/yolo-runner/v2/internal/claude"
+	"github.com/egv/yolo-runner/v2/internal/codex"
+	"github.com/egv/yolo-runner/v2/internal/contracts"
+	"github.com/egv/yolo-runner/v2/internal/engine"
+	"github.com/egv/yolo-runner/v2/internal/kimi"
+	"github.com/egv/yolo-runner/v2/internal/opencode"
+	gitvcs "github.com/egv/yolo-runner/v2/internal/vcs/git"
+	"github.com/egv/yolo-runner/v2/internal/version"
 )
 
 const (
@@ -26,6 +29,8 @@ const (
 	backendCodex    = "codex"
 	backendClaude   = "claude"
 	backendKimi     = "kimi"
+	agentModeStream = "stream"
+	agentModeUI     = "ui"
 )
 
 type runConfig struct {
@@ -35,14 +40,18 @@ type runConfig struct {
 	profile              string
 	trackerType          string
 	model                string
+	qualityThreshold     int
+	allowLowQuality      bool
 	maxTasks             int
 	retryBudget          int
 	concurrency          int
 	dryRun               bool
+	mode                 string
 	stream               bool
 	verboseStream        bool
 	streamOutputInterval time.Duration
 	streamOutputBuffer   int
+	tddMode              bool
 	runnerTimeout        time.Duration
 	watchdogTimeout      time.Duration
 	watchdogInterval     time.Duration
@@ -50,10 +59,32 @@ type runConfig struct {
 }
 
 var runConfigValidateCommand = defaultRunConfigValidateCommand
+var launchYoloTUI = func() (io.WriteCloser, func() error, error) {
+	cmd := exec.Command("yolo-tui", "--events-stdin")
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return nil, nil, err
+	}
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Start(); err != nil {
+		_ = stdin.Close()
+		return nil, nil, err
+	}
+	return stdin, func() error {
+		_ = stdin.Close()
+		return cmd.Wait()
+	}, nil
+}
 
 var runConfigInitCommand = defaultRunConfigInitCommand
 
 func RunMain(args []string, run func(context.Context, runConfig) error) int {
+	if version.IsVersionRequest(args) {
+		version.Print(os.Stdout, "yolo-agent")
+		return 0
+	}
+
 	if len(args) > 0 && args[0] == "config" {
 		return runConfigCommand(args[1:])
 	}
@@ -82,13 +113,17 @@ func RunMain(args []string, run func(context.Context, runConfig) error) int {
 	model := fs.String("model", "", "Model for CLI agent")
 	profile := fs.String("profile", "", "Tracker profile name from .yolo-runner/config.yaml")
 	tracker := fs.String("tracker", "", "Task tracker type: beads|tk|linear|github. Auto-detected from .beads/ or .tickets/ directory if not specified")
+	qualityThreshold := fs.Int("quality-threshold", 0, "Minimum quality score required to run a task")
+	allowLowQuality := fs.Bool("allow-low-quality", false, "Proceed with warning when quality score is below threshold")
 	max := fs.Int("max", 0, "Maximum tasks to execute")
 	concurrency := fs.Int("concurrency", 1, "Maximum number of active task workers")
 	dryRun := fs.Bool("dry-run", false, "Dry run task loop")
 	stream := fs.Bool("stream", false, "Emit NDJSON events to stdout for piping into yolo-tui")
 	verboseStream := fs.Bool("verbose-stream", false, "Emit every runner_output event without coalescing")
+	tddMode := fs.Bool("tdd", false, "Enable strict test-first Red/Green/Refactor workflow")
 	streamOutputInterval := fs.Duration("stream-output-interval", 150*time.Millisecond, "Minimum interval between emitted runner_output events when not verbose")
 	streamOutputBuffer := fs.Int("stream-output-buffer", 64, "Maximum coalesced runner_output events retained before drop")
+	mode := fs.String("mode", "", "Output mode for runner events (stream, ui)")
 	runnerTimeout := fs.Duration("runner-timeout", 0, "Per runner execution timeout")
 	watchdogTimeout := fs.Duration("watchdog-timeout", 10*time.Minute, "No-output watchdog timeout for each runner execution")
 	watchdogInterval := fs.Duration("watchdog-interval", 5*time.Second, "Polling interval used by the no-output watchdog")
@@ -151,9 +186,22 @@ func RunMain(args []string, run func(context.Context, runConfig) error) int {
 	if !flagWasSet("retry-budget") && configDefaults.RetryBudget != nil {
 		selectedRetryBudget = *configDefaults.RetryBudget
 	}
+	selectedMode := strings.TrimSpace(configDefaults.Mode)
+	if *mode != "" {
+		selectedMode = strings.TrimSpace(*mode)
+	}
+	if *stream {
+		selectedMode = agentModeStream
+	}
+	selectedMode, err = normalizeAndValidateAgentMode(selectedMode, "mode")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	selectedStream := selectedMode == agentModeStream || selectedMode == agentModeUI
 	selectedBackend, _, err := selectBackend(selectedBackendRaw, backendSelectionOptions{
 		RequireReview: true,
-		Stream:        *stream,
+		Stream:        selectedStream,
 	}, defaultBackendCapabilityMatrix())
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -169,6 +217,10 @@ func RunMain(args []string, run func(context.Context, runConfig) error) int {
 	}
 	if *streamOutputBuffer <= 0 {
 		fmt.Fprintln(os.Stderr, "--stream-output-buffer must be greater than 0")
+		return 1
+	}
+	if *qualityThreshold < 0 {
+		fmt.Fprintln(os.Stderr, "--quality-threshold must be greater than or equal to 0")
 		return 1
 	}
 	if selectedWatchdogTimeout <= 0 {
@@ -199,10 +251,14 @@ func RunMain(args []string, run func(context.Context, runConfig) error) int {
 		retryBudget:          selectedRetryBudget,
 		concurrency:          selectedConcurrency,
 		dryRun:               *dryRun,
-		stream:               *stream,
+		stream:               selectedStream,
+		mode:                 selectedMode,
 		verboseStream:        *verboseStream,
+		tddMode:              *tddMode,
 		streamOutputInterval: *streamOutputInterval,
 		streamOutputBuffer:   *streamOutputBuffer,
+		qualityThreshold:     *qualityThreshold,
+		allowLowQuality:      *allowLowQuality,
 		runnerTimeout:        selectedRunnerTimeout,
 		watchdogTimeout:      selectedWatchdogTimeout,
 		watchdogInterval:     selectedWatchdogInterval,
@@ -237,8 +293,14 @@ func main() {
 }
 
 func defaultRun(ctx context.Context, cfg runConfig) error {
+	originalWD, originalWDErr := os.Getwd()
 	if err := os.Chdir(cfg.repoRoot); err != nil {
 		return err
+	}
+	if originalWDErr == nil {
+		defer func() {
+			_ = os.Chdir(originalWD)
+		}()
 	}
 	cfg.eventsPath = resolveEventsPath(cfg)
 
@@ -248,16 +310,18 @@ func defaultRun(ctx context.Context, cfg runConfig) error {
 	}
 	cfg.profile = trackerProfile.Name
 	cfg.trackerType = trackerProfile.Tracker.Type
-	taskManager, err := buildTaskManagerForTracker(cfg.repoRoot, trackerProfile)
-	if err != nil {
-		return err
-	}
 	vcsAdapter := gitvcs.NewVCSAdapter(localGitRunner{dir: cfg.repoRoot})
 	runnerAdapter, err := buildRunnerAdapter(cfg)
 	if err != nil {
 		return err
 	}
-	return runWithComponents(ctx, cfg, taskManager, runnerAdapter, vcsAdapter)
+
+	storageBackend, err := buildStorageBackendForTracker(cfg.repoRoot, trackerProfile)
+	if err != nil {
+		return err
+	}
+	taskEngine := engine.NewTaskEngine()
+	return runWithStorageComponents(ctx, cfg, storageBackend, taskEngine, runnerAdapter, vcsAdapter)
 }
 
 func buildRunnerAdapter(cfg runConfig) (contracts.AgentRunner, error) {
@@ -297,7 +361,18 @@ func runWithComponents(ctx context.Context, cfg runConfig, taskManager contracts
 	sinks := []contracts.EventSink{}
 	closers := []func(){}
 	if cfg.stream {
-		sinks = append(sinks, contracts.NewStreamEventSinkWithOptions(os.Stdout, contracts.StreamEventSinkOptions{
+		streamWriter := io.Writer(os.Stdout)
+		if cfg.mode == agentModeUI {
+			stdin, closeFn, err := launchYoloTUI()
+			if err != nil {
+				return fmt.Errorf("start yolo-tui: %w", err)
+			}
+			streamWriter = stdin
+			closers = append(closers, func() {
+				_ = closeFn()
+			})
+		}
+		sinks = append(sinks, contracts.NewStreamEventSinkWithOptions(streamWriter, contracts.StreamEventSinkOptions{
 			VerboseOutput:  cfg.verboseStream,
 			OutputInterval: cfg.streamOutputInterval,
 			MaxPending:     cfg.streamOutputBuffer,
@@ -326,23 +401,26 @@ func runWithComponents(ctx context.Context, cfg runConfig, taskManager contracts
 	}
 	vcsFactory := cloneScopedVCSFactory(cfg, vcs)
 	loop := agent.NewLoop(taskManager, runner, eventSink, agent.LoopOptions{
-		ParentID:           cfg.rootID,
-		MaxRetries:         cfg.retryBudget,
-		MaxTasks:           cfg.maxTasks,
-		Concurrency:        cfg.concurrency,
-		SchedulerStatePath: filepath.Join(cfg.repoRoot, ".yolo-runner", "scheduler-state.json"),
-		DryRun:             cfg.dryRun,
-		RepoRoot:           cfg.repoRoot,
-		Backend:            cfg.backend,
-		Model:              cfg.model,
-		RunnerTimeout:      cfg.runnerTimeout,
-		WatchdogTimeout:    cfg.watchdogTimeout,
-		WatchdogInterval:   cfg.watchdogInterval,
-		VCS:                vcs,
-		RequireReview:      true,
-		MergeOnSuccess:     true,
-		CloneManager:       agent.NewGitCloneManager(filepath.Join(cfg.repoRoot, ".yolo-runner", "clones")),
-		VCSFactory:         vcsFactory,
+		ParentID:             cfg.rootID,
+		MaxRetries:           cfg.retryBudget,
+		MaxTasks:             cfg.maxTasks,
+		Concurrency:          cfg.concurrency,
+		QualityGateThreshold: cfg.qualityThreshold,
+		AllowLowQuality:      cfg.allowLowQuality,
+		SchedulerStatePath:   filepath.Join(cfg.repoRoot, ".yolo-runner", "scheduler-state.json"),
+		DryRun:               cfg.dryRun,
+		RepoRoot:             cfg.repoRoot,
+		Backend:              cfg.backend,
+		Model:                cfg.model,
+		RunnerTimeout:        cfg.runnerTimeout,
+		WatchdogTimeout:      cfg.watchdogTimeout,
+		WatchdogInterval:     cfg.watchdogInterval,
+		TDDMode:              cfg.tddMode,
+		VCS:                  vcs,
+		RequireReview:        true,
+		MergeOnSuccess:       true,
+		CloneManager:         agent.NewGitCloneManager(filepath.Join(cfg.repoRoot, ".yolo-runner", "clones")),
+		VCSFactory:           vcsFactory,
 	})
 	if eventSink != nil {
 		_ = eventSink.Emit(ctx, contracts.Event{
@@ -354,7 +432,104 @@ func runWithComponents(ctx context.Context, cfg runConfig, taskManager contracts
 		})
 	}
 
-	_, err := loop.Run(ctx)
+	summary, err := loop.Run(ctx)
+	if eventSink != nil {
+		_ = eventSink.Emit(ctx, contracts.Event{
+			Type:      contracts.EventTypeRunFinished,
+			TaskID:    cfg.rootID,
+			TaskTitle: "run",
+			Metadata:  buildRunFinishedMetadata(cfg, summary, err),
+			Timestamp: time.Now().UTC(),
+		})
+	}
+	return err
+}
+
+func runWithStorageComponents(ctx context.Context, cfg runConfig, storage contracts.StorageBackend, taskEngine contracts.TaskEngine, runner contracts.AgentRunner, vcs contracts.VCS) error {
+	sinks := []contracts.EventSink{}
+	closers := []func(){}
+	if cfg.stream {
+		streamWriter := io.Writer(os.Stdout)
+		if cfg.mode == agentModeUI {
+			stdin, closeFn, err := launchYoloTUI()
+			if err != nil {
+				return fmt.Errorf("start yolo-tui: %w", err)
+			}
+			streamWriter = stdin
+			closers = append(closers, func() {
+				_ = closeFn()
+			})
+		}
+		sinks = append(sinks, contracts.NewStreamEventSinkWithOptions(streamWriter, contracts.StreamEventSinkOptions{
+			VerboseOutput:  cfg.verboseStream,
+			OutputInterval: cfg.streamOutputInterval,
+			MaxPending:     cfg.streamOutputBuffer,
+		}))
+	}
+	if cfg.eventsPath != "" {
+		fileSink := contracts.NewFileEventSink(cfg.eventsPath)
+		if cfg.stream {
+			mirror := newMirrorEventSink(fileSink, cfg.streamOutputBuffer)
+			closers = append(closers, mirror.Close)
+			sinks = append(sinks, mirror)
+		} else {
+			sinks = append(sinks, fileSink)
+		}
+	}
+	defer func() {
+		for _, closeFn := range closers {
+			closeFn()
+		}
+	}()
+	eventSink := contracts.EventSink(nil)
+	if len(sinks) == 1 {
+		eventSink = sinks[0]
+	} else if len(sinks) > 1 {
+		eventSink = contracts.NewFanoutEventSink(sinks...)
+	}
+	vcsFactory := cloneScopedVCSFactory(cfg, vcs)
+	loop := agent.NewLoopWithTaskEngine(storage, taskEngine, runner, eventSink, agent.LoopOptions{
+		ParentID:             cfg.rootID,
+		MaxRetries:           cfg.retryBudget,
+		MaxTasks:             cfg.maxTasks,
+		Concurrency:          cfg.concurrency,
+		QualityGateThreshold: cfg.qualityThreshold,
+		AllowLowQuality:      cfg.allowLowQuality,
+		SchedulerStatePath:   filepath.Join(cfg.repoRoot, ".yolo-runner", "scheduler-state.json"),
+		DryRun:               cfg.dryRun,
+		RepoRoot:             cfg.repoRoot,
+		Backend:              cfg.backend,
+		Model:                cfg.model,
+		RunnerTimeout:        cfg.runnerTimeout,
+		WatchdogTimeout:      cfg.watchdogTimeout,
+		WatchdogInterval:     cfg.watchdogInterval,
+		TDDMode:              cfg.tddMode,
+		VCS:                  vcs,
+		RequireReview:        true,
+		MergeOnSuccess:       true,
+		CloneManager:         agent.NewGitCloneManager(filepath.Join(cfg.repoRoot, ".yolo-runner", "clones")),
+		VCSFactory:           vcsFactory,
+	})
+	if eventSink != nil {
+		_ = eventSink.Emit(ctx, contracts.Event{
+			Type:      contracts.EventTypeRunStarted,
+			TaskID:    cfg.rootID,
+			TaskTitle: "run",
+			Metadata:  buildRunStartedMetadata(cfg),
+			Timestamp: time.Now().UTC(),
+		})
+	}
+
+	summary, err := loop.Run(ctx)
+	if eventSink != nil {
+		_ = eventSink.Emit(ctx, contracts.Event{
+			Type:      contracts.EventTypeRunFinished,
+			TaskID:    cfg.rootID,
+			TaskTitle: "run",
+			Metadata:  buildRunFinishedMetadata(cfg, summary, err),
+			Timestamp: time.Now().UTC(),
+		})
+	}
 	return err
 }
 
@@ -377,9 +552,11 @@ func buildRunStartedMetadata(cfg runConfig) map[string]string {
 		"backend":                normalizeBackend(cfg.backend),
 		"profile":                strings.TrimSpace(cfg.profile),
 		"tracker":                strings.TrimSpace(cfg.trackerType),
+		"quality_threshold":      strconv.Itoa(cfg.qualityThreshold),
 		"retry_budget":           strconv.Itoa(cfg.retryBudget),
 		"concurrency":            strconv.Itoa(cfg.concurrency),
 		"model":                  cfg.model,
+		"allow_low_quality":      strconv.FormatBool(cfg.allowLowQuality),
 		"runner_timeout":         cfg.runnerTimeout.String(),
 		"stream":                 strconv.FormatBool(cfg.stream),
 		"verbose_stream":         strconv.FormatBool(cfg.verboseStream),
@@ -388,6 +565,24 @@ func buildRunStartedMetadata(cfg runConfig) map[string]string {
 		"watchdog_timeout":       cfg.watchdogTimeout.String(),
 		"watchdog_interval":      cfg.watchdogInterval.String(),
 	}
+}
+
+func buildRunFinishedMetadata(cfg runConfig, summary contracts.LoopSummary, runErr error) map[string]string {
+	status := "completed"
+	metadata := map[string]string{
+		"root_id":         cfg.rootID,
+		"status":          status,
+		"completed":       strconv.Itoa(summary.Completed),
+		"blocked":         strconv.Itoa(summary.Blocked),
+		"failed":          strconv.Itoa(summary.Failed),
+		"skipped":         strconv.Itoa(summary.Skipped),
+		"total_processed": strconv.Itoa(summary.TotalProcessed()),
+	}
+	if runErr != nil {
+		metadata["status"] = "failed"
+		metadata["error"] = runErr.Error()
+	}
+	return metadata
 }
 
 func normalizeBackend(raw string) string {

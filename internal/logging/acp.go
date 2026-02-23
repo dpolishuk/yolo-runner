@@ -4,22 +4,24 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"time"
 )
 
 type ACPRequestEntry struct {
-	Timestamp   string `json:"timestamp"`
+	LoggingSchemaFields
 	IssueID     string `json:"issue_id"`
 	RequestType string `json:"request_type"`
 	Decision    string `json:"decision"`
 	Message     string `json:"message,omitempty"`
 	RequestID   string `json:"request_id,omitempty"`
+	Reason      string `json:"reason,omitempty"`
+	Context     string `json:"context,omitempty"`
 }
 
 func AppendACPRequest(logPath string, entry ACPRequestEntry) error {
-	if entry.Timestamp == "" {
-		entry.Timestamp = time.Now().UTC().Format("2006-01-02T15:04:05Z")
+	if entry.Component == "" {
+		entry.Component = "opencode"
 	}
+	entry.LoggingSchemaFields = populateRequiredLogFields(entry.LoggingSchemaFields, entry.IssueID)
 	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
 		return err
 	}

@@ -72,6 +72,11 @@ func TestAppendRunnerSummaryAppendsEntries(t *testing.T) {
 	if len(entries) != 2 {
 		t.Fatalf("expected 2 log entries, got %d", len(entries))
 	}
+	for _, line := range strings.Split(strings.TrimSpace(mustReadFile(t, logPath)), "\n") {
+		if err := ValidateStructuredLogLine([]byte(line)); err != nil {
+			t.Fatalf("summary entry should conform to schema: %v", err)
+		}
+	}
 
 	first := entries[0]
 	if first["issue_id"] != "issue-1" {
@@ -97,4 +102,13 @@ func TestAppendRunnerSummaryAppendsEntries(t *testing.T) {
 	if second["commit_sha"] != commitSHA {
 		t.Fatalf("expected commit sha %q, got %q", commitSHA, second["commit_sha"])
 	}
+}
+
+func mustReadFile(t *testing.T, path string) string {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+	return string(raw)
 }

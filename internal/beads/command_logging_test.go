@@ -1,12 +1,14 @@
 package beads
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/anomalyco/yolo-runner/internal/exec"
+	"github.com/egv/yolo-runner/v2/internal/logging"
+	"github.com/egv/yolo-runner/v2/internal/exec"
 )
 
 func TestBeadsCommandsRouteOutputToLogFiles(t *testing.T) {
@@ -113,17 +115,23 @@ func TestBeadsCommandsRouteOutputToLogFiles(t *testing.T) {
 				t.Fatalf("failed to read log file: %v", err)
 			}
 
-			// Verify that log file contains expected sections
+			// Verify that log file is valid JSON and includes required fields
 			logContentStr := string(logContent)
-			expectedSections := []string{"Command:", "Start Time:", "Elapsed:", "=== STDOUT ===", "=== STDERR ==="}
-			for _, section := range expectedSections {
-				if !strings.Contains(logContentStr, section) {
-					t.Fatalf("log file should contain section '%s', got: %s", section, logContentStr)
-				}
+			lines := strings.Split(strings.TrimSpace(logContentStr), "\n")
+			if len(lines) == 0 {
+				t.Fatal("expected non-empty log file")
+			}
+			line := lines[len(lines)-1]
+			if err := logging.ValidateStructuredLogLine([]byte(line)); err != nil {
+				t.Fatalf("invalid structured log line: %v", err)
 			}
 
-			// Verify that log file contains a bd command
-			if !strings.Contains(logContentStr, "bd ") {
+			entry := map[string]interface{}{}
+			if err := json.Unmarshal([]byte(line), &entry); err != nil {
+				t.Fatalf("invalid json log entry: %v", err)
+			}
+			command, _ := entry["command"].(string)
+			if !strings.Contains(command, "bd ") {
 				t.Fatalf("log file should contain bd command, got: %s", logContentStr)
 			}
 		})

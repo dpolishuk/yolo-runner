@@ -1,7 +1,7 @@
 ---
 id: yr-z92y
 parent: yr-abz7
-status: open
+status: closed
 deps: [yr-x597]
 links: []
 created: 2026-02-21T20:25:16Z
