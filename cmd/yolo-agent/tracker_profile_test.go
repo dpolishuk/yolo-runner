@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/anomalyco/yolo-runner/internal/beads"
 	"github.com/anomalyco/yolo-runner/internal/contracts"
 	githubtracker "github.com/anomalyco/yolo-runner/internal/github"
 	"github.com/anomalyco/yolo-runner/internal/linear"
@@ -338,6 +339,57 @@ func TestBuildTaskManagerForTrackerSupportsTK(t *testing.T) {
 	}
 	if manager == nil {
 		t.Fatalf("expected non-nil task manager")
+	}
+}
+
+func TestBuildTaskManagerForTrackerSupportsBeads(t *testing.T) {
+	originalFactory := newBeadsTaskManager
+	t.Cleanup(func() {
+		newBeadsTaskManager = originalFactory
+	})
+
+	newBeadsTaskManager = func(beads.Runner) (contracts.TaskManager, error) {
+		return staticTaskManager{}, nil
+	}
+
+	manager, err := buildTaskManagerForTracker(t.TempDir(), resolvedTrackerProfile{
+		Name: "beads",
+		Tracker: trackerModel{
+			Type: trackerTypeBeads,
+		},
+	})
+	if err != nil {
+		t.Fatalf("expected beads task manager to build, got %v", err)
+	}
+	if manager == nil {
+		t.Fatalf("expected non-nil beads task manager")
+	}
+}
+
+func TestBuildTaskManagerForTrackerWrapsBeadsProbeErrors(t *testing.T) {
+	originalFactory := newBeadsTaskManager
+	t.Cleanup(func() {
+		newBeadsTaskManager = originalFactory
+	})
+
+	newBeadsTaskManager = func(beads.Runner) (contracts.TaskManager, error) {
+		return nil, errors.New("unable to detect backend")
+	}
+
+	_, err := buildTaskManagerForTracker(t.TempDir(), resolvedTrackerProfile{
+		Name: "beads",
+		Tracker: trackerModel{
+			Type: trackerTypeBeads,
+		},
+	})
+	if err == nil {
+		t.Fatalf("expected beads probe failure")
+	}
+	if !strings.Contains(err.Error(), "beads capability probe failed") {
+		t.Fatalf("expected beads probe context, got %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), "unable to detect backend") {
+		t.Fatalf("expected wrapped probe error, got %q", err.Error())
 	}
 }
 

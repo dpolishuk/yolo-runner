@@ -116,6 +116,10 @@ var newGitHubTaskManager = func(cfg githubtracker.Config) (contracts.TaskManager
 	return githubtracker.NewTaskManager(cfg)
 }
 
+var newBeadsTaskManager = func(runner beads.Runner) (contracts.TaskManager, error) {
+	return beads.NewTaskManagerWithCapabilityProbe(runner)
+}
+
 func resolveProfileSelectionPolicy(input profileSelectionInput) string {
 	for _, value := range []string{
 		input.FlagValue,
@@ -190,7 +194,11 @@ func buildTaskManagerForTracker(repoRoot string, profile resolvedTrackerProfile)
 		}
 		return manager, nil
 	case trackerTypeBeads:
-		return beads.NewTaskManager(localRunner{dir: repoRoot}), nil
+		manager, err := newBeadsTaskManager(localRunner{dir: repoRoot})
+		if err != nil {
+			return nil, fmt.Errorf("beads capability probe failed for profile %q: %w", profile.Name, err)
+		}
+		return manager, nil
 	default:
 		return nil, fmt.Errorf("tracker type %q is not supported yet", profile.Tracker.Type)
 	}
@@ -218,13 +226,13 @@ func detectTrackerType(repoRoot string) string {
 	if repoRoot == "" {
 		repoRoot = "."
 	}
-	
+
 	beadsDir := filepath.Join(repoRoot, ".beads")
 	ticketsDir := filepath.Join(repoRoot, ".tickets")
-	
+
 	_, beadsExists := os.Stat(beadsDir)
 	_, ticketsExists := os.Stat(ticketsDir)
-	
+
 	if beadsExists == nil && ticketsExists == nil {
 		// Both exist, prefer beads (newer format)
 		return trackerTypeBeads
@@ -235,7 +243,7 @@ func detectTrackerType(repoRoot string) string {
 	if ticketsExists == nil {
 		return trackerTypeTK
 	}
-	
+
 	// Neither exists, default to tk for backward compatibility
 	return trackerTypeTK
 }

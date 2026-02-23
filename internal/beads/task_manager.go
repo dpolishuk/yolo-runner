@@ -20,16 +20,31 @@ type TaskManager struct {
 
 // NewTaskManager creates a new beads task manager
 func NewTaskManager(runner Runner) *TaskManager {
-	adapter, err := NewWithCapabilityProbe(runner)
-	if err != nil {
-		adapter = New(runner)
+	manager, err := NewTaskManagerWithCapabilityProbe(runner)
+	if err == nil {
+		return manager
 	}
+	adapter := New(runner)
 	return &TaskManager{
 		adapter:       adapter,
 		runner:        runner,
 		initErr:       err,
 		terminalState: map[string]contracts.TaskStatus{},
 	}
+}
+
+// NewTaskManagerWithCapabilityProbe creates a beads task manager and fails when
+// backend capabilities cannot be determined.
+func NewTaskManagerWithCapabilityProbe(runner Runner) (*TaskManager, error) {
+	adapter, err := NewWithCapabilityProbe(runner)
+	if err != nil {
+		return nil, err
+	}
+	return &TaskManager{
+		adapter:       adapter,
+		runner:        runner,
+		terminalState: map[string]contracts.TaskStatus{},
+	}, nil
 }
 
 func (m *TaskManager) startupError() error {

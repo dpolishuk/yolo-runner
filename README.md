@@ -24,8 +24,7 @@ These UI dependencies are mandatory for GUI workflow evolution and should be tre
 
 ## Location
 
-- Canonical script: `tools/yolo-runner/beads_yolo_runner.py`
-- Compatibility copy (in-use by existing invocations): `scripts/beads_yolo_runner.py`
+- Canonical script: `beads_yolo_runner.py`
 
 ## What It Does
 
@@ -116,11 +115,11 @@ The monitor is decoder-safe: malformed NDJSON lines are surfaced as `decode_erro
 
 ### `yolo-agent` preflight (commit + push first)
 
-Always commit and push ticket/config changes before starting `yolo-agent`.
+Always commit and push tracker/config changes before starting `yolo-agent`.
 
-- Required before run: commit `.tickets/*.md` and related config/code changes, then run `git push`.
+- Required before run: commit `.tickets/*.md` and/or `.beads/issues.jsonl` plus related config/code changes, then run `git push`.
 - Why: each task runs in a fresh clone that syncs against `origin/main`; local-only commits are not visible in task clones.
-- Symptom when skipped: runner output shows errors like `ticket '<id>' not found` in clone context.
+- Symptom when skipped: runner output shows tracker lookup failures in clone context (for example, `ticket '<id>' not found`).
 
 Quick preflight:
 
@@ -193,6 +192,19 @@ Validation rules for `agent.*` values:
 - `agent.retry_budget` must be greater than or equal to `0`.
 
 Invalid config values fail startup with field-specific errors that reference `.yolo-runner/config.yaml`.
+
+### Beads backend capability detection
+
+For `tracker.type: beads`, startup probes the tracker backend and routes commands via a capability matrix:
+
+- Backend detection order: `bd` first, then `br`.
+- Sync mode mapping:
+  - `active`: run `sync` as a normal command.
+  - `flush_only`: run `sync --flush-only`.
+  - `noop`: skip sync command when backend semantics indicate no-op behavior.
+- Probe failures are fail-closed for beads task manager startup and include actionable error context.
+
+This avoids hardcoded sync assumptions when upstream tracker behavior changes by tool/version.
 
 ### `yolo-agent config` init/validate workflow
 

@@ -31,10 +31,20 @@ Validate current config in JSON mode:
 `yolo-agent config validate` resolves only profile/root selection at runtime:
 
 - Profile: `--profile > YOLO_PROFILE > default_profile > default`
-- Root scope for tracker validation: `--root > profiles.<selected>.tracker.tk.scope.root (when tracker.type=tk) > empty`
+- Root scope for tracker validation: `--root > profiles.<selected>.tracker.tk.scope.root (when tracker.type=tk) > profiles.<selected>.tracker.beads.scope.root (when tracker.type=beads) > empty`
 - Backend and other `agent.*` values are validated from `.yolo-runner/config.yaml` as written.
 - `--agent-backend` and `--backend` are not supported by `config validate`; passing either flag fails with `flag provided but not defined`.
 - `YOLO_AGENT_BACKEND` is not read by `config validate`.
+
+## Beads Capability Notes
+
+When `tracker.type=beads`, runtime startup probes available backends in order (`bd`, then `br`) and derives sync behavior via capabilities:
+
+- `active` -> execute `sync`
+- `flush_only` -> execute `sync --flush-only`
+- `noop` -> skip sync call
+
+If capability probe cannot identify a supported backend, startup fails with actionable remediation instead of silently falling back.
 
 ## Common Failures
 

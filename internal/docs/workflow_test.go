@@ -187,7 +187,7 @@ func TestConfigWorkflowRunbookPrecedenceMatchesConfigValidateBehavior(t *testing
 	runbook := string(contents)
 	required := []string{
 		"Profile: `--profile > YOLO_PROFILE > default_profile > default`",
-		"Root scope for tracker validation: `--root > profiles.<selected>.tracker.tk.scope.root (when tracker.type=tk) > empty`",
+		"Root scope for tracker validation: `--root > profiles.<selected>.tracker.tk.scope.root (when tracker.type=tk) > profiles.<selected>.tracker.beads.scope.root (when tracker.type=beads) > empty`",
 		"Backend and other `agent.*` values are validated from `.yolo-runner/config.yaml` as written.",
 		"`--agent-backend` and `--backend` are not supported by `config validate`; passing either flag fails with `flag provided but not defined`.",
 		"`YOLO_AGENT_BACKEND` is not read by `config validate`.",
