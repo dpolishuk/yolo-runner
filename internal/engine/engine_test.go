@@ -208,6 +208,85 @@ func TestTaskEngineBuildGraphRejectsCircularDependenciesWithPath(t *testing.T) {
 	}
 }
 
+func TestTaskEngineBuildGraphRejectsSelfCycleDependencies(t *testing.T) {
+	engine := NewTaskEngine()
+	tree := &contracts.TaskTree{
+		Root: contracts.Task{ID: "a", Status: contracts.TaskStatusOpen},
+		Tasks: map[string]contracts.Task{
+			"a": {ID: "a", Status: contracts.TaskStatusOpen},
+		},
+		Relations: []contracts.TaskRelation{
+			{FromID: "a", ToID: "a", Type: contracts.RelationDependsOn},
+		},
+	}
+
+	_, err := engine.BuildGraph(tree)
+	if err == nil {
+		t.Fatalf("expected circular dependency error, got nil")
+	}
+	if !strings.Contains(err.Error(), "circular dependency") {
+		t.Fatalf("expected circular dependency message, got %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), "a -> a") {
+		t.Fatalf("expected self-cycle path in error, got %q", err.Error())
+	}
+}
+
+func TestTaskEngineBuildGraphRejectsTwoNodeCircularDependenciesWithPath(t *testing.T) {
+	engine := NewTaskEngine()
+	tree := &contracts.TaskTree{
+		Root: contracts.Task{ID: "a", Status: contracts.TaskStatusOpen},
+		Tasks: map[string]contracts.Task{
+			"a": {ID: "a", Status: contracts.TaskStatusOpen},
+			"b": {ID: "b", Status: contracts.TaskStatusOpen},
+		},
+		Relations: []contracts.TaskRelation{
+			{FromID: "a", ToID: "b", Type: contracts.RelationDependsOn},
+			{FromID: "b", ToID: "a", Type: contracts.RelationDependsOn},
+		},
+	}
+
+	_, err := engine.BuildGraph(tree)
+	if err == nil {
+		t.Fatalf("expected circular dependency error, got nil")
+	}
+	if !strings.Contains(err.Error(), "circular dependency") {
+		t.Fatalf("expected circular dependency message, got %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), "a -> b -> a") {
+		t.Fatalf("expected cycle path in error, got %q", err.Error())
+	}
+}
+
+func TestTaskEngineBuildGraphAcyclicDependenciesDoNotTriggerCycleDetection(t *testing.T) {
+	engine := NewTaskEngine()
+	tree := &contracts.TaskTree{
+		Root: contracts.Task{ID: "root", Status: contracts.TaskStatusOpen},
+		Tasks: map[string]contracts.Task{
+			"root": {ID: "root", Status: contracts.TaskStatusOpen},
+			"a":    {ID: "a", Status: contracts.TaskStatusOpen},
+			"b":    {ID: "b", Status: contracts.TaskStatusOpen},
+			"c":    {ID: "c", Status: contracts.TaskStatusOpen},
+		},
+		Relations: []contracts.TaskRelation{
+			{FromID: "root", ToID: "a", Type: contracts.RelationParent},
+			{FromID: "a", ToID: "b", Type: contracts.RelationDependsOn},
+			{FromID: "c", ToID: "a", Type: contracts.RelationDependsOn},
+		},
+	}
+
+	graph, err := engine.BuildGraph(tree)
+	if err != nil {
+		t.Fatalf("BuildGraph() unexpected error for acyclic graph: %v", err)
+	}
+	if graph == nil {
+		t.Fatalf("BuildGraph() returned nil graph")
+	}
+	if len(graph.Edges) != 3 {
+		t.Fatalf("len(graph.Edges) = %d, want %d", len(graph.Edges), 3)
+	}
+}
+
 func TestTaskEngineBuildGraphPerformance1000TasksUnder100ms(t *testing.T) {
 	engine := NewTaskEngine()
 	const totalTasks = 1000
