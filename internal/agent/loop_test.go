@@ -385,6 +385,203 @@ Implement task behavior.`
 	}
 }
 
+func TestLoopRunsComplexDependencyTreeWithPerTaskOverridesAndParallelism(t *testing.T) {
+	taskDescription := func(taskModel string, tools ...string) string {
+		lines := []string{
+			"---",
+			"model: " + taskModel,
+		}
+		if len(tools) > 0 {
+			lines = append(lines, "tools:")
+			for _, tool := range tools {
+				lines = append(lines, "  - "+tool)
+			}
+		}
+		lines = append(lines, "---", "Task body")
+		return strings.Join(lines, "\n")
+	}
+
+	mgr := newFakeTaskManager(
+		contracts.Task{
+			ID:          "task-a",
+			Title:       "Task A",
+			Description: taskDescription("task-a-model", "shell"),
+			Status:      contracts.TaskStatusOpen,
+		},
+		contracts.Task{
+			ID:          "task-b",
+			Title:       "Task B",
+			Description: taskDescription("task-b-model", "git"),
+			Status:      contracts.TaskStatusOpen,
+		},
+		contracts.Task{
+			ID:     "task-c",
+			Title:  "Task C",
+			Status: contracts.TaskStatusOpen,
+		},
+		contracts.Task{
+			ID:          "task-d",
+			Title:       "Task D",
+			Description: taskDescription("task-d-model", "docs"),
+			Status:      contracts.TaskStatusOpen,
+		},
+		contracts.Task{
+			ID:          "task-e",
+			Title:       "Task E",
+			Description: taskDescription("task-e-model", "sql", "shell"),
+			Status:      contracts.TaskStatusOpen,
+		},
+		contracts.Task{
+			ID:          "task-f",
+			Title:       "Task F",
+			Description: taskDescription("task-f-model", "docker"),
+			Status:      contracts.TaskStatusOpen,
+		},
+	)
+	mgr.dependsOn = map[string][]string{
+		"task-c": {"task-a"},
+		"task-d": {"task-a", "task-b"},
+		"task-e": {"task-c"},
+		"task-f": {"task-e", "task-d"},
+	}
+
+	started := make(chan string, 6)
+	runner := &dependencyTrackingRunner{
+		started: started,
+		release: make(chan struct{}),
+	}
+	loop := NewLoop(mgr, runner, nil, LoopOptions{
+		ParentID:    "root",
+		Concurrency: 2,
+		Model:       "global-model",
+	})
+
+	type loopResult struct {
+		summary contracts.LoopSummary
+		err     error
+	}
+	resultCh := make(chan loopResult, 1)
+	go func() {
+		summary, err := loop.Run(context.Background())
+		resultCh <- loopResult{summary: summary, err: err}
+	}()
+
+	startOrder := make([]string, 0, 6)
+	startOrder = append(startOrder, <-started, <-started)
+	if startOrder[0] == startOrder[1] {
+		t.Fatalf("expected two different tasks to start first, got %q", startOrder)
+	}
+	if (startOrder[0] != "task-a" && startOrder[0] != "task-b") ||
+		(startOrder[1] != "task-a" && startOrder[1] != "task-b") {
+		t.Fatalf("expected first wave to be task-a and task-b, got %q", startOrder)
+	}
+	close(runner.release)
+
+	for len(startOrder) < 6 {
+		startOrder = append(startOrder, <-started)
+	}
+	result := <-resultCh
+	if result.err != nil {
+		t.Fatalf("loop failed: %v", result.err)
+	}
+	if result.summary.Completed != 6 {
+		t.Fatalf("expected six completed tasks, got %#v", result.summary)
+	}
+	if runner.maxActive < 2 {
+		t.Fatalf("expected parallel execution with maxActive>=2, got %d", runner.maxActive)
+	}
+
+	if startOrder[0] != "task-a" && startOrder[0] != "task-b" {
+		t.Fatalf("expected first wave to begin with task-a/task-b, got %q", startOrder[0])
+	}
+	if startOrder[1] != "task-a" && startOrder[1] != "task-b" {
+		t.Fatalf("expected first wave to begin with task-a/task-b, got %q", startOrder[1])
+	}
+	if startOrder[0] == startOrder[1] {
+		t.Fatalf("expected two different tasks in first wave, got %q", startOrder[:2])
+	}
+	startPos := map[string]int{}
+	for pos, taskID := range startOrder {
+		startPos[taskID] = pos
+	}
+	_, hasTaskA := startPos["task-a"]
+	_, hasTaskB := startPos["task-b"]
+	if !hasTaskA || !hasTaskB {
+		t.Fatalf("expected first wave task-a and task-b to start, got %q", startOrder)
+	}
+	for _, dependency := range []struct {
+		before string
+		after  string
+	}{
+		{before: "task-a", after: "task-c"},
+		{before: "task-a", after: "task-d"},
+		{before: "task-b", after: "task-d"},
+		{before: "task-c", after: "task-e"},
+		{before: "task-d", after: "task-f"},
+		{before: "task-e", after: "task-f"},
+	} {
+		beforePos, okBefore := startPos[dependency.before]
+		afterPos, okAfter := startPos[dependency.after]
+		if !okBefore || !okAfter {
+			t.Fatalf("expected both %s and %s in start order, got %q", dependency.before, dependency.after, startOrder)
+		}
+		if beforePos >= afterPos {
+			t.Fatalf("expected task %s to start before %s, got positions %d and %d", dependency.before, dependency.after, beforePos, afterPos)
+		}
+	}
+
+	requestByTask := map[string]contracts.RunnerRequest{}
+	for _, request := range runner.requests {
+		requestByTask[request.TaskID] = request
+	}
+
+	expectedModels := map[string]string{
+		"task-a": "task-a-model",
+		"task-b": "task-b-model",
+		"task-c": "global-model",
+		"task-d": "task-d-model",
+		"task-e": "task-e-model",
+		"task-f": "task-f-model",
+	}
+	expectedRuntimeTools := map[string]string{
+		"task-a": "shell",
+		"task-b": "git",
+		"task-c": "",
+		"task-d": "docs",
+		"task-e": "sql,shell",
+		"task-f": "docker",
+	}
+
+	for taskID, expectedModel := range expectedModels {
+		request, ok := requestByTask[taskID]
+		if !ok {
+			t.Fatalf("expected request for task %s", taskID)
+		}
+		if request.Model != expectedModel {
+			t.Fatalf("expected task %s to use model %q, got %q", taskID, expectedModel, request.Model)
+		}
+
+		if expectedRuntimeTools[taskID] == "" {
+			if runtimeTools, ok := request.Metadata["runtime_tools"]; ok && runtimeTools != "" {
+				t.Fatalf("expected task %s to use no per-task tools override, got %q", taskID, runtimeTools)
+			}
+			if runtimeConfig, ok := request.Metadata["runtime_config"]; ok && runtimeConfig == "true" {
+				t.Fatalf("expected task %s runtime_config=false", taskID)
+			}
+			continue
+		}
+		if request.Metadata["runtime_tools"] != expectedRuntimeTools[taskID] {
+			t.Fatalf("expected task %s runtime tools %q, got %q", taskID, expectedRuntimeTools[taskID], request.Metadata["runtime_tools"])
+		}
+		if request.Metadata["runtime_model"] != expectedModel {
+			t.Fatalf("expected task %s runtime model %q, got %q", taskID, expectedModel, request.Metadata["runtime_model"])
+		}
+		if request.Metadata["runtime_config"] != "true" {
+			t.Fatalf("expected task %s runtime_config=true, got %q", taskID, request.Metadata["runtime_config"])
+		}
+	}
+}
+
 func TestLoopRetriesFailedImplementationWithFallbackModel(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -1312,6 +1509,37 @@ func (f *fakeRunner) Run(_ context.Context, request contracts.RunnerRequest) (co
 	result := f.results[f.idx]
 	f.idx++
 	return result, nil
+}
+
+type dependencyTrackingRunner struct {
+	release   chan struct{}
+	started   chan string
+	requests  []contracts.RunnerRequest
+	active    int
+	maxActive int
+	mu        sync.Mutex
+}
+
+func (r *dependencyTrackingRunner) Run(_ context.Context, request contracts.RunnerRequest) (contracts.RunnerResult, error) {
+	r.mu.Lock()
+	r.requests = append(r.requests, request)
+	r.active++
+	if r.active > r.maxActive {
+		r.maxActive = r.active
+	}
+	r.mu.Unlock()
+
+	if r.started != nil {
+		r.started <- request.TaskID
+	}
+	if r.release != nil {
+		<-r.release
+	}
+
+	r.mu.Lock()
+	r.active--
+	r.mu.Unlock()
+	return contracts.RunnerResult{Status: contracts.RunnerResultCompleted}, nil
 }
 
 type logWritingRunner struct {
