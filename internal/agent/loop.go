@@ -1067,10 +1067,16 @@ func taskQualityScore(metadata map[string]string) (int, bool) {
 }
 
 func taskExecutionThresholdScore(metadata map[string]string) (int, bool) {
+	if score, ok := taskCoverageScore(metadata); ok {
+		return score, true
+	}
 	if score, ok := taskQualityScore(metadata); ok {
 		return score, true
 	}
+	return 0, false
+}
 
+func taskCoverageScore(metadata map[string]string) (int, bool) {
 	raw := strings.TrimSpace(metadata["coverage"])
 	if raw == "" {
 		return 0, false
