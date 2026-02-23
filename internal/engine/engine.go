@@ -92,7 +92,7 @@ func (e *TaskEngine) BuildGraph(tree *contracts.TaskTree) (*contracts.TaskGraph,
 			if relation.Type == contracts.RelationDependsOn || relation.Type == contracts.RelationBlocks {
 				return nil, fmt.Errorf("circular dependency detected: %s -> %s", fromID, toID)
 			}
-			return nil, fmt.Errorf("self-referential relation is not allowed: %s -> %s (%s)", fromID, toID, relation.Type)
+			return nil, fmt.Errorf("circular dependency detected: %s -> %s (%s)", fromID, toID, relation.Type)
 		}
 
 		fromNode := nodes[fromID]
@@ -440,7 +440,7 @@ func assignDepths(nodes map[string]*contracts.TaskNode, rootID string) error {
 			start := stackPos[id]
 			cycle := append([]string(nil), stack[start:]...)
 			cycle = append(cycle, id)
-			return 0, fmt.Errorf("parent cycle detected: %s", strings.Join(cycle, " -> "))
+			return 0, fmt.Errorf("circular dependency detected: %s", strings.Join(cycle, " -> "))
 		}
 
 		state[id] = visiting
