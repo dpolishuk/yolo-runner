@@ -275,6 +275,14 @@ func TestLoopRetriesFailedImplementationWithFallbackModel(t *testing.T) {
 			name:   "tool failure",
 			reason: "tool failure: shell command timed out",
 		},
+		{
+			name:   "parse failure",
+			reason: "invalid json response while parsing model output",
+		},
+		{
+			name:   "provider error",
+			reason: "provider error: 429 too many requests",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -304,6 +312,58 @@ func TestLoopRetriesFailedImplementationWithFallbackModel(t *testing.T) {
 			}
 			if run.requests[1].Model != "fallback-model" {
 				t.Fatalf("expected fallback request to use fallback model, got %q", run.requests[1].Model)
+			}
+		})
+	}
+}
+
+func TestLoopNoFallbackOnReviewFailureResult(t *testing.T) {
+	cases := []struct {
+		name   string
+		reason string
+	}{
+		{
+			name:   "review rejected",
+			reason: "review rejected: missing regression test for retry/backoff flow",
+		},
+		{
+			name:   "review verdict",
+			reason: "review verdict returned fail: security concern",
+		},
+		{
+			name:   "review feedback",
+			reason: "review feedback suggests API change",
+		},
+		{
+			name:   "acceptance criteria",
+			reason: "failing acceptance criteria: behavior does not match",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mgr := newFakeTaskManager(contracts.Task{ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen})
+			run := &fakeRunner{results: []contracts.RunnerResult{
+				{Status: contracts.RunnerResultFailed, Reason: tc.reason},
+			}}
+			loop := NewLoop(mgr, run, nil, LoopOptions{
+				ParentID:      "root",
+				Model:         "primary-model",
+				FallbackModel: "fallback-model",
+			})
+
+			summary, err := loop.Run(context.Background())
+			if err != nil {
+				t.Fatalf("loop failed: %v", err)
+			}
+			if summary.Failed != 1 {
+				t.Fatalf("expected failed summary, got %#v", summary)
+			}
+			if len(run.requests) != 1 {
+				t.Fatalf("expected single implement attempt, got %d requests", len(run.requests))
+			}
+			if run.requests[0].Model != "primary-model" {
+				t.Fatalf("expected primary model request, got %q", run.requests[0].Model)
 			}
 		})
 	}
