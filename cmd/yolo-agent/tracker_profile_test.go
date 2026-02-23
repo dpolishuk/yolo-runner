@@ -9,10 +9,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/anomalyco/yolo-runner/internal/contracts"
-	enginepkg "github.com/anomalyco/yolo-runner/internal/engine"
-	githubtracker "github.com/anomalyco/yolo-runner/internal/github"
-	"github.com/anomalyco/yolo-runner/internal/linear"
+	"github.com/egv/yolo-runner/v2/internal/contracts"
+	enginepkg "github.com/egv/yolo-runner/v2/internal/engine"
+	githubtracker "github.com/egv/yolo-runner/v2/internal/github"
+	"github.com/egv/yolo-runner/v2/internal/linear"
 )
 
 func TestResolveTrackerProfileDefaultsToTKWhenConfigMissing(t *testing.T) {

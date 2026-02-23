@@ -16,14 +16,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/anomalyco/yolo-runner/internal/claude"
-	"github.com/anomalyco/yolo-runner/internal/codex"
-	"github.com/anomalyco/yolo-runner/internal/contracts"
-	githubtracker "github.com/anomalyco/yolo-runner/internal/github"
-	"github.com/anomalyco/yolo-runner/internal/kimi"
-	"github.com/anomalyco/yolo-runner/internal/linear"
-	"github.com/anomalyco/yolo-runner/internal/tk"
-	"github.com/anomalyco/yolo-runner/internal/ui/monitor"
+	"github.com/egv/yolo-runner/v2/internal/claude"
+	"github.com/egv/yolo-runner/v2/internal/codex"
+	"github.com/egv/yolo-runner/v2/internal/contracts"
+	githubtracker "github.com/egv/yolo-runner/v2/internal/github"
+	"github.com/egv/yolo-runner/v2/internal/kimi"
+	"github.com/egv/yolo-runner/v2/internal/linear"
+	"github.com/egv/yolo-runner/v2/internal/tk"
+	"github.com/egv/yolo-runner/v2/internal/ui/monitor"
 )
 
 func TestE2E_YoloAgentRunCompletesSeededTKTask(t *testing.T) {

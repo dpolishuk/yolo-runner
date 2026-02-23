@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/anomalyco/yolo-runner/internal/runner"
+	"github.com/egv/yolo-runner/v2/internal/runner"
 )
 
 func traceJSONParse(operation string, data []byte, target interface{}) error {

@@ -6,7 +6,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/anomalyco/yolo-runner/internal/linear"
+	"github.com/egv/yolo-runner/v2/internal/linear"
 )
 
 var (
