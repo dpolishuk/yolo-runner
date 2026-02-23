@@ -5,7 +5,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/anomalyco/yolo-runner/internal/contracts"
+	"github.com/egv/yolo-runner/v2/internal/contracts"
 )
 
 func TestRunMainNextPrintsTaskIDs(t *testing.T) {

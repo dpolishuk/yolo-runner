@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/anomalyco/yolo-runner/internal/contracts"
-	enginepkg "github.com/anomalyco/yolo-runner/internal/engine"
+	"github.com/egv/yolo-runner/v2/internal/contracts"
+	enginepkg "github.com/egv/yolo-runner/v2/internal/engine"
 )
 
 func TestNewTaskManagerRejectsMissingToken(t *testing.T) {

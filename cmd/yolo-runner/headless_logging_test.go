@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/anomalyco/yolo-runner/internal/exec"
+	"github.com/egv/yolo-runner/v2/internal/exec"
 )
 
 // TestHeadlessModeShowsHighLevelLabels verifies that in headless mode,
