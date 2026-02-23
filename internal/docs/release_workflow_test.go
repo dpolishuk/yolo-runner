@@ -180,6 +180,27 @@ func TestReleaseWorkflowUsesChecksumFilenamePerArtifact(t *testing.T) {
 	}
 }
 
+func TestReleaseWorkflowSerializesMatrixUploadsAndValidatesArchiveContents(t *testing.T) {
+	workflow := readRepoFile(t, ".github", "workflows", "release.yml")
+
+	if !strings.Contains(workflow, "max-parallel: 1") {
+		t.Fatalf("release workflow must serialize matrix jobs to avoid release publish retries")
+	}
+
+	requiredSnippets := []string{
+		`if [[ ! -s "dist/${{ matrix.artifact }}" ]]; then`,
+		`unzip -l "dist/${{ matrix.artifact }}" > dist/archive-contents.txt`,
+		`tar -tzf "dist/${{ matrix.artifact }}" > dist/archive-contents.txt`,
+		`missing expected binary in zip`,
+		`missing expected binary in tarball`,
+	}
+	for _, snippet := range requiredSnippets {
+		if !strings.Contains(workflow, snippet) {
+			t.Fatalf("release workflow missing archive validation snippet %q", snippet)
+		}
+	}
+}
+
 func TestReleaseWorkflowBuildsToolchainBundleWithVersionMetadata(t *testing.T) {
 	workflow := readRepoFile(t, ".github", "workflows", "release.yml")
 	binaries := releaseToolchainBinariesFromMakefile(t)

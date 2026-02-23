@@ -1,5 +1,5 @@
 param(
-    [string]$ReleaseBase = "https://github.com/anomalyco/yolo-runner/releases/latest/download",
+    [string]$ReleaseBase = "https://github.com/egv/yolo-runner/releases/latest/download",
     [string]$InstallDir = ""
 )
 
@@ -66,4 +66,3 @@ Get-ChildItem -Path $extractDir -File | ForEach-Object {
 if (-not $installed) {
     throw "expected binaries not found in artifact: $artifact"
 }
-

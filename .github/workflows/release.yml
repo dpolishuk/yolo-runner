@@ -13,6 +13,7 @@ jobs:
       contents: write
     strategy:
       fail-fast: false
+      max-parallel: 1
       matrix:
         include:
           - os: darwin
@@ -62,6 +63,29 @@ jobs:
             zip -j "dist/${{ matrix.artifact }}" "${built[@]}"
           else
             tar -czf "dist/${{ matrix.artifact }}" -C dist "${built[@]##dist/}"
+          fi
+
+          if [[ ! -s "dist/${{ matrix.artifact }}" ]]; then
+            echo "release artifact is empty: dist/${{ matrix.artifact }}" >&2
+            exit 1
+          fi
+
+          if [[ "${{ matrix.os }}" == "windows" ]]; then
+            unzip -l "dist/${{ matrix.artifact }}" > dist/archive-contents.txt
+            for binary in $binaries; do
+              if ! grep -Fq "${binary}.exe" dist/archive-contents.txt; then
+                echo "missing expected binary in zip: ${binary}.exe" >&2
+                exit 1
+              fi
+            done
+          else
+            tar -tzf "dist/${{ matrix.artifact }}" > dist/archive-contents.txt
+            for binary in $binaries; do
+              if ! grep -Fxq "$binary" dist/archive-contents.txt; then
+                echo "missing expected binary in tarball: $binary" >&2
+                exit 1
+              fi
+            done
           fi
       - name: Generate checksum artifact
         run: |

@@ -23,10 +23,10 @@ func TestInstallMatrixDefinesSupportedPlatformsAndShellNotes(t *testing.T) {
 	matrix := readRepoFile(t, "docs", "install-matrix.md")
 
 	requiredPlatformEntries := map[string]bool{
-		"macOS|amd64":  false,
-		"macOS|arm64":  false,
-		"Linux|amd64":  false,
-		"Linux|arm64":  false,
+		"macOS|amd64":   false,
+		"macOS|arm64":   false,
+		"Linux|amd64":   false,
+		"Linux|arm64":   false,
 		"Windows|amd64": false,
 	}
 	for _, line := range strings.Split(matrix, "\n") {
@@ -120,6 +120,16 @@ func TestInstallMatrixEntriesIncludeCommandAndSuccessCriteria(t *testing.T) {
 
 	if hasContentRows < 5 {
 		t.Fatalf("expected at least 5 data rows in install matrix, got %d", hasContentRows)
+	}
+}
+
+func TestPowerShellInstallScriptTargetsCanonicalRepository(t *testing.T) {
+	content := readRepoFile(t, "install.ps1")
+	if !strings.Contains(content, "https://github.com/egv/yolo-runner/releases/latest/download") {
+		t.Fatalf("install.ps1 should point to egv/yolo-runner release base URL")
+	}
+	if strings.Contains(content, "anomalyco/yolo-runner") {
+		t.Fatalf("install.ps1 should not reference anomalyco/yolo-runner")
 	}
 }
 

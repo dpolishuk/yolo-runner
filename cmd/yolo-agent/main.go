@@ -414,7 +414,16 @@ func runWithComponents(ctx context.Context, cfg runConfig, taskManager contracts
 		})
 	}
 
-	_, err := loop.Run(ctx)
+	summary, err := loop.Run(ctx)
+	if eventSink != nil {
+		_ = eventSink.Emit(ctx, contracts.Event{
+			Type:      contracts.EventTypeRunFinished,
+			TaskID:    cfg.rootID,
+			TaskTitle: "run",
+			Metadata:  buildRunFinishedMetadata(cfg, summary, err),
+			Timestamp: time.Now().UTC(),
+		})
+	}
 	return err
 }
 
@@ -493,7 +502,16 @@ func runWithStorageComponents(ctx context.Context, cfg runConfig, storage contra
 		})
 	}
 
-	_, err := loop.Run(ctx)
+	summary, err := loop.Run(ctx)
+	if eventSink != nil {
+		_ = eventSink.Emit(ctx, contracts.Event{
+			Type:      contracts.EventTypeRunFinished,
+			TaskID:    cfg.rootID,
+			TaskTitle: "run",
+			Metadata:  buildRunFinishedMetadata(cfg, summary, err),
+			Timestamp: time.Now().UTC(),
+		})
+	}
 	return err
 }
 
@@ -529,6 +547,24 @@ func buildRunStartedMetadata(cfg runConfig) map[string]string {
 		"watchdog_timeout":       cfg.watchdogTimeout.String(),
 		"watchdog_interval":      cfg.watchdogInterval.String(),
 	}
+}
+
+func buildRunFinishedMetadata(cfg runConfig, summary contracts.LoopSummary, runErr error) map[string]string {
+	status := "completed"
+	metadata := map[string]string{
+		"root_id":         cfg.rootID,
+		"status":          status,
+		"completed":       strconv.Itoa(summary.Completed),
+		"blocked":         strconv.Itoa(summary.Blocked),
+		"failed":          strconv.Itoa(summary.Failed),
+		"skipped":         strconv.Itoa(summary.Skipped),
+		"total_processed": strconv.Itoa(summary.TotalProcessed()),
+	}
+	if runErr != nil {
+		metadata["status"] = "failed"
+		metadata["error"] = runErr.Error()
+	}
+	return metadata
 }
 
 func normalizeBackend(raw string) string {

@@ -194,6 +194,7 @@ type EventType string
 
 const (
 	EventTypeRunStarted            EventType = "run_started"
+	EventTypeRunFinished           EventType = "run_finished"
 	EventTypeTaskStarted           EventType = "task_started"
 	EventTypeTaskFinished          EventType = "task_finished"
 	EventTypeRunnerStarted         EventType = "runner_started"

@@ -879,6 +879,12 @@ func TestRunWithComponentsStreamEmitsRunStartedWithParameters(t *testing.T) {
 	if !strings.Contains(out, `"type":"run_started"`) {
 		t.Fatalf("expected run_started event in stdout, got %q", out)
 	}
+	if !strings.Contains(out, `"type":"run_finished"`) {
+		t.Fatalf("expected run_finished event in stdout, got %q", out)
+	}
+	if !strings.Contains(out, `"status":"completed"`) {
+		t.Fatalf("expected completed status in run_finished metadata, got %q", out)
+	}
 	if !strings.Contains(out, `"root_id":"yr-2y0b"`) {
 		t.Fatalf("expected root_id in run_started metadata, got %q", out)
 	}
@@ -1020,6 +1026,9 @@ func TestRunWithComponentsModeUILaunchesYoloTUIAndRoutesOutput(t *testing.T) {
 	}
 	if !strings.Contains(string(raw), `"type":"run_started"`) {
 		t.Fatalf("expected run_started output in ui sink, got %q", string(raw))
+	}
+	if !strings.Contains(string(raw), `"type":"run_finished"`) {
+		t.Fatalf("expected run_finished output in ui sink, got %q", string(raw))
 	}
 }
 
