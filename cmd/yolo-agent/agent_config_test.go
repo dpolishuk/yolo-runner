@@ -56,6 +56,30 @@ func TestResolveYoloAgentConfigDefaultsNormalizesConfiguredBackend(t *testing.T)
 	}
 }
 
+func TestResolveYoloAgentConfigDefaultsParsesConfiguredMode(t *testing.T) {
+	defaults, err := resolveYoloAgentConfigDefaults(yoloAgentConfigModel{
+		Mode: "  UI  ",
+	})
+	if err != nil {
+		t.Fatalf("expected config defaults to parse, got %v", err)
+	}
+	if defaults.Mode != agentModeUI {
+		t.Fatalf("expected mode=%q, got %q", agentModeUI, defaults.Mode)
+	}
+}
+
+func TestResolveYoloAgentConfigDefaultsRejectsUnsupportedMode(t *testing.T) {
+	_, err := resolveYoloAgentConfigDefaults(yoloAgentConfigModel{
+		Mode: "unsupported",
+	})
+	if err == nil {
+		t.Fatalf("expected unsupported mode to fail")
+	}
+	if !strings.Contains(err.Error(), "agent.mode") {
+		t.Fatalf("expected field-specific error, got %q", err.Error())
+	}
+}
+
 func TestResolveYoloAgentConfigDefaultsRejectsUnsupportedBackend(t *testing.T) {
 	_, err := resolveYoloAgentConfigDefaults(yoloAgentConfigModel{
 		Backend: "unsupported",

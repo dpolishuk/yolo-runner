@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"flag"
+	"io"
 	"fmt"
 	"os"
 	"os/exec"
@@ -27,6 +28,8 @@ const (
 	backendCodex    = "codex"
 	backendClaude   = "claude"
 	backendKimi     = "kimi"
+	agentModeStream  = "stream"
+	agentModeUI      = "ui"
 )
 
 type runConfig struct {
@@ -42,17 +45,35 @@ type runConfig struct {
 	retryBudget          int
 	concurrency          int
 	dryRun               bool
+	mode                 string
 	stream               bool
 	verboseStream        bool
-	streamOutputInterval time.Duration
-	streamOutputBuffer   int
-	runnerTimeout        time.Duration
+	streamOutputInterval  time.Duration
+	streamOutputBuffer    int
+	runnerTimeout         time.Duration
 	watchdogTimeout      time.Duration
 	watchdogInterval     time.Duration
 	eventsPath           string
 }
 
 var runConfigValidateCommand = defaultRunConfigValidateCommand
+var launchYoloTUI = func() (io.WriteCloser, func() error, error) {
+	cmd := exec.Command("yolo-tui", "--events-stdin")
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return nil, nil, err
+	}
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Start(); err != nil {
+		_ = stdin.Close()
+		return nil, nil, err
+	}
+	return stdin, func() error {
+		_ = stdin.Close()
+		return cmd.Wait()
+	}, nil
+}
 
 var runConfigInitCommand = defaultRunConfigInitCommand
 
@@ -77,6 +98,7 @@ func RunMain(args []string, run func(context.Context, runConfig) error) int {
 	verboseStream := fs.Bool("verbose-stream", false, "Emit every runner_output event without coalescing")
 	streamOutputInterval := fs.Duration("stream-output-interval", 150*time.Millisecond, "Minimum interval between emitted runner_output events when not verbose")
 	streamOutputBuffer := fs.Int("stream-output-buffer", 64, "Maximum coalesced runner_output events retained before drop")
+	mode := fs.String("mode", "", "Output mode for runner events (stream, ui)")
 	runnerTimeout := fs.Duration("runner-timeout", 0, "Per runner execution timeout")
 	watchdogTimeout := fs.Duration("watchdog-timeout", 10*time.Minute, "No-output watchdog timeout for each runner execution")
 	watchdogInterval := fs.Duration("watchdog-interval", 5*time.Second, "Polling interval used by the no-output watchdog")
@@ -139,9 +161,22 @@ func RunMain(args []string, run func(context.Context, runConfig) error) int {
 	if !flagWasSet("retry-budget") && configDefaults.RetryBudget != nil {
 		selectedRetryBudget = *configDefaults.RetryBudget
 	}
+	selectedMode := strings.TrimSpace(configDefaults.Mode)
+	if *mode != "" {
+		selectedMode = strings.TrimSpace(*mode)
+	}
+	if *stream {
+		selectedMode = agentModeStream
+	}
+	selectedMode, err = normalizeAndValidateAgentMode(selectedMode, "mode")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	selectedStream := selectedMode == agentModeStream || selectedMode == agentModeUI
 	selectedBackend, _, err := selectBackend(selectedBackendRaw, backendSelectionOptions{
 		RequireReview: true,
-		Stream:        *stream,
+		Stream:        selectedStream,
 	}, defaultBackendCapabilityMatrix())
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -190,7 +225,8 @@ func RunMain(args []string, run func(context.Context, runConfig) error) int {
 		retryBudget:          selectedRetryBudget,
 		concurrency:          selectedConcurrency,
 		dryRun:               *dryRun,
-		stream:               *stream,
+		stream:               selectedStream,
+		mode:                 selectedMode,
 		verboseStream:        *verboseStream,
 		streamOutputInterval: *streamOutputInterval,
 		streamOutputBuffer:   *streamOutputBuffer,
@@ -298,7 +334,18 @@ func runWithComponents(ctx context.Context, cfg runConfig, taskManager contracts
 	sinks := []contracts.EventSink{}
 	closers := []func(){}
 	if cfg.stream {
-		sinks = append(sinks, contracts.NewStreamEventSinkWithOptions(os.Stdout, contracts.StreamEventSinkOptions{
+		streamWriter := io.Writer(os.Stdout)
+		if cfg.mode == agentModeUI {
+			stdin, closeFn, err := launchYoloTUI()
+			if err != nil {
+				return fmt.Errorf("start yolo-tui: %w", err)
+			}
+			streamWriter = stdin
+			closers = append(closers, func() {
+				_ = closeFn()
+			})
+		}
+		sinks = append(sinks, contracts.NewStreamEventSinkWithOptions(streamWriter, contracts.StreamEventSinkOptions{
 			VerboseOutput:  cfg.verboseStream,
 			OutputInterval: cfg.streamOutputInterval,
 			MaxPending:     cfg.streamOutputBuffer,
@@ -365,7 +412,18 @@ func runWithStorageComponents(ctx context.Context, cfg runConfig, storage contra
 	sinks := []contracts.EventSink{}
 	closers := []func(){}
 	if cfg.stream {
-		sinks = append(sinks, contracts.NewStreamEventSinkWithOptions(os.Stdout, contracts.StreamEventSinkOptions{
+		streamWriter := io.Writer(os.Stdout)
+		if cfg.mode == agentModeUI {
+			stdin, closeFn, err := launchYoloTUI()
+			if err != nil {
+				return fmt.Errorf("start yolo-tui: %w", err)
+			}
+			streamWriter = stdin
+			closers = append(closers, func() {
+				_ = closeFn()
+			})
+		}
+		sinks = append(sinks, contracts.NewStreamEventSinkWithOptions(streamWriter, contracts.StreamEventSinkOptions{
 			VerboseOutput:  cfg.verboseStream,
 			OutputInterval: cfg.streamOutputInterval,
 			MaxPending:     cfg.streamOutputBuffer,

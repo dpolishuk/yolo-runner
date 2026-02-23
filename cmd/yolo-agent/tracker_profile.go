@@ -85,6 +85,7 @@ type githubAuthModel struct {
 type yoloAgentConfigModel struct {
 	Backend          string `yaml:"backend,omitempty"`
 	Model            string `yaml:"model,omitempty"`
+	Mode             string `yaml:"mode,omitempty"`
 	Concurrency      *int   `yaml:"concurrency,omitempty"`
 	RunnerTimeout    string `yaml:"runner_timeout,omitempty"`
 	WatchdogTimeout  string `yaml:"watchdog_timeout,omitempty"`

@@ -286,6 +286,40 @@ func TestRunMainUsesProfileDefaultBackendWhenBackendFlagsAreUnset(t *testing.T) 
 	}
 }
 
+func TestRunMainUsesModeFromConfigWhenModeFlagUnset(t *testing.T) {
+	repoRoot := t.TempDir()
+	writeTrackerConfigYAML(t, repoRoot, `
+profiles:
+  default:
+    tracker:
+      type: tk
+agent:
+  mode: ui
+`)
+
+	called := false
+	var got runConfig
+	run := func(_ context.Context, cfg runConfig) error {
+		called = true
+		got = cfg
+		return nil
+	}
+
+	code := RunMain([]string{"--repo", repoRoot, "--root", "root-1"}, run)
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d", code)
+	}
+	if !called {
+		t.Fatalf("expected run function to be called")
+	}
+	if got.mode != agentModeUI {
+		t.Fatalf("expected mode from config=%q, got %q", agentModeUI, got.mode)
+	}
+	if !got.stream {
+		t.Fatalf("expected mode ui to enable streaming")
+	}
+}
+
 func TestRunMainAgentBackendFlagOverridesLegacyAndProfileBackends(t *testing.T) {
 	t.Setenv("YOLO_AGENT_BACKEND", backendKimi)
 	called := false
@@ -568,6 +602,37 @@ func TestRunMainParsesStreamFlag(t *testing.T) {
 	}
 	if !got.stream {
 		t.Fatalf("expected stream=true")
+	}
+}
+
+func TestRunMainParsesModeFlag(t *testing.T) {
+	repoRoot := t.TempDir()
+	writeTrackerConfigYAML(t, repoRoot, `
+profiles:
+  default:
+    tracker:
+      type: tk
+`)
+	called := false
+	var got runConfig
+	run := func(_ context.Context, cfg runConfig) error {
+		called = true
+		got = cfg
+		return nil
+	}
+
+	code := RunMain([]string{"--repo", repoRoot, "--root", "root-1", "--mode", "ui"}, run)
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d", code)
+	}
+	if !called {
+		t.Fatalf("expected run function to be called")
+	}
+	if got.mode != agentModeUI {
+		t.Fatalf("expected mode=%q, got %q", agentModeUI, got.mode)
+	}
+	if !got.stream {
+		t.Fatalf("expected mode ui to enable streaming")
 	}
 }
 
@@ -883,6 +948,57 @@ func TestRunWithComponentsVerboseStreamEmitsAllRunnerOutput(t *testing.T) {
 	out := string(data)
 	if got := strings.Count(out, `"type":"runner_output"`); got != 4 {
 		t.Fatalf("expected full runner_output count=4, got %d output=%q", got, out)
+	}
+}
+
+func TestRunWithComponentsModeUILaunchesYoloTUIAndRoutesOutput(t *testing.T) {
+	originalLaunch := launchYoloTUI
+	t.Cleanup(func() {
+		launchYoloTUI = originalLaunch
+	})
+
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	launched := false
+	launchYoloTUI = func() (io.WriteCloser, func() error, error) {
+		launched = true
+		return writer, func() error { return writer.Close() }, nil
+	}
+
+	repoRoot := initGitRepo(t)
+	mgr := &testTaskManager{tasks: []contracts.Task{{ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen}}}
+	runner := &testRunner{}
+	cfg := runConfig{
+		repoRoot:             repoRoot,
+		rootID:               "root",
+		dryRun:               true,
+		stream:               true,
+		mode:                 agentModeUI,
+		concurrency:          1,
+		watchdogTimeout:      10 * time.Minute,
+		watchdogInterval:     5 * time.Second,
+		streamOutputBuffer:   64,
+		streamOutputInterval: 150 * time.Millisecond,
+	}
+
+	runErr := runWithComponents(context.Background(), cfg, mgr, runner, nil)
+	if runErr != nil {
+		t.Fatalf("runWithComponents failed: %v", runErr)
+	}
+	raw, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("read reader: %v", err)
+	}
+	if err := reader.Close(); err != nil {
+		t.Fatalf("close reader: %v", err)
+	}
+	if !launched {
+		t.Fatalf("expected yolo-tui launch for ui mode")
+	}
+	if !strings.Contains(string(raw), `"type":"run_started"`) {
+		t.Fatalf("expected run_started output in ui sink, got %q", string(raw))
 	}
 }
 
