@@ -11,6 +11,7 @@ import (
 
 	"github.com/egv/yolo-runner/v2/internal/contracts"
 	"github.com/egv/yolo-runner/v2/internal/tk"
+	"github.com/egv/yolo-runner/v2/internal/version"
 )
 
 func main() {
@@ -18,6 +19,11 @@ func main() {
 }
 
 func RunMain(args []string, out io.Writer, errOut io.Writer, manager contracts.TaskManager) int {
+	if version.IsVersionRequest(args) {
+		version.Print(out, "yolo-task")
+		return 0
+	}
+
 	if len(args) == 0 {
 		fmt.Fprintln(errOut, "usage: yolo-task <next|status|data> [flags]")
 		return 1

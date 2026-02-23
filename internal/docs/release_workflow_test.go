@@ -220,8 +220,8 @@ func TestReleaseWorkflowBuildsToolchainBundleWithVersionMetadata(t *testing.T) {
 	if !strings.Contains(buildStepRun, "-ldflags") {
 		t.Fatalf("release workflow build step must provide ldflags")
 	}
-	if !strings.Contains(buildStepRun, "-X main.yoloRunnerVersion=${{ github.ref_name }}") {
-		t.Fatalf("release workflow build step must inject yoloRunnerVersion from github ref name")
+	if !strings.Contains(buildStepRun, "-X github.com/egv/yolo-runner/v2/internal/version.Version=${{ github.ref_name }}") {
+		t.Fatalf("release workflow build step must inject shared version metadata from github ref name")
 	}
 	if packageStepRun == "" {
 		t.Fatalf("release workflow missing packaging/checksum step")

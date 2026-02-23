@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/egv/yolo-runner/v2/internal/linear/webhook"
+	"github.com/egv/yolo-runner/v2/internal/version"
 )
 
 type runConfig struct {
@@ -27,6 +28,11 @@ func main() {
 }
 
 func RunMain(args []string, run func(context.Context, runConfig) error) int {
+	if version.IsVersionRequest(args) {
+		version.Print(os.Stdout, "yolo-linear-worker")
+		return 0
+	}
+
 	fs := flag.NewFlagSet("yolo-linear-worker", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 

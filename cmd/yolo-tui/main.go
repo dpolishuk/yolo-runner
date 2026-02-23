@@ -8,11 +8,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/egv/yolo-runner/v2/internal/contracts"
-	"github.com/egv/yolo-runner/v2/internal/ui/monitor"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/egv/yolo-runner/v2/internal/contracts"
+	"github.com/egv/yolo-runner/v2/internal/ui/monitor"
+	"github.com/egv/yolo-runner/v2/internal/version"
 	"golang.org/x/term"
 )
 
@@ -21,6 +22,11 @@ func main() {
 }
 
 func RunMain(args []string, in io.Reader, out io.Writer, errOut io.Writer) int {
+	if version.IsVersionRequest(args) {
+		version.Print(out, "yolo-tui")
+		return 0
+	}
+
 	fs := flag.NewFlagSet("yolo-tui", flag.ContinueOnError)
 	fs.SetOutput(errOut)
 	eventsStdin := fs.Bool("events-stdin", true, "Read NDJSON events from stdin")

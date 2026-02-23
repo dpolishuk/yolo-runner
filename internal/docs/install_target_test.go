@@ -94,11 +94,20 @@ func TestMakefileInstallTargetHonorsPrefixAndCreatesExecutable(t *testing.T) {
 		t.Fatalf("installed binary should expose usage text: got %s", helpOutput)
 	}
 
-	versionOutput, err := exec.Command(filepath.Join(binDir, "yolo-runner"), "--version").CombinedOutput()
-	if err != nil {
-		t.Fatalf("yolo-runner --version should execute successfully: %v (%s)", err, versionOutput)
-	}
-	if strings.TrimSpace(string(versionOutput)) == "" {
-		t.Fatalf("yolo-runner --version should produce output")
+	for _, binary := range []string{
+		"yolo-agent",
+		"yolo-runner",
+		"yolo-task",
+		"yolo-tui",
+		"yolo-linear-webhook",
+		"yolo-linear-worker",
+	} {
+		versionOutput, err := exec.Command(filepath.Join(binDir, binary), "--version").CombinedOutput()
+		if err != nil {
+			t.Fatalf("%s --version should execute successfully: %v (%s)", binary, err, versionOutput)
+		}
+		if strings.TrimSpace(string(versionOutput)) == "" {
+			t.Fatalf("%s --version should produce output", binary)
+		}
 	}
 }

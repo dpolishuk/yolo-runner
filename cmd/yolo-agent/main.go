@@ -21,6 +21,7 @@ import (
 	"github.com/egv/yolo-runner/v2/internal/kimi"
 	"github.com/egv/yolo-runner/v2/internal/opencode"
 	gitvcs "github.com/egv/yolo-runner/v2/internal/vcs/git"
+	"github.com/egv/yolo-runner/v2/internal/version"
 )
 
 const (
@@ -79,6 +80,11 @@ var launchYoloTUI = func() (io.WriteCloser, func() error, error) {
 var runConfigInitCommand = defaultRunConfigInitCommand
 
 func RunMain(args []string, run func(context.Context, runConfig) error) int {
+	if version.IsVersionRequest(args) {
+		version.Print(os.Stdout, "yolo-agent")
+		return 0
+	}
+
 	if len(args) > 0 && args[0] == "config" {
 		return runConfigCommand(args[1:])
 	}
