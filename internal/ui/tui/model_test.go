@@ -219,6 +219,47 @@ func TestModelStateTransitionsRunningStoppingCompleted(t *testing.T) {
 	}
 }
 
+func TestModelStopBannerPersistsAcrossNonTerminalTransitions(t *testing.T) {
+	fixedNow := time.Date(2026, 2, 2, 10, 0, 0, 0, time.UTC)
+	m := NewModel(func() time.Time { return fixedNow })
+
+	updated, _ := m.Update(runner.Event{
+		Type:      runner.EventSelectTask,
+		IssueID:   "task-1",
+		Title:     "Example Task",
+		EmittedAt: fixedNow,
+	})
+	m = updated.(Model)
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	m = updated.(Model)
+	if !strings.Contains(m.View(), "Stopping...") {
+		t.Fatalf("expected stop state immediately after keypress, got %q", m.View())
+	}
+
+	updated, _ = m.Update(runner.Event{
+		Type:      runner.EventGitStatus,
+		IssueID:   "task-1",
+		Title:     "Example Task",
+		EmittedAt: fixedNow,
+	})
+	m = updated.(Model)
+	if !strings.Contains(m.View(), "Stopping...") {
+		t.Fatalf("expected stop state to persist across non-terminal updates, got %q", m.View())
+	}
+
+	updated, _ = m.Update(runner.Event{
+		Type:      runner.EventOpenCodeEnd,
+		IssueID:   "task-1",
+		Title:     "Example Task",
+		EmittedAt: fixedNow,
+	})
+	m = updated.(Model)
+	if strings.Contains(m.View(), "Stopping...") {
+		t.Fatalf("expected stop state to clear after terminal event, got %q", m.View())
+	}
+}
+
 func TestModelResizeKeepsStateAcrossTransitions(t *testing.T) {
 	fixedNow := time.Date(2026, 2, 2, 10, 0, 0, 0, time.UTC)
 	m := NewModel(func() time.Time { return fixedNow })

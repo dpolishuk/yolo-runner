@@ -99,8 +99,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch typed := msg.(type) {
 	case runner.Event:
-		m.stopping = false
-		m.stopRequested = false
+		terminalEvent := isTerminalRunnerEvent(typed.Type)
+		if terminalEvent {
+			m.stopping = false
+			m.stopRequested = false
+		} else if m.stopping {
+			m.stopRequested = true
+		} else {
+			m.stopRequested = false
+		}
 		m.appendLogLines(formatRunnerEventLine(typed))
 		if typed.Message != "" {
 			if markdownMessage, ok := formatACPMessageAsMarkdown(typed.Message); ok {
@@ -131,6 +138,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		spinner := m.spinner.View()
 		updateMsg := UpdateStatusBarMsg{Event: typed, LastOutputAge: age, Spinner: spinner}
 		m.statusbar, _ = m.statusbar.Update(updateMsg)
+		if m.stopping && !terminalEvent {
+			m.statusbar, _ = m.statusbar.Update(StopStatusBarMsg{})
+		}
 		return m, tea.Batch(cmd, statusbarCmd)
 	case OutputMsg:
 		m.lastOutputAt = m.now()
@@ -242,6 +252,17 @@ func getEventTypeForPhase(phase string) runner.EventType {
 		return runner.EventBeadsSync
 	default:
 		return runner.EventType(phase)
+	}
+}
+
+func isTerminalRunnerEvent(eventType runner.EventType) bool {
+	switch eventType {
+	case runner.EventOpenCodeEnd, runner.EventBeadsClose, runner.EventBeadsVerify, runner.EventBeadsSync:
+		return true
+	case runner.EventType("completed"):
+		return true
+	default:
+		return false
 	}
 }
 
