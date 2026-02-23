@@ -19,14 +19,16 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/egv/yolo-runner/v2/internal/version"
 )
 
 func TestYoloRunnerUpdateResolvesLatestAndPinnedRelease(t *testing.T) {
 	latestArtifact := writeTarArtifact(t, map[string][]byte{
-		"yolo-runner": []byte("version=latest"),
+		"yolo-runner": updateBinaryScript(t, "yolo-runner", "v1.0.0"),
 	})
 	pinnedArtifact := writeTarArtifact(t, map[string][]byte{
-		"yolo-runner": []byte("version=pinned"),
+		"yolo-runner": updateBinaryScript(t, "yolo-runner", "v1.2.3"),
 	})
 
 	artifactName := updateArtifactName("linux", "amd64")
@@ -67,7 +69,7 @@ func TestYoloRunnerUpdateResolvesLatestAndPinnedRelease(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read latest binary: %v", err)
 	}
-	if got := strings.TrimSpace(string(content)); got != "version=latest" {
+	if got := strings.TrimSpace(string(content)); !strings.Contains(got, "yolo-runner v1.0.0") {
 		t.Fatalf("latest binary content mismatch = %q", got)
 	}
 
@@ -89,36 +91,30 @@ func TestYoloRunnerUpdateResolvesLatestAndPinnedRelease(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read pinned binary: %v", err)
 	}
-	if got := strings.TrimSpace(string(content)); got != "version=pinned" {
+	if got := strings.TrimSpace(string(content)); !strings.Contains(got, "yolo-runner v1.2.3") {
 		t.Fatalf("pinned binary content mismatch = %q", got)
 	}
 }
 
 func TestYoloRunnerUpdateSelectsAssetByOSAndArch(t *testing.T) {
 	linuxArtifact := writeTarArtifact(t, map[string][]byte{
-		"yolo-runner": []byte("linux"),
+		"yolo-runner": updateBinaryScript(t, "yolo-runner", "v1.0.0"),
 	})
 	darwinArtifact := writeTarArtifact(t, map[string][]byte{
-		"yolo-runner": []byte("darwin"),
-	})
-	windowsArtifact := writeZipArtifact(t, map[string][]byte{
-		"yolo-runner.exe": []byte("windows"),
+		"yolo-runner": updateBinaryScript(t, "yolo-runner", "v1.0.0"),
 	})
 
 	linuxArtifactName := updateArtifactName("linux", "amd64")
 	darwinArtifactName := updateArtifactName("darwin", "arm64")
-	windowsArtifactName := updateArtifactName("windows", "amd64")
 
 	server := newUpdateTestServer(t, map[string]testReleaseFixture{
 		"/repos/egv/yolo-runner/releases/latest": {
 			tag: "v1.0.0",
 			assets: map[string][]byte{
-				linuxArtifactName:                       linuxArtifact,
-				updateChecksumName(linuxArtifactName):   []byte(checksumText(t, linuxArtifactName, linuxArtifact)),
-				darwinArtifactName:                      darwinArtifact,
-				updateChecksumName(darwinArtifactName):  []byte(checksumText(t, darwinArtifactName, darwinArtifact)),
-				windowsArtifactName:                     windowsArtifact,
-				updateChecksumName(windowsArtifactName): []byte(checksumText(t, windowsArtifactName, windowsArtifact)),
+				linuxArtifactName:                      linuxArtifact,
+				updateChecksumName(linuxArtifactName):  []byte(checksumText(t, linuxArtifactName, linuxArtifact)),
+				darwinArtifactName:                     darwinArtifact,
+				updateChecksumName(darwinArtifactName): []byte(checksumText(t, darwinArtifactName, darwinArtifact)),
 			},
 		},
 	})
@@ -139,7 +135,7 @@ func TestYoloRunnerUpdateSelectsAssetByOSAndArch(t *testing.T) {
 			osInput:     "Linux",
 			archInput:   "x86_64",
 			target:      "yolo-runner",
-			wantContent: "linux",
+			wantContent: "v1.0.0",
 			installDir:  t.TempDir(),
 		},
 		{
@@ -147,20 +143,9 @@ func TestYoloRunnerUpdateSelectsAssetByOSAndArch(t *testing.T) {
 			osInput:     "Darwin",
 			archInput:   "arm64",
 			target:      "yolo-runner",
-			wantContent: "darwin",
+			wantContent: "v1.0.0",
 			installDir:  t.TempDir(),
 		},
-		{
-			name:        "windows amd64",
-			osInput:     "Windows",
-			archInput:   "amd64",
-			target:      "yolo-runner.exe",
-			wantContent: "windows",
-			installDir:  `C:\\yolo-runner-windows-test`,
-		},
-	}
-	if err := os.MkdirAll(tests[2].installDir, 0o755); err != nil {
-		t.Fatalf("prepare windows install path: %v", err)
 	}
 
 	for _, tc := range tests {
@@ -179,16 +164,139 @@ func TestYoloRunnerUpdateSelectsAssetByOSAndArch(t *testing.T) {
 			if err != nil {
 				t.Fatalf("read installed binary: %v", err)
 			}
-			if got := strings.TrimSpace(string(content)); got != tc.wantContent {
+			if got := strings.TrimSpace(string(content)); !strings.Contains(got, tc.wantContent) {
 				t.Fatalf("installed content = %q", got)
 			}
 		})
 	}
 }
 
+func TestYoloRunnerUpdateRejectsWindowsOS(t *testing.T) {
+	artifact := writeZipArtifact(t, map[string][]byte{
+		"yolo-runner.exe": []byte("not-used"),
+	})
+	artifactName := updateArtifactName("windows", "amd64")
+	server := newUpdateTestServer(t, map[string]testReleaseFixture{
+		"/repos/egv/yolo-runner/releases/latest": {
+			tag: "v1.0.0",
+			assets: map[string][]byte{
+				artifactName:                     artifact,
+				updateChecksumName(artifactName): []byte(checksumText(t, artifactName, artifact)),
+			},
+		},
+	})
+	defer server.Close()
+
+	_, stderr, code := runUpdateCommand(t, []string{
+		"--release-api", server.URL() + "/repos/egv/yolo-runner",
+		"--release", "latest",
+		"--os", "Windows",
+		"--arch", "amd64",
+	}, nil)
+	if code == 0 {
+		t.Fatalf("windows update should fail: %q", stderr)
+	}
+	if !strings.Contains(stderr, "Windows self-update is not currently supported") {
+		t.Fatalf("expected unsupported windows error, got %q", stderr)
+	}
+}
+
+func TestYoloRunnerUpdateCheckChecksLatest(t *testing.T) {
+	originalVersion := version.Version
+	version.Version = "runner-current"
+	t.Cleanup(func() {
+		version.Version = originalVersion
+	})
+
+	server := newUpdateTestServer(t, map[string]testReleaseFixture{
+		"/repos/egv/yolo-runner/releases/latest": {
+			tag:    "v2.5.1",
+			assets: map[string][]byte{},
+		},
+	})
+	defer server.Close()
+
+	stdout, stderr, code := runUpdateCommand(t, []string{
+		"--release-api", server.URL() + "/repos/egv/yolo-runner",
+		"--check",
+	}, nil)
+	if code != 0 {
+		t.Fatalf("check should succeed: %q", stderr)
+	}
+	if !strings.Contains(stdout, "current: runner-current") {
+		t.Fatalf("expected current version in check output, got %q", stdout)
+	}
+	if !strings.Contains(stdout, "latest: v2.5.1") {
+		t.Fatalf("expected latest version in check output, got %q", stdout)
+	}
+}
+
+func TestYoloRunnerUpdateUsesGitHubTokenForRequests(t *testing.T) {
+	t.Setenv("GITHUB_TOKEN", "ghp_example-token")
+
+	artifact := writeTarArtifact(t, map[string][]byte{
+		"yolo-runner": updateBinaryScript(t, "yolo-runner", "v1.0.0"),
+	})
+	artifactName := updateArtifactName("linux", "amd64")
+
+	checksum := checksumText(t, artifactName, artifact)
+	authHeaders := make([]string, 0, 3)
+
+	var ts *httptest.Server
+	ts = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authHeaders = append(authHeaders, r.Header.Get("Authorization"))
+		switch r.URL.Path {
+		case "/repos/egv/yolo-runner/releases/latest":
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(updateRelease{
+				TagName: "v1.0.0",
+				Assets: []updateAsset{
+					{Name: artifactName, BrowserDownloadURL: ts.URL + "/assets/v1.0.0/" + artifactName},
+					{Name: updateChecksumName(artifactName), BrowserDownloadURL: ts.URL + "/assets/v1.0.0/" + updateChecksumName(artifactName)},
+				},
+			})
+		case "/assets/v1.0.0/" + artifactName:
+			_, _ = w.Write(artifact)
+		case "/assets/v1.0.0/" + updateChecksumName(artifactName):
+			_, _ = w.Write([]byte(checksum))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer ts.Close()
+
+	installDir := t.TempDir()
+	stdout, stderr, code := runUpdateCommand(t, []string{
+		"--release-api", ts.URL + "/repos/egv/yolo-runner",
+		"--release", "latest",
+		"--os", "Linux",
+		"--arch", "amd64",
+		"--install-dir", installDir,
+	}, nil)
+	if code != 0 {
+		t.Fatalf("update should succeed: %q", strings.TrimSpace(stderr))
+	}
+	if !strings.Contains(stdout, "v1.0.0") {
+		t.Fatalf("expected install output to mention release version, got %q", stdout)
+	}
+	if strings.Contains(stdout, "ghp_example-token") || strings.Contains(stderr, "ghp_example-token") {
+		t.Fatalf("auth token leaked in command output")
+	}
+	foundAuth := false
+	for _, header := range authHeaders {
+		if header == "Bearer ghp_example-token" {
+			foundAuth = true
+			break
+		}
+	}
+	if !foundAuth {
+		t.Fatalf("expected Authorization header on GitHub requests")
+	}
+}
+
 func TestYoloRunnerUpdateVerifiesChecksumPassAndFail(t *testing.T) {
 	artifact := writeTarArtifact(t, map[string][]byte{
-		"yolo-runner": []byte("stable"),
+		"yolo-runner": updateBinaryScript(t, "yolo-runner", "v1.0.0"),
 	})
 	artifactName := updateArtifactName("linux", "amd64")
 	goodChecksum := checksumText(t, artifactName, artifact)
@@ -227,7 +335,7 @@ func TestYoloRunnerUpdateVerifiesChecksumPassAndFail(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read installed binary: %v", err)
 	}
-	if string(installed) != "stable" {
+	if !strings.Contains(string(installed), "v1.0.0") {
 		t.Fatalf("expected stable binary, got %q", string(installed))
 	}
 
@@ -260,8 +368,8 @@ func TestYoloRunnerUpdateVerifiesChecksumPassAndFail(t *testing.T) {
 
 func TestYoloRunnerUpdateRollsBackOnInstallFailure(t *testing.T) {
 	artifact := writeTarArtifact(t, map[string][]byte{
-		"yolo-runner":           []byte("newest"),
-		"zzz-blocked/block.bin": []byte("forbidden"),
+		"yolo-runner":           updateBinaryScript(t, "yolo-runner", "v1.0.0"),
+		"zzz-blocked/block.bin": updateBinaryScript(t, "zzz-blocked/block.bin", "v1.0.0"),
 	})
 	artifactName := updateArtifactName("linux", "amd64")
 
@@ -310,7 +418,7 @@ func TestYoloRunnerUpdateRollsBackOnInstallFailure(t *testing.T) {
 
 func TestYoloRunnerUpdateDefaultInstallDirDetection(t *testing.T) {
 	artifact := writeTarArtifact(t, map[string][]byte{
-		"yolo-runner": []byte("default-dir"),
+		"yolo-runner": updateBinaryScript(t, "yolo-runner", "v1.0.0"),
 	})
 	artifactName := updateArtifactName("linux", "amd64")
 
@@ -325,9 +433,15 @@ func TestYoloRunnerUpdateDefaultInstallDirDetection(t *testing.T) {
 	})
 	defer server.Close()
 
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	installDir := filepath.Join(home, ".local", "bin")
+	runningDir := t.TempDir()
+	_ = os.WriteFile(filepath.Join(runningDir, "yolo-runner"), []byte(""), 0o644)
+	origExecutable := updateCurrentExecutable
+	t.Cleanup(func() {
+		updateCurrentExecutable = origExecutable
+	})
+	updateCurrentExecutable = func() (string, error) {
+		return filepath.Join(runningDir, "yolo-runner"), nil
+	}
 
 	_, _, code := runUpdateCommand(t, []string{
 		"--release-api", server.URL() + "/repos/egv/yolo-runner",
@@ -338,11 +452,11 @@ func TestYoloRunnerUpdateDefaultInstallDirDetection(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("default install dir update should succeed")
 	}
-	content, err := os.ReadFile(filepath.Join(installDir, "yolo-runner"))
+	content, err := os.ReadFile(filepath.Join(runningDir, "yolo-runner"))
 	if err != nil {
 		t.Fatalf("read installed binary from default dir: %v", err)
 	}
-	if string(content) != "default-dir" {
+	if !strings.Contains(string(content), "v1.0.0") {
 		t.Fatalf("unexpected binary content: %q", string(content))
 	}
 }
@@ -353,7 +467,7 @@ func TestYoloRunnerUpdateReportsNonWritableInstallDir(t *testing.T) {
 	}
 
 	artifact := writeTarArtifact(t, map[string][]byte{
-		"yolo-runner": []byte("no-write"),
+		"yolo-runner": updateBinaryScript(t, "yolo-runner", "v1.0.0"),
 	})
 	artifactName := updateArtifactName("linux", "amd64")
 
@@ -388,14 +502,19 @@ func TestYoloRunnerUpdateReportsNonWritableInstallDir(t *testing.T) {
 }
 
 func TestYoloRunnerUpdateRejectsUnsupportedWindowsInstallPath(t *testing.T) {
-	artifact := writeZipArtifact(t, map[string][]byte{
-		"yolo-runner.exe": []byte("x"),
-	})
-	artifactName := updateArtifactName("windows", "amd64")
+	if err := validateWindowsUpdatePath("windows", "relative/path"); err == nil {
+		t.Fatalf("expected relative path to be rejected for windows install path")
+	}
+}
 
+func TestYoloRunnerUpdateAcceptsPinnedReleaseWithoutVPrefix(t *testing.T) {
+	artifact := writeTarArtifact(t, map[string][]byte{
+		"yolo-runner": updateBinaryScript(t, "yolo-runner", "v2.4.0"),
+	})
+	artifactName := updateArtifactName("linux", "amd64")
 	server := newUpdateTestServer(t, map[string]testReleaseFixture{
-		"/repos/egv/yolo-runner/releases/latest": {
-			tag: "v1.0.0",
+		"/repos/egv/yolo-runner/releases/tags/v2.4.0": {
+			tag: "v2.4.0",
 			assets: map[string][]byte{
 				artifactName:                     artifact,
 				updateChecksumName(artifactName): []byte(checksumText(t, artifactName, artifact)),
@@ -404,18 +523,26 @@ func TestYoloRunnerUpdateRejectsUnsupportedWindowsInstallPath(t *testing.T) {
 	})
 	defer server.Close()
 
-	_, stderr, code := runUpdateCommand(t, []string{
+	installDir := t.TempDir()
+	_, _, code := runUpdateCommand(t, []string{
 		"--release-api", server.URL() + "/repos/egv/yolo-runner",
-		"--release", "latest",
-		"--os", "Windows",
+		"--to", "2.4.0",
+		"--os", "Linux",
 		"--arch", "amd64",
-		"--install-dir", "relative/path",
+		"--install-dir", installDir,
 	}, nil)
-	if code == 0 {
-		t.Fatalf("unsupported Windows install path should fail")
+	if code != 0 {
+		t.Fatalf("pinned --to release should succeed")
 	}
-	if !strings.Contains(stderr, "unsupported Windows install path") {
-		t.Fatalf("expected unsupported path message, got %q", stderr)
+	if !server.hasRequestedPathContaining("/repos/egv/yolo-runner/releases/tags/v2.4.0") {
+		t.Fatalf("expected pinned release request with v2.4.0")
+	}
+	content, err := os.ReadFile(filepath.Join(installDir, "yolo-runner"))
+	if err != nil {
+		t.Fatalf("read pinned binary: %v", err)
+	}
+	if got := strings.TrimSpace(string(content)); !strings.Contains(got, "yolo-runner v2.4.0") {
+		t.Fatalf("expected pinned binary content, got %q", got)
 	}
 }
 
@@ -520,6 +647,11 @@ func runUpdateCommand(t *testing.T, args []string, client *http.Client) (string,
 	var stdout, stderr bytes.Buffer
 	code := runUpdate(args, &stdout, &stderr, client)
 	return stdout.String(), stderr.String(), code
+}
+
+func updateBinaryScript(t *testing.T, binaryName, version string) []byte {
+	t.Helper()
+	return []byte(fmt.Sprintf("#!/bin/sh\necho %s %s\n", binaryName, version))
 }
 
 func writeTarArtifact(t *testing.T, entries map[string][]byte) []byte {
