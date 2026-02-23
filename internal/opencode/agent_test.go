@@ -65,3 +65,62 @@ func TestValidateAgentAllowsPermissionAllow(t *testing.T) {
 		t.Fatalf("expected no error, got %v", err)
 	}
 }
+
+func TestInitAgentCopiesReleaseSkillTemplate(t *testing.T) {
+	repoRoot := t.TempDir()
+
+	rootYolo := filepath.Join(repoRoot, "yolo.md")
+	if err := os.WriteFile(rootYolo, []byte("root yolo template"), 0o644); err != nil {
+		t.Fatalf("write root yolo template: %v", err)
+	}
+
+	releaseTemplate := filepath.Join(repoRoot, "agent", "release.md")
+	if err := os.MkdirAll(filepath.Dir(releaseTemplate), 0o755); err != nil {
+		t.Fatalf("mkdir release template dir: %v", err)
+	}
+	if err := os.WriteFile(releaseTemplate, []byte("release skill template"), 0o644); err != nil {
+		t.Fatalf("write release template: %v", err)
+	}
+
+	err := InitAgent(repoRoot)
+	if err != nil {
+		t.Fatalf("expected init agent to succeed: %v", err)
+	}
+
+	yoloPath := filepath.Join(repoRoot, ".opencode", "agent", "yolo.md")
+	yoloContent, err := os.ReadFile(yoloPath)
+	if err != nil {
+		t.Fatalf("read generated yolo agent: %v", err)
+	}
+	if string(yoloContent) != "root yolo template" {
+		t.Fatalf("expected yolo agent template content to be copied, got %q", string(yoloContent))
+	}
+
+	releasePath := filepath.Join(repoRoot, ".opencode", "agent", "release.md")
+	releaseContent, err := os.ReadFile(releasePath)
+	if err != nil {
+		t.Fatalf("read generated release skill: %v", err)
+	}
+	if string(releaseContent) != "release skill template" {
+		t.Fatalf("expected release skill content to be copied, got %q", string(releaseContent))
+	}
+}
+
+func TestInitAgentRequiresMainTemplate(t *testing.T) {
+	repoRoot := t.TempDir()
+	releaseTemplate := filepath.Join(repoRoot, "agent", "release.md")
+	if err := os.MkdirAll(filepath.Dir(releaseTemplate), 0o755); err != nil {
+		t.Fatalf("mkdir release template dir: %v", err)
+	}
+	if err := os.WriteFile(releaseTemplate, []byte("release skill template"), 0o644); err != nil {
+		t.Fatalf("write release template: %v", err)
+	}
+
+	err := InitAgent(repoRoot)
+	if err == nil {
+		t.Fatalf("expected init to fail without yolo.md")
+	}
+	if !strings.Contains(err.Error(), "read yolo agent template") {
+		t.Fatalf("expected error to mention missing yolo agent template, got %q", err.Error())
+	}
+}

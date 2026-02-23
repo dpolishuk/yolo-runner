@@ -6,7 +6,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/anomalyco/yolo-runner/internal/contracts"
+	"github.com/egv/yolo-runner/v2/internal/contracts"
 )
 
 // TaskEngine builds and evaluates in-memory task graphs over contracts types.
@@ -92,7 +92,7 @@ func (e *TaskEngine) BuildGraph(tree *contracts.TaskTree) (*contracts.TaskGraph,
 			if relation.Type == contracts.RelationDependsOn || relation.Type == contracts.RelationBlocks {
 				return nil, fmt.Errorf("circular dependency detected: %s -> %s", fromID, toID)
 			}
-			return nil, fmt.Errorf("self-referential relation is not allowed: %s -> %s (%s)", fromID, toID, relation.Type)
+			return nil, fmt.Errorf("circular dependency detected: %s -> %s (%s)", fromID, toID, relation.Type)
 		}
 
 		fromNode := nodes[fromID]
@@ -191,7 +191,11 @@ func (e *TaskEngine) CalculateConcurrency(graph *contracts.TaskGraph, opts contr
 			if dependency == nil {
 				continue
 			}
-			if _, exists := graph.Nodes[dependency.ID]; exists {
+			dependencyNode := graph.Nodes[dependency.ID]
+			if dependencyNode == nil {
+				continue
+			}
+			if dependencyNode.Status != contracts.TaskStatusClosed {
 				deps++
 			}
 		}
@@ -213,6 +217,9 @@ func (e *TaskEngine) CalculateConcurrency(graph *contracts.TaskGraph, opts contr
 			}
 			if node.Status == contracts.TaskStatusOpen {
 				openAtLevel++
+			}
+			if node.Status != contracts.TaskStatusOpen && node.Status != contracts.TaskStatusClosed {
+				continue
 			}
 			for _, dependent := range node.Dependents {
 				if dependent == nil {
@@ -440,7 +447,7 @@ func assignDepths(nodes map[string]*contracts.TaskNode, rootID string) error {
 			start := stackPos[id]
 			cycle := append([]string(nil), stack[start:]...)
 			cycle = append(cycle, id)
-			return 0, fmt.Errorf("parent cycle detected: %s", strings.Join(cycle, " -> "))
+			return 0, fmt.Errorf("circular dependency detected: %s", strings.Join(cycle, " -> "))
 		}
 
 		state[id] = visiting

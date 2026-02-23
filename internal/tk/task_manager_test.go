@@ -2,11 +2,12 @@ package tk
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"testing"
 
-	"github.com/anomalyco/yolo-runner/internal/contracts"
-	enginepkg "github.com/anomalyco/yolo-runner/internal/engine"
+	"github.com/egv/yolo-runner/v2/internal/contracts"
+	enginepkg "github.com/egv/yolo-runner/v2/internal/engine"
 )
 
 func TestTaskManagerSetTaskDataUsesAddNote(t *testing.T) {
@@ -141,6 +142,51 @@ func TestTaskManagerGetTaskIncludesDependencyMetadata(t *testing.T) {
 	if task.Metadata["dependencies"] != "d-1,d-2" {
 		t.Fatalf("expected dependency metadata, got %#v", task.Metadata)
 	}
+}
+
+func TestTaskManagerGetTaskTreeReportsMissingDependencies(t *testing.T) {
+	r := &fakeRunner{responses: map[string]string{
+		"tk query": `{"id":"root","status":"open","type":"epic","title":"Root"}` + "\n" +
+			`{"id":"root.1","status":"open","type":"task","parent":"root","title":"Blocked","deps":["root.2","ghost-1","ghost-2","ghost-1"]}` + "\n" +
+			`{"id":"root.2","status":"open","type":"task","title":"Dependency","parent":"root"}`,
+	}}
+	m := NewTaskManager(r)
+
+	tree, err := m.GetTaskTree(context.Background(), "root")
+	if err != nil {
+		t.Fatalf("get task tree failed: %v", err)
+	}
+
+	if len(tree.MissingDependencyIDs) != 2 || len(tree.MissingDependenciesByTask["root.1"]) != 2 {
+		t.Fatalf("expected 2 reported missing dependencies, got %v and %v", tree.MissingDependencyIDs, tree.MissingDependenciesByTask["root.1"])
+	}
+	if !reflect.DeepEqual(tree.MissingDependencyIDs, []string{"ghost-1", "ghost-2"}) {
+		t.Fatalf("unexpected missing dependency IDs: %#v", tree.MissingDependencyIDs)
+	}
+	if !reflect.DeepEqual(tree.MissingDependenciesByTask["root.1"], []string{"ghost-1", "ghost-2"}) {
+		t.Fatalf("unexpected task-specific missing dependencies: %#v", tree.MissingDependenciesByTask["root.1"])
+	}
+	if len(tree.Tasks) != 3 {
+		t.Fatalf("expected 3 tasks in tree, got %d", len(tree.Tasks))
+	}
+	if deps := tree.Tasks["root.1"].Metadata["dependencies"]; deps != "root.2" {
+		t.Fatalf("expected known dependency metadata root.2, got %q", deps)
+	}
+
+	assertTaskRelation := func(t *testing.T, relations []contracts.TaskRelation, want contracts.TaskRelation) {
+		t.Helper()
+		for _, relation := range relations {
+			if relation.FromID == want.FromID && relation.ToID == want.ToID && relation.Type == want.Type {
+				return
+			}
+		}
+		t.Fatalf("expected relation %#v, got %#v", want, relations)
+	}
+
+	assertTaskRelation(t, tree.Relations, contracts.TaskRelation{FromID: "root", ToID: "root.1", Type: contracts.RelationParent})
+	assertTaskRelation(t, tree.Relations, contracts.TaskRelation{FromID: "root", ToID: "root.2", Type: contracts.RelationParent})
+	assertTaskRelation(t, tree.Relations, contracts.TaskRelation{FromID: "root.1", ToID: "root.2", Type: contracts.RelationDependsOn})
+	assertTaskRelation(t, tree.Relations, contracts.TaskRelation{FromID: "root.2", ToID: "root.1", Type: contracts.RelationBlocks})
 }
 
 func TestTaskManagerGetTaskTreeTreatsOpenRootWithTerminalChildrenAsComplete(t *testing.T) {

@@ -94,25 +94,25 @@ func NewTaskGraph(nodes []TaskNode) (TaskGraph, error) {
 	return graph, nil
 }
 
-func (g TaskGraph) DependenciesOf(taskID string) []string {
+func (g *TaskGraph) DependenciesOf(taskID string) []string {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 	return append([]string(nil), g.dependencies[taskID]...)
 }
 
-func (g TaskGraph) DependentsOf(taskID string) []string {
+func (g *TaskGraph) DependentsOf(taskID string) []string {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 	return append([]string(nil), g.dependents[taskID]...)
 }
 
-func (g TaskGraph) ReadySet() []string {
+func (g *TaskGraph) ReadySet() []string {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 	return g.readySetLocked()
 }
 
-func (g TaskGraph) readySetLocked() []string {
+func (g *TaskGraph) readySetLocked() []string {
 	ready := make([]string, 0)
 
 	for id, node := range g.nodes {
@@ -171,7 +171,7 @@ func (g *TaskGraph) SetState(taskID string, state TaskState) error {
 	return nil
 }
 
-func (g TaskGraph) InspectNode(taskID string) (NodeInspection, error) {
+func (g *TaskGraph) InspectNode(taskID string) (NodeInspection, error) {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 	node, exists := g.nodes[taskID]

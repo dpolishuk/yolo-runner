@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/anomalyco/yolo-runner/internal/opencode"
-	"github.com/anomalyco/yolo-runner/internal/ui"
+	"github.com/egv/yolo-runner/v2/internal/opencode"
+	"github.com/egv/yolo-runner/v2/internal/ui"
 )
 
 type Bead struct {
@@ -499,7 +499,8 @@ func RunLoop(opts RunOnceOptions, deps RunOnceDeps, max int, runOnce func(RunOnc
 		result, err := runOnce(current, deps)
 		if err != nil {
 			if result == "blocked" {
-				completed++
+				// Keep going; blocked tasks are not completed and should not count
+				// toward the completion counter.
 				continue
 			}
 			return completed, err
@@ -509,8 +510,8 @@ func RunLoop(opts RunOnceOptions, deps RunOnceDeps, max int, runOnce func(RunOnc
 		case "completed":
 			completed++
 		case "blocked":
-			completed++
-			// Keep going; the next call should select a different open task.
+			// Keep going; blocked tasks are not completed.
+			continue
 		case "no_tasks":
 			beadsClient := getLegacyBeadsClient(deps)
 			if beadsClient != nil {

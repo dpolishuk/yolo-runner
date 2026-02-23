@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/anomalyco/yolo-runner/internal/contracts"
+	"github.com/egv/yolo-runner/v2/internal/contracts"
 )
 
 func TestNewStorageBackendAcceptsValidAuth(t *testing.T) {

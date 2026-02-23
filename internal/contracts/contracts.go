@@ -45,6 +45,14 @@ type TaskTree struct {
 	Root      Task
 	Tasks     map[string]Task
 	Relations []TaskRelation
+
+	// MissingDependencyIDs contains dependency IDs referenced by tasks in the tree
+	// that are not present in the snapshot.
+	MissingDependencyIDs []string
+
+	// MissingDependenciesByTask maps task IDs to dependency IDs they reference that are
+	// missing from the snapshot.
+	MissingDependenciesByTask map[string][]string
 }
 
 type TaskRelation struct {
@@ -186,6 +194,7 @@ type EventType string
 
 const (
 	EventTypeRunStarted            EventType = "run_started"
+	EventTypeRunFinished           EventType = "run_finished"
 	EventTypeTaskStarted           EventType = "task_started"
 	EventTypeTaskFinished          EventType = "task_finished"
 	EventTypeRunnerStarted         EventType = "runner_started"

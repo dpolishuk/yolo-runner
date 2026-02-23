@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/anomalyco/yolo-runner/internal/logging"
+	"github.com/egv/yolo-runner/v2/internal/logging"
 )
 
 // CommandRunner handles execution with logging support

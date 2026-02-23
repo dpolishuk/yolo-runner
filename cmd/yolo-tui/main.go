@@ -8,11 +8,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/anomalyco/yolo-runner/internal/contracts"
-	"github.com/anomalyco/yolo-runner/internal/ui/monitor"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/egv/yolo-runner/v2/internal/contracts"
+	"github.com/egv/yolo-runner/v2/internal/ui/monitor"
+	"github.com/egv/yolo-runner/v2/internal/version"
 	"golang.org/x/term"
 )
 
@@ -21,6 +22,11 @@ func main() {
 }
 
 func RunMain(args []string, in io.Reader, out io.Writer, errOut io.Writer) int {
+	if version.IsVersionRequest(args) {
+		version.Print(out, "yolo-tui")
+		return 0
+	}
+
 	fs := flag.NewFlagSet("yolo-tui", flag.ContinueOnError)
 	fs.SetOutput(errOut)
 	eventsStdin := fs.Bool("events-stdin", true, "Read NDJSON events from stdin")
@@ -90,6 +96,7 @@ type fullscreenModel struct {
 	stream            <-chan streamMsg
 	errorLine         string
 	streamDone        bool
+	stopping          bool
 	holdOpen          bool
 	detailsCollapsed  bool
 	historyCollapsed  bool
@@ -151,6 +158,9 @@ func (m fullscreenModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case eventMsg:
 		m.monitor.Apply(typed.event)
+		if m.stopping && isTerminalEvent(typed.event.Type) {
+			m.stopping = false
+		}
 		m.viewport.SetContent(m.renderBody())
 		return m, waitForStreamMessage(m.stream)
 	case decodeErrorMsg:
@@ -163,13 +173,22 @@ func (m fullscreenModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.viewport.SetContent(m.renderBody())
 		return m, nil
 	case tea.KeyMsg:
-		switch typed.String() {
-		case "ctrl+c", "q":
+		rawKey := typed.String()
+		normalizedKey := strings.ToLower(strings.TrimSpace(rawKey))
+		switch rawKey {
+		case "ctrl+c", "q", "Q", "ctrl+q":
+			if m.streamDone {
+				return m, tea.Quit
+			}
+			m.stopping = true
+			m.viewport.SetContent(m.renderBody())
+			return m, nil
+		case "esc", "escape":
 			return m, tea.Quit
-		case "pgup":
+		case "pgup", "pageup":
 			m.viewport.HalfViewUp()
 			return m, nil
-		case "pgdown":
+		case "pgdown", "pagedown":
 			m.viewport.HalfViewDown()
 			return m, nil
 		case "d":
@@ -184,12 +203,12 @@ func (m fullscreenModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.historyCollapsed = !m.historyCollapsed
 			m.viewport.SetContent(m.renderBody())
 			return m, nil
-		case "up", "down", "left", "right", "j", "k", "h", "l", "enter", " ":
-			key := typed.String()
-			if key == " " {
-				key = "space"
-			}
-			m.monitor.HandleKey(key)
+		case " ":
+			normalizedKey = "space"
+		}
+		switch normalizedKey {
+		case "up", "down", "left", "right", "j", "k", "h", "l", "enter", "space":
+			m.monitor.HandleKey(normalizedKey)
 			m.viewport.SetContent(m.renderBody())
 			return m, nil
 		}
@@ -283,7 +302,11 @@ func stylePanelLines(lines []monitor.UIPanelLine, width int) []displayLine {
 				glyph = "[+]"
 			}
 		}
-		text := strings.Repeat("  ", maxInt(0, line.Depth)) + glyph + " " + line.Label
+		label := line.Label
+		if line.Completed && !strings.HasPrefix(strings.TrimSpace(label), "✅") {
+			label = "✅ " + label
+		}
+		text := strings.Repeat("  ", maxInt(0, line.Depth)) + glyph + " " + label
 		tone := "normal"
 		if line.Severity == "warning" {
 			tone = "warning"
@@ -508,6 +531,10 @@ func (m fullscreenModel) View() string {
 		foot.Render(truncateLine(m.statusLine, width)),
 		foot.Render(truncateLine(m.keyHint, width)),
 	}
+	if m.stopping {
+		stop := lipgloss.NewStyle().Width(width).Foreground(lipgloss.Color("230")).Background(lipgloss.Color("52")).Bold(true)
+		footer = append(footer, stop.Render("Stopping..."))
+	}
 	if m.errorLine != "" {
 		warn := lipgloss.NewStyle().Width(width).Foreground(lipgloss.Color("230")).Background(lipgloss.Color("94"))
 		footer = append(footer, warn.Render(truncateLine("⚠ decode: "+m.errorLine, width)))
@@ -517,6 +544,15 @@ func (m fullscreenModel) View() string {
 		footer = append(footer, done.Render("🧾 stream ended"))
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, m.viewport.View(), strings.Join(footer, "\n"))
+}
+
+func isTerminalEvent(eventType contracts.EventType) bool {
+	switch eventType {
+	case contracts.EventTypeRunnerFinished, contracts.EventTypeTaskFinished:
+		return true
+	default:
+		return false
+	}
 }
 
 func runFullscreenFromReader(reader io.Reader, out io.Writer, errOut io.Writer) error {

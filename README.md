@@ -98,6 +98,35 @@ Init usage:
 
 This performs the agent installation step by copying `yolo.md` into `.opencode/agent/yolo.md`.
 
+## Update
+
+Use `update` to refresh `yolo-runner` from GitHub release artifacts.
+
+```bash
+./bin/yolo-runner update [flags]
+```
+
+Flags:
+
+- `--release` (default `latest`): install the latest release, or pin to a specific tag like `v1.2.3`.
+- `--os` (default local OS): target OS (`linux`, `darwin`, `windows`).
+- `--arch` (default local architecture): target architecture (`amd64`, `arm64`).
+- `--install-dir`: optional destination directory (defaults to platform-specific `~/.local/bin`, or `%LOCALAPPDATA%/yolo-runner/bin` on Windows).
+- `--release-api`: base GitHub releases API URL (default `https://api.github.com/repos/egv/yolo-runner`).
+
+Resolution and selection behavior:
+
+- Release resolution uses `/releases/latest` for `latest`, or `/releases/tags/<tag>` for pinned tags.
+- The installer selects `yolo-runner_<os>_<arch>.tar.gz` for non-Windows and `yolo-runner_<os>_<arch>.zip` for Windows.
+- Checksums are validated from matching `checksums-<artifact>.txt` entries before install.
+
+Install constraints:
+
+- Install is transactional. If any file copy fails, the command rolls back all changes to the previous state.
+- The selected destination directory must be writable; updates fail with `not writable` when permissions block extraction or write.
+- On Windows, `--install-dir` must be an absolute Windows path (drive/UNC path) or the command fails with `unsupported Windows install path`.
+- Ensure the install directory is on `PATH`, or run `./bin/yolo-runner` with the full path.
+
 ## Run
 
 From repo root:
@@ -123,6 +152,14 @@ Use streaming mode to drive `yolo-tui` from stdin in real time:
 ```
 
 The monitor is decoder-safe: malformed NDJSON lines are surfaced as `decode_error` warnings in the UI and stderr while valid subsequent events continue rendering.
+
+`yolo-agent` also accepts `--tdd` to enable strict Red/Green/Refactor guidance in implementation prompts:
+
+```bash
+./bin/yolo-agent --repo . --root <root-id> --model openai/gpt-5.3-codex --tdd --stream | ./bin/yolo-tui --events-stdin
+```
+
+When `--tdd` is omitted, the agent still enforces existing implementation requirements but does not include the full explicit Red/Green/Refactor workflow.
 
 ### `yolo-agent` preflight (commit + push first)
 

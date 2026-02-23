@@ -16,14 +16,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/anomalyco/yolo-runner/internal/claude"
-	"github.com/anomalyco/yolo-runner/internal/codex"
-	"github.com/anomalyco/yolo-runner/internal/contracts"
-	githubtracker "github.com/anomalyco/yolo-runner/internal/github"
-	"github.com/anomalyco/yolo-runner/internal/kimi"
-	"github.com/anomalyco/yolo-runner/internal/linear"
-	"github.com/anomalyco/yolo-runner/internal/tk"
-	"github.com/anomalyco/yolo-runner/internal/ui/monitor"
+	"github.com/egv/yolo-runner/v2/internal/claude"
+	"github.com/egv/yolo-runner/v2/internal/codex"
+	"github.com/egv/yolo-runner/v2/internal/contracts"
+	githubtracker "github.com/egv/yolo-runner/v2/internal/github"
+	"github.com/egv/yolo-runner/v2/internal/kimi"
+	"github.com/egv/yolo-runner/v2/internal/linear"
+	"github.com/egv/yolo-runner/v2/internal/tk"
+	"github.com/egv/yolo-runner/v2/internal/ui/monitor"
 )
 
 func TestE2E_YoloAgentRunCompletesSeededTKTask(t *testing.T) {
@@ -67,6 +67,106 @@ func TestE2E_YoloAgentRunCompletesSeededTKTask(t *testing.T) {
 	}
 	if fakeAgent.requests[0].RepoRoot == repo {
 		t.Fatalf("expected runner repo root to use isolated clone path, got %q", fakeAgent.requests[0].RepoRoot)
+	}
+}
+
+func TestE2E_QualityGateBlocksLowQualityTaskAndCreatesComment(t *testing.T) {
+	repo := initSeededRepo(t)
+
+	taskID := "t-1"
+	taskManager := newInMemoryTaskManager(contracts.Task{
+		ID:       taskID,
+		Title:    "Low quality task",
+		ParentID: "root",
+		Status:   contracts.TaskStatusOpen,
+		Metadata: map[string]string{
+			"quality_score":  "45",
+			"quality_issues": "Missing acceptance criteria in task spec\nMissing testing plan",
+		},
+	})
+	runner := &fakeAgentRunner{
+		results: []contracts.RunnerResult{
+			{Status: contracts.RunnerResultCompleted},
+			{Status: contracts.RunnerResultCompleted, ReviewReady: true},
+		},
+	}
+	vcs := &fakeVCS{}
+
+	err := runWithComponents(context.Background(), runConfig{
+		repoRoot:         repo,
+		rootID:           "root",
+		qualityThreshold: 50,
+		maxTasks:         1,
+		backend:          backendCodex,
+		model:            "openai/gpt-5.3-codex",
+		stream:           false,
+		retryBudget:      1,
+	}, taskManager, runner, vcs)
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+
+	if got := taskManager.statusOf("t-1"); got != contracts.TaskStatusBlocked {
+		t.Fatalf("expected task status blocked, got %q", got)
+	}
+	if len(runner.requests) != 0 {
+		t.Fatalf("expected no runner requests for blocked task, got %d", len(runner.requests))
+	}
+	gotData := taskManager.data(taskID)
+	if gotData["triage_status"] != "blocked" {
+		t.Fatalf("expected triage_status=blocked, got %q", gotData["triage_status"])
+	}
+	if !strings.Contains(gotData["triage_reason"], "below threshold") {
+		t.Fatalf("expected quality threshold triage reason, got %q", gotData["triage_reason"])
+	}
+	if strings.TrimSpace(gotData["quality_gate_comment"]) == "" {
+		t.Fatalf("expected quality gate comment to be stored for blocked task")
+	}
+}
+
+func TestE2E_QualityGateAllowsHighQualityTask(t *testing.T) {
+	repo := initSeededRepo(t)
+
+	taskID := "t-1"
+	taskManager := newInMemoryTaskManager(contracts.Task{
+		ID:       taskID,
+		Title:    "High quality task",
+		ParentID: "root",
+		Status:   contracts.TaskStatusOpen,
+		Metadata: map[string]string{
+			"quality_score":  "92",
+			"quality_issues": "",
+		},
+	})
+	runner := &fakeAgentRunner{
+		results: []contracts.RunnerResult{
+			{Status: contracts.RunnerResultCompleted},
+			{Status: contracts.RunnerResultCompleted, ReviewReady: true},
+		},
+	}
+	vcs := &fakeVCS{}
+
+	err := runWithComponents(context.Background(), runConfig{
+		repoRoot:         repo,
+		rootID:           "root",
+		qualityThreshold: 50,
+		maxTasks:         1,
+		backend:          backendCodex,
+		model:            "openai/gpt-5.3-codex",
+		stream:           false,
+		retryBudget:      1,
+	}, taskManager, runner, vcs)
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	if got := taskManager.statusOf(taskID); got != contracts.TaskStatusClosed {
+		t.Fatalf("expected task status closed, got %q", got)
+	}
+	if len(runner.requests) != 2 {
+		t.Fatalf("expected implement+review runner requests, got %d", len(runner.requests))
+	}
+	if gotData := taskManager.data(taskID); gotData["triage_status"] == "blocked" {
+		t.Fatalf("did not expect quality gate blocked data on high quality task")
 	}
 }
 
@@ -551,11 +651,11 @@ func TestE2E_GitHubProfileProcessesAndClosesIssue(t *testing.T) {
 	runCommand(t, repo, "git", "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "init")
 
 	const (
-		rootID           = "101"
-		issueID          = "102"
-		rootIssueNumber  = 101
-		taskIssueNumber  = 102
-		profileName      = "github-demo"
+		rootID          = "101"
+		issueID         = "102"
+		rootIssueNumber = 101
+		taskIssueNumber = 102
+		profileName     = "github-demo"
 	)
 
 	writeTrackerConfigYAML(t, repo, `
@@ -566,7 +666,7 @@ profiles:
       type: github
       github:
         scope:
-          owner: anomalyco
+          owner: egv
           repo: yolo-runner
         auth:
           token_env: GITHUB_TOKEN
@@ -608,9 +708,9 @@ profiles:
 		}
 
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/repos/anomalyco/yolo-runner":
-			writeJSON(t, w, http.StatusOK, map[string]any{"full_name": "anomalyco/yolo-runner"})
-		case r.Method == http.MethodGet && r.URL.Path == "/repos/anomalyco/yolo-runner/issues":
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/egv/yolo-runner":
+			writeJSON(t, w, http.StatusOK, map[string]any{"full_name": "egv/yolo-runner"})
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/egv/yolo-runner/issues":
 			if got := r.URL.Query().Get("state"); got != "all" {
 				t.Fatalf("expected state=all query, got %q", got)
 			}
@@ -629,12 +729,12 @@ profiles:
 				issuePayload(rootIssueNumber, "GitHub e2e root", root),
 				issuePayload(taskIssueNumber, "Implement GitHub e2e demo", issue),
 			})
-		case r.Method == http.MethodGet && r.URL.Path == "/repos/anomalyco/yolo-runner/issues/102":
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/egv/yolo-runner/issues/102":
 			stateMu.Lock()
 			issue := issueState
 			stateMu.Unlock()
 			writeJSON(t, w, http.StatusOK, issuePayload(taskIssueNumber, "Implement GitHub e2e demo", issue))
-		case r.Method == http.MethodPatch && r.URL.Path == "/repos/anomalyco/yolo-runner/issues/102":
+		case r.Method == http.MethodPatch && r.URL.Path == "/repos/egv/yolo-runner/issues/102":
 			var payload struct {
 				State string `json:"state"`
 			}
@@ -646,7 +746,7 @@ profiles:
 			statusTransitions = append(statusTransitions, issueState)
 			stateMu.Unlock()
 			writeJSON(t, w, http.StatusOK, map[string]any{"number": taskIssueNumber})
-		case r.Method == http.MethodPost && r.URL.Path == "/repos/anomalyco/yolo-runner/issues/102/comments":
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/egv/yolo-runner/issues/102/comments":
 			writeJSON(t, w, http.StatusCreated, map[string]any{"id": 1})
 		default:
 			t.Fatalf("unexpected GitHub API request: %s %s", r.Method, r.URL.String())
@@ -656,8 +756,8 @@ profiles:
 
 	originalFactory := newGitHubTaskManager
 	newGitHubTaskManager = func(cfg githubtracker.Config) (contracts.TaskManager, error) {
-		if cfg.Owner != "anomalyco" {
-			return nil, errors.New("expected owner anomalyco")
+		if cfg.Owner != "egv" {
+			return nil, errors.New("expected owner egv")
 		}
 		if cfg.Repo != "yolo-runner" {
 			return nil, errors.New("expected repository yolo-runner")
@@ -1389,6 +1489,106 @@ func mustCreateTicket(t *testing.T, runner localRunner, title string, issueType 
 		t.Fatalf("create ticket failed: %v (%s)", err, out)
 	}
 	return strings.TrimSpace(out)
+}
+
+func initSeededRepo(t *testing.T) string {
+	t.Helper()
+	repo := t.TempDir()
+	runCommand(t, repo, "git", "init")
+	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatalf("write seed file: %v", err)
+	}
+	runCommand(t, repo, "git", "add", "README.md")
+	runCommand(t, repo, "git", "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "init")
+	return repo
+}
+
+type inMemoryTaskManager struct {
+	mu     sync.Mutex
+	tasks  map[string]contracts.Task
+	states map[string]contracts.TaskStatus
+	dataBy map[string]map[string]string
+}
+
+func newInMemoryTaskManager(tasks ...contracts.Task) *inMemoryTaskManager {
+	taskMap := map[string]contracts.Task{}
+	states := map[string]contracts.TaskStatus{}
+	for _, task := range tasks {
+		taskCopy := task
+		if taskCopy.Metadata == nil {
+			taskCopy.Metadata = map[string]string{}
+		}
+		taskMap[task.ID] = taskCopy
+		states[task.ID] = task.Status
+	}
+	return &inMemoryTaskManager{
+		tasks:  taskMap,
+		states: states,
+		dataBy: map[string]map[string]string{},
+	}
+}
+
+func (m *inMemoryTaskManager) NextTasks(context.Context, string) ([]contracts.TaskSummary, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var summaries []contracts.TaskSummary
+	for _, task := range m.tasks {
+		if m.states[task.ID] == contracts.TaskStatusOpen {
+			summaries = append(summaries, contracts.TaskSummary{ID: task.ID, Title: task.Title})
+		}
+	}
+	return summaries, nil
+}
+
+func (m *inMemoryTaskManager) GetTask(_ context.Context, taskID string) (contracts.Task, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	task, ok := m.tasks[taskID]
+	if !ok {
+		return contracts.Task{}, errors.New("missing task")
+	}
+	task.Status = m.states[taskID]
+	taskCopy := task
+	return taskCopy, nil
+}
+
+func (m *inMemoryTaskManager) SetTaskStatus(_ context.Context, taskID string, status contracts.TaskStatus) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.states[taskID] = status
+	if task, ok := m.tasks[taskID]; ok {
+		task.Status = status
+		m.tasks[taskID] = task
+	}
+	return nil
+}
+
+func (m *inMemoryTaskManager) SetTaskData(_ context.Context, taskID string, data map[string]string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.dataBy[taskID] == nil {
+		m.dataBy[taskID] = map[string]string{}
+	}
+	for key, value := range data {
+		m.dataBy[taskID][key] = value
+	}
+	return nil
+}
+
+func (m *inMemoryTaskManager) statusOf(taskID string) contracts.TaskStatus {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.states[taskID]
+}
+
+func (m *inMemoryTaskManager) data(taskID string) map[string]string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	copy := map[string]string{}
+	for key, value := range m.dataBy[taskID] {
+		copy[key] = value
+	}
+	return copy
 }
 
 func runCommand(t *testing.T, dir string, name string, args ...string) {

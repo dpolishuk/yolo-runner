@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/anomalyco/yolo-runner/internal/contracts"
-	"github.com/anomalyco/yolo-runner/internal/ui/monitor"
+	"github.com/egv/yolo-runner/v2/internal/contracts"
+	"github.com/egv/yolo-runner/v2/internal/ui/monitor"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -261,6 +261,48 @@ func TestFullscreenModelStaysOpenAfterStreamDoneUntilQuitKey(t *testing.T) {
 	_ = updated
 }
 
+func TestFullscreenModelSupportsAdditionalQuitShortcuts(t *testing.T) {
+	stream := make(chan streamMsg)
+	close(stream)
+	m := newFullscreenModel(stream, demoEvents(time.Now().UTC()), true)
+	m.detailsCollapsed = false
+	m.activityCollapsed = false
+	m.historyCollapsed = false
+	streamDoneModel, _ := m.Update(streamDoneMsg{})
+	m = streamDoneModel.(fullscreenModel)
+
+	for _, tc := range []struct {
+		name string
+		msg  tea.KeyMsg
+	}{
+		{name: "q", msg: tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}}},
+		{name: "Q", msg: tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'Q'}}},
+		{name: "ctrl+q", msg: tea.KeyMsg{Type: tea.KeyCtrlQ}},
+		{name: "ctrl+c", msg: tea.KeyMsg{Type: tea.KeyCtrlC}},
+		{name: "esc", msg: tea.KeyMsg{Type: tea.KeyEsc}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			updated, cmd := m.Update(tc.msg)
+			if cmd == nil {
+				t.Fatalf("expected quit command for %s", tc.name)
+			}
+			if _, ok := cmd().(tea.QuitMsg); !ok {
+				t.Fatalf("expected tea.QuitMsg for %s, got %T", tc.name, cmd())
+			}
+			next := updated.(fullscreenModel)
+			if next.detailsCollapsed != false {
+				t.Fatalf("expected detailsCollapsed false after %s", tc.name)
+			}
+			if next.activityCollapsed != false {
+				t.Fatalf("expected activityCollapsed false after %s", tc.name)
+			}
+			if next.historyCollapsed != false {
+				t.Fatalf("expected historyCollapsed false after %s", tc.name)
+			}
+		})
+	}
+}
+
 func TestStylePanelLinesUsesDepthWithoutMarkers(t *testing.T) {
 	lines := []monitor.UIPanelLine{
 		{ID: "run", Depth: 0, Label: "Run", Selected: false, Expanded: true, Leaf: false},
@@ -275,6 +317,19 @@ func TestStylePanelLinesUsesDepthWithoutMarkers(t *testing.T) {
 	}
 	if !contains(styled[1].text, "  [-] Workers") {
 		t.Fatalf("expected indentation from depth, got %q", styled[1].text)
+	}
+}
+
+func TestStylePanelLinesAddsCompletedMarkerFromUIState(t *testing.T) {
+	lines := []monitor.UIPanelLine{
+		{ID: "task:task-1", Depth: 2, Label: "task-1 - First", Completed: true, Leaf: true},
+	}
+	styled := stylePanelLines(lines, 80)
+	if len(styled) != 1 {
+		t.Fatalf("expected one line, got %#v", styled)
+	}
+	if !contains(styled[0].text, "✅ task-1 - First") {
+		t.Fatalf("expected completed marker to be added from state, got %q", styled[0].text)
 	}
 }
 

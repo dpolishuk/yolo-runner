@@ -23,10 +23,10 @@ func TestInstallMatrixDefinesSupportedPlatformsAndShellNotes(t *testing.T) {
 	matrix := readRepoFile(t, "docs", "install-matrix.md")
 
 	requiredPlatformEntries := map[string]bool{
-		"macOS|amd64":  false,
-		"macOS|arm64":  false,
-		"Linux|amd64":  false,
-		"Linux|arm64":  false,
+		"macOS|amd64":   false,
+		"macOS|arm64":   false,
+		"Linux|amd64":   false,
+		"Linux|arm64":   false,
 		"Windows|amd64": false,
 	}
 	for _, line := range strings.Split(matrix, "\n") {
@@ -123,3 +123,30 @@ func TestInstallMatrixEntriesIncludeCommandAndSuccessCriteria(t *testing.T) {
 	}
 }
 
+func TestPowerShellInstallScriptTargetsCanonicalRepository(t *testing.T) {
+	content := readRepoFile(t, "install.ps1")
+	if !strings.Contains(content, "https://github.com/egv/yolo-runner/releases/latest/download") {
+		t.Fatalf("install.ps1 should point to egv/yolo-runner release base URL")
+	}
+	if strings.Contains(content, "anomalyco/yolo-runner") {
+		t.Fatalf("install.ps1 should not reference anomalyco/yolo-runner")
+	}
+}
+
+func TestInstallMatrixReferencesEgvRepository(t *testing.T) {
+	matrix := readRepoFile(t, "docs", "install-matrix.md")
+
+	required := []string{
+		"github.com/egv/yolo-runner/releases/latest/download/yolo-runner_linux_amd64.tar.gz",
+		"github.com/egv/yolo-runner/releases/download/$tag/yolo-runner_windows_amd64.zip",
+		"raw.githubusercontent.com/egv/yolo-runner/main/install.sh",
+		"raw.githubusercontent.com/egv/yolo-runner/main/install.ps1",
+		"api.github.com/repos/egv/yolo-runner/releases/latest",
+	}
+
+	for _, needle := range required {
+		if !strings.Contains(matrix, needle) {
+			t.Fatalf("install matrix missing expected repository reference: %q", needle)
+		}
+	}
+}

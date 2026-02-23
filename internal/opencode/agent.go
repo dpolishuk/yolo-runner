@@ -9,8 +9,10 @@ import (
 )
 
 const (
-	agentRelativePath       = ".opencode/agent/yolo.md"
-	agentSourceRelativePath = "yolo.md"
+	agentRelativePath              = ".opencode/agent/yolo.md"
+	agentSourceRelativePath        = "yolo.md"
+	releaseAgentRelativePath       = ".opencode/agent/release.md"
+	releaseAgentSourceRelativePath = "agent/release.md"
 )
 
 var (
@@ -34,18 +36,34 @@ func ValidateAgent(repoRoot string) error {
 }
 
 func InitAgent(repoRoot string) error {
-	sourcePath := filepath.Join(repoRoot, agentSourceRelativePath)
-	sourceContent, err := os.ReadFile(sourcePath)
-	if err != nil {
-		return fmt.Errorf("read yolo agent template: %w", err)
+	for _, item := range []struct {
+		src      string
+		dst      string
+		required bool
+	}{
+		{agentSourceRelativePath, agentRelativePath, true},
+		{releaseAgentSourceRelativePath, releaseAgentRelativePath, false},
+	} {
+		sourcePath := filepath.Join(repoRoot, item.src)
+		sourceContent, err := os.ReadFile(sourcePath)
+		if os.IsNotExist(err) {
+			if item.required {
+				return fmt.Errorf("read yolo agent template: %w", err)
+			}
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("read agent template from %s: %w", item.src, err)
+		}
+		destinationPath := filepath.Join(repoRoot, item.dst)
+		if err := os.MkdirAll(filepath.Dir(destinationPath), 0o755); err != nil {
+			return fmt.Errorf("create agent dir: %w", err)
+		}
+		if err := os.WriteFile(destinationPath, sourceContent, 0o644); err != nil {
+			return fmt.Errorf("write agent file: %w", err)
+		}
 	}
-	destinationPath := filepath.Join(repoRoot, agentRelativePath)
-	if err := os.MkdirAll(filepath.Dir(destinationPath), 0o755); err != nil {
-		return fmt.Errorf("create agent dir: %w", err)
-	}
-	if err := os.WriteFile(destinationPath, sourceContent, 0o644); err != nil {
-		return fmt.Errorf("write agent file: %w", err)
-	}
+
 	return nil
 }
 
