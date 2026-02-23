@@ -51,14 +51,10 @@ jobs:
           built=()
           for binary in $binaries; do
             output="dist/${binary}${ext}"
-            if [[ "$binary" == "yolo-runner" ]]; then
-              ldflags="-X main.yoloRunnerVersion=${{ github.ref_name }}"
-            else
-              ldflags=""
-            fi
+            ldflags="-X github.com/egv/yolo-runner/v2/internal/version.Version=${{ github.ref_name }}"
 
             GOOS="${{ matrix.os }}" GOARCH="${{ matrix.arch }}" \
-              go build -trimpath ${ldflags:+-ldflags "$ldflags"} -o "$output" "./cmd/$binary"
+              go build -trimpath -ldflags "$ldflags" -o "$output" "./cmd/$binary"
             built+=("$output")
           done
 

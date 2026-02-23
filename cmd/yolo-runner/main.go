@@ -25,6 +25,7 @@ import (
 	"github.com/egv/yolo-runner/v2/internal/tk"
 	"github.com/egv/yolo-runner/v2/internal/ui/tui"
 	gitadapter "github.com/egv/yolo-runner/v2/internal/vcs/git"
+	"github.com/egv/yolo-runner/v2/internal/version"
 	"gopkg.in/yaml.v3"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -95,7 +96,7 @@ type runnerConfigAgent struct {
 }
 
 const (
-	runnerModeUI      = "ui"
+	runnerModeUI       = "ui"
 	runnerModeHeadless = "headless"
 	runnerConfigPath   = ".yolo-runner/config.yaml"
 )
@@ -151,12 +152,6 @@ var isTerminal = func(writer io.Writer) bool {
 		return term.IsTerminal(int(file.Fd()))
 	}
 	return false
-}
-
-var yoloRunnerVersion = "dev"
-
-func isVersionRequest(args []string) bool {
-	return len(args) == 1 && (args[0] == "--version" || args[0] == "-version")
 }
 
 var newTUIProgram = func(model tea.Model, stdout io.Writer, input io.Reader) tuiProgram {
@@ -357,11 +352,8 @@ func (o openCodeAdapter) RunWithContext(ctx context.Context, issueID string, rep
 }
 
 func RunOnceMain(args []string, runOnce runOnceFunc, exit exitFunc, stdout io.Writer, stderr io.Writer, beadsRunner beadsRunner, gitRunner gitRunner) int {
-	if isVersionRequest(args) {
-		if stdout == nil {
-			stdout = io.Discard
-		}
-		fmt.Fprintf(stdout, "yolo-runner %s\n", yoloRunnerVersion)
+	if version.IsVersionRequest(args) {
+		version.Print(stdout, "yolo-runner")
 		if exit != nil {
 			exit(0)
 		}
