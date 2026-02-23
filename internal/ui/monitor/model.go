@@ -843,7 +843,7 @@ func normalizeTerminalStatus(status string) string {
 }
 
 func isCompletedTerminalStatus(status string) bool {
-	return status == "completed" || status == "closed"
+	return status == "completed" || status == "closed" || status == "done"
 }
 
 func isTerminalStatus(status string) bool {
@@ -856,7 +856,7 @@ func severityFromTerminalStatus(status string) string {
 		return "error"
 	case "blocked":
 		return "warning"
-	case "completed", "closed":
+	case "completed", "closed", "done":
 		return "info"
 	default:
 		return "none"
