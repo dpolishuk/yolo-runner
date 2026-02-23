@@ -36,6 +36,8 @@ type runConfig struct {
 	profile              string
 	trackerType          string
 	model                string
+	qualityThreshold     int
+	allowLowQuality      bool
 	maxTasks             int
 	retryBudget          int
 	concurrency          int
@@ -66,6 +68,8 @@ func RunMain(args []string, run func(context.Context, runConfig) error) int {
 	agentBackend := fs.String("agent-backend", "", "Runner backend (opencode|codex|claude|kimi)")
 	model := fs.String("model", "", "Model for CLI agent")
 	profile := fs.String("profile", "", "Tracker profile name from .yolo-runner/config.yaml")
+	qualityThreshold := fs.Int("quality-threshold", 0, "Minimum quality score required to run a task")
+	allowLowQuality := fs.Bool("allow-low-quality", false, "Proceed with warning when quality score is below threshold")
 	max := fs.Int("max", 0, "Maximum tasks to execute")
 	concurrency := fs.Int("concurrency", 1, "Maximum number of active task workers")
 	dryRun := fs.Bool("dry-run", false, "Dry run task loop")
@@ -155,6 +159,10 @@ func RunMain(args []string, run func(context.Context, runConfig) error) int {
 		fmt.Fprintln(os.Stderr, "--stream-output-buffer must be greater than 0")
 		return 1
 	}
+	if *qualityThreshold < 0 {
+		fmt.Fprintln(os.Stderr, "--quality-threshold must be greater than or equal to 0")
+		return 1
+	}
 	if selectedWatchdogTimeout <= 0 {
 		fmt.Fprintln(os.Stderr, "--watchdog-timeout must be greater than 0")
 		return 1
@@ -186,6 +194,8 @@ func RunMain(args []string, run func(context.Context, runConfig) error) int {
 		verboseStream:        *verboseStream,
 		streamOutputInterval: *streamOutputInterval,
 		streamOutputBuffer:   *streamOutputBuffer,
+		qualityThreshold:     *qualityThreshold,
+		allowLowQuality:      *allowLowQuality,
 		runnerTimeout:        selectedRunnerTimeout,
 		watchdogTimeout:      selectedWatchdogTimeout,
 		watchdogInterval:     selectedWatchdogInterval,
@@ -317,23 +327,25 @@ func runWithComponents(ctx context.Context, cfg runConfig, taskManager contracts
 	}
 	vcsFactory := cloneScopedVCSFactory(cfg, vcs)
 	loop := agent.NewLoop(taskManager, runner, eventSink, agent.LoopOptions{
-		ParentID:           cfg.rootID,
-		MaxRetries:         cfg.retryBudget,
-		MaxTasks:           cfg.maxTasks,
-		Concurrency:        cfg.concurrency,
-		SchedulerStatePath: filepath.Join(cfg.repoRoot, ".yolo-runner", "scheduler-state.json"),
-		DryRun:             cfg.dryRun,
-		RepoRoot:           cfg.repoRoot,
-		Backend:            cfg.backend,
-		Model:              cfg.model,
-		RunnerTimeout:      cfg.runnerTimeout,
-		WatchdogTimeout:    cfg.watchdogTimeout,
-		WatchdogInterval:   cfg.watchdogInterval,
-		VCS:                vcs,
-		RequireReview:      true,
-		MergeOnSuccess:     true,
-		CloneManager:       agent.NewGitCloneManager(filepath.Join(cfg.repoRoot, ".yolo-runner", "clones")),
-		VCSFactory:         vcsFactory,
+		ParentID:             cfg.rootID,
+		MaxRetries:           cfg.retryBudget,
+		MaxTasks:             cfg.maxTasks,
+		Concurrency:          cfg.concurrency,
+		QualityGateThreshold: cfg.qualityThreshold,
+		AllowLowQuality:      cfg.allowLowQuality,
+		SchedulerStatePath:   filepath.Join(cfg.repoRoot, ".yolo-runner", "scheduler-state.json"),
+		DryRun:               cfg.dryRun,
+		RepoRoot:             cfg.repoRoot,
+		Backend:              cfg.backend,
+		Model:                cfg.model,
+		RunnerTimeout:        cfg.runnerTimeout,
+		WatchdogTimeout:      cfg.watchdogTimeout,
+		WatchdogInterval:     cfg.watchdogInterval,
+		VCS:                  vcs,
+		RequireReview:        true,
+		MergeOnSuccess:       true,
+		CloneManager:         agent.NewGitCloneManager(filepath.Join(cfg.repoRoot, ".yolo-runner", "clones")),
+		VCSFactory:           vcsFactory,
 	})
 	if eventSink != nil {
 		_ = eventSink.Emit(ctx, contracts.Event{
@@ -382,23 +394,25 @@ func runWithStorageComponents(ctx context.Context, cfg runConfig, storage contra
 	}
 	vcsFactory := cloneScopedVCSFactory(cfg, vcs)
 	loop := agent.NewLoopWithTaskEngine(storage, taskEngine, runner, eventSink, agent.LoopOptions{
-		ParentID:           cfg.rootID,
-		MaxRetries:         cfg.retryBudget,
-		MaxTasks:           cfg.maxTasks,
-		Concurrency:        cfg.concurrency,
-		SchedulerStatePath: filepath.Join(cfg.repoRoot, ".yolo-runner", "scheduler-state.json"),
-		DryRun:             cfg.dryRun,
-		RepoRoot:           cfg.repoRoot,
-		Backend:            cfg.backend,
-		Model:              cfg.model,
-		RunnerTimeout:      cfg.runnerTimeout,
-		WatchdogTimeout:    cfg.watchdogTimeout,
-		WatchdogInterval:   cfg.watchdogInterval,
-		VCS:                vcs,
-		RequireReview:      true,
-		MergeOnSuccess:     true,
-		CloneManager:       agent.NewGitCloneManager(filepath.Join(cfg.repoRoot, ".yolo-runner", "clones")),
-		VCSFactory:         vcsFactory,
+		ParentID:             cfg.rootID,
+		MaxRetries:           cfg.retryBudget,
+		MaxTasks:             cfg.maxTasks,
+		Concurrency:          cfg.concurrency,
+		QualityGateThreshold: cfg.qualityThreshold,
+		AllowLowQuality:      cfg.allowLowQuality,
+		SchedulerStatePath:   filepath.Join(cfg.repoRoot, ".yolo-runner", "scheduler-state.json"),
+		DryRun:               cfg.dryRun,
+		RepoRoot:             cfg.repoRoot,
+		Backend:              cfg.backend,
+		Model:                cfg.model,
+		RunnerTimeout:        cfg.runnerTimeout,
+		WatchdogTimeout:      cfg.watchdogTimeout,
+		WatchdogInterval:     cfg.watchdogInterval,
+		VCS:                  vcs,
+		RequireReview:        true,
+		MergeOnSuccess:       true,
+		CloneManager:         agent.NewGitCloneManager(filepath.Join(cfg.repoRoot, ".yolo-runner", "clones")),
+		VCSFactory:           vcsFactory,
 	})
 	if eventSink != nil {
 		_ = eventSink.Emit(ctx, contracts.Event{
@@ -433,9 +447,11 @@ func buildRunStartedMetadata(cfg runConfig) map[string]string {
 		"backend":                normalizeBackend(cfg.backend),
 		"profile":                strings.TrimSpace(cfg.profile),
 		"tracker":                strings.TrimSpace(cfg.trackerType),
+		"quality_threshold":      strconv.Itoa(cfg.qualityThreshold),
 		"retry_budget":           strconv.Itoa(cfg.retryBudget),
 		"concurrency":            strconv.Itoa(cfg.concurrency),
 		"model":                  cfg.model,
+		"allow_low_quality":      strconv.FormatBool(cfg.allowLowQuality),
 		"runner_timeout":         cfg.runnerTimeout.String(),
 		"stream":                 strconv.FormatBool(cfg.stream),
 		"verbose_stream":         strconv.FormatBool(cfg.verboseStream),

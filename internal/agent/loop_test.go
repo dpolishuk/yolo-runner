@@ -413,6 +413,63 @@ func TestLoopMarksBlockedWithReason(t *testing.T) {
 	}
 }
 
+func TestLoopBlocksTaskBelowQualityThreshold(t *testing.T) {
+	mgr := newFakeTaskManager(contracts.Task{
+		ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen,
+		Metadata: map[string]string{"quality_score": "45"},
+	})
+	run := &fakeRunner{results: []contracts.RunnerResult{{Status: contracts.RunnerResultCompleted}}}
+	loop := NewLoop(mgr, run, nil, LoopOptions{ParentID: "root", QualityGateThreshold: 50})
+
+	summary, err := loop.Run(context.Background())
+	if err != nil {
+		t.Fatalf("loop failed: %v", err)
+	}
+	if summary.Blocked != 1 {
+		t.Fatalf("expected blocked summary, got %#v", summary)
+	}
+	if mgr.statusByID["t-1"] != contracts.TaskStatusBlocked {
+		t.Fatalf("expected blocked status, got %s", mgr.statusByID["t-1"])
+	}
+	if len(run.requests) != 0 {
+		t.Fatalf("expected no runner requests when blocked by quality gate, got %d", len(run.requests))
+	}
+	if got := mgr.dataByID["t-1"]["triage_status"]; got != "blocked" {
+		t.Fatalf("expected triage_status=blocked, got %q", got)
+	}
+	if got := mgr.dataByID["t-1"]["triage_reason"]; !strings.Contains(got, "below threshold") {
+		t.Fatalf("expected triage_reason to mention quality threshold, got %q", got)
+	}
+}
+
+func TestLoopAllowsTaskBelowQualityThresholdWithOverride(t *testing.T) {
+	mgr := newFakeTaskManager(contracts.Task{
+		ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen,
+		Metadata: map[string]string{"quality_score": "45"},
+	})
+	sink := &recordingSink{}
+	run := &fakeRunner{results: []contracts.RunnerResult{{Status: contracts.RunnerResultCompleted}}}
+	loop := NewLoop(mgr, run, sink, LoopOptions{ParentID: "root", QualityGateThreshold: 50, AllowLowQuality: true})
+
+	summary, err := loop.Run(context.Background())
+	if err != nil {
+		t.Fatalf("loop failed: %v", err)
+	}
+	if summary.Completed != 1 {
+		t.Fatalf("expected completed summary, got %#v", summary)
+	}
+	if mgr.statusByID["t-1"] != contracts.TaskStatusClosed {
+		t.Fatalf("expected closed status, got %s", mgr.statusByID["t-1"])
+	}
+	warnings := eventsByType(sink.events, contracts.EventTypeRunnerWarning)
+	if len(warnings) != 1 {
+		t.Fatalf("expected one quality-gate warning, got %d", len(warnings))
+	}
+	if warnings[0].Message == "" || !strings.Contains(warnings[0].Metadata["reason"], "below threshold") {
+		t.Fatalf("expected warning with quality reason, got %#v", warnings[0].Metadata)
+	}
+}
+
 func TestLoopCreatesAndChecksOutTaskBranchBeforeRun(t *testing.T) {
 	mgr := newFakeTaskManager(contracts.Task{ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen})
 	run := &fakeRunner{results: []contracts.RunnerResult{{Status: contracts.RunnerResultCompleted}}}
@@ -802,7 +859,7 @@ func (r *structuredDecisionRunner) Run(_ context.Context, request contracts.Runn
 		return contracts.RunnerResult{Status: contracts.RunnerResultFailed, Reason: err.Error()}, nil
 	}
 	if err := logger.Log("warn", map[string]interface{}{
-		"message": "decision event",
+		"message":  "decision event",
 		"decision": "failed",
 	}); err != nil {
 		return contracts.RunnerResult{Status: contracts.RunnerResultFailed, Reason: err.Error()}, nil

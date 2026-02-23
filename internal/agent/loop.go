@@ -47,6 +47,8 @@ type LoopOptions struct {
 	WatchdogInterval     time.Duration
 	HeartbeatInterval    time.Duration
 	NoOutputWarningAfter time.Duration
+	QualityGateThreshold int
+	AllowLowQuality      bool
 	VCS                  contracts.VCS
 	RequireReview        bool
 	MergeOnSuccess       bool
@@ -244,6 +246,88 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 		return summary, err
 	}
 	_ = l.emit(ctx, contracts.Event{Type: contracts.EventTypeTaskStarted, TaskID: task.ID, TaskTitle: task.Title, WorkerID: worker, QueuePos: queuePos, Message: task.Title, Timestamp: time.Now().UTC()})
+
+	if qualityScore, ok := taskQualityScore(task.Metadata); ok && l.options.QualityGateThreshold > 0 && qualityScore < l.options.QualityGateThreshold {
+		qualityGateReason := fmt.Sprintf("quality score %d is below threshold %d", qualityScore, l.options.QualityGateThreshold)
+		qualityMetadata := map[string]string{
+			"quality_score":     strconv.Itoa(qualityScore),
+			"quality_threshold": strconv.Itoa(l.options.QualityGateThreshold),
+			"quality_gate":      "true",
+		}
+		if l.options.AllowLowQuality {
+			warningMetadata := map[string]string{
+				"quality_threshold": strconv.Itoa(l.options.QualityGateThreshold),
+				"quality_score":     strconv.Itoa(qualityScore),
+				"reason":            qualityGateReason,
+			}
+			for key, value := range qualityMetadata {
+				warningMetadata[key] = value
+			}
+			_ = l.emit(ctx, contracts.Event{
+				Type:      contracts.EventTypeRunnerWarning,
+				TaskID:    task.ID,
+				TaskTitle: task.Title,
+				WorkerID:  worker,
+				ClonePath: l.options.RepoRoot,
+				QueuePos:  queuePos,
+				Message:   "quality gate threshold overridden by --allow-low-quality",
+				Metadata:  warningMetadata,
+				Timestamp: time.Now().UTC(),
+			})
+		} else {
+			blockedData := map[string]string{
+				"triage_status":     "blocked",
+				"triage_reason":     qualityGateReason,
+				"quality_score":     strconv.Itoa(qualityScore),
+				"quality_threshold": strconv.Itoa(l.options.QualityGateThreshold),
+				"quality_gate":      "true",
+			}
+			blockedData = appendDecisionMetadata(blockedData, "blocked", qualityGateReason)
+			if err := l.markTaskBlockedWithData(task.ID, blockedData); err != nil {
+				return summary, err
+			}
+			if err := l.tasks.SetTaskStatus(ctx, task.ID, contracts.TaskStatusBlocked); err != nil {
+				return summary, err
+			}
+			finishedMetadata := map[string]string{
+				"triage_status":     "blocked",
+				"triage_reason":     qualityGateReason,
+				"quality_score":     strconv.Itoa(qualityScore),
+				"quality_threshold": strconv.Itoa(l.options.QualityGateThreshold),
+				"quality_gate":      "true",
+			}
+			finishedMetadata = appendDecisionMetadata(finishedMetadata, "blocked", qualityGateReason)
+			_ = l.emit(ctx, contracts.Event{
+				Type:      contracts.EventTypeTaskFinished,
+				TaskID:    task.ID,
+				TaskTitle: task.Title,
+				WorkerID:  worker,
+				ClonePath: l.options.RepoRoot,
+				QueuePos:  queuePos,
+				Message:   string(contracts.TaskStatusBlocked),
+				Metadata:  finishedMetadata,
+				Timestamp: time.Now().UTC(),
+			})
+			if err := l.tasks.SetTaskData(ctx, task.ID, blockedData); err != nil {
+				return summary, err
+			}
+			_ = l.emit(ctx, contracts.Event{
+				Type:      contracts.EventTypeTaskDataUpdated,
+				TaskID:    task.ID,
+				TaskTitle: task.Title,
+				WorkerID:  worker,
+				ClonePath: l.options.RepoRoot,
+				QueuePos:  queuePos,
+				Metadata:  blockedData,
+				Timestamp: time.Now().UTC(),
+			})
+			if err := l.clearTaskTerminalState(task.ID); err != nil {
+				return summary, err
+			}
+			summary.Blocked++
+			return summary, nil
+		}
+	}
 
 	taskRepoRoot := l.options.RepoRoot
 	if l.cloneManager != nil {
@@ -952,6 +1036,18 @@ func reviewRetryPromptContext(metadata map[string]string) (int, string) {
 		return 0, ""
 	}
 	return retryAttempt, reviewRetryBlockersFromMetadata(metadata)
+}
+
+func taskQualityScore(metadata map[string]string) (int, bool) {
+	raw := strings.TrimSpace(metadata["quality_score"])
+	if raw == "" {
+		return 0, false
+	}
+	score, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, false
+	}
+	return score, true
 }
 
 func reviewRetryBlockersFromMetadata(metadata map[string]string) string {
