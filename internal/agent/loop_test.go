@@ -262,6 +262,87 @@ func TestLoopPassesConfiguredModelToReviewRunnerRequest(t *testing.T) {
 	}
 }
 
+func TestLoopRetriesFailedImplementationWithFallbackModel(t *testing.T) {
+	cases := []struct {
+		name   string
+		reason string
+	}{
+		{
+			name:   "type failure",
+			reason: "type failure: expected string but got number",
+		},
+		{
+			name:   "tool failure",
+			reason: "tool failure: shell command timed out",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mgr := newFakeTaskManager(contracts.Task{ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen})
+			run := &fakeRunner{results: []contracts.RunnerResult{
+				{Status: contracts.RunnerResultFailed, Reason: tc.reason},
+				{Status: contracts.RunnerResultCompleted},
+			}}
+			loop := NewLoop(mgr, run, nil, LoopOptions{
+				ParentID:      "root",
+				Model:         "primary-model",
+				FallbackModel: "fallback-model",
+			})
+
+			summary, err := loop.Run(context.Background())
+			if err != nil {
+				t.Fatalf("loop failed: %v", err)
+			}
+			if summary.Completed != 1 {
+				t.Fatalf("expected task completed after fallback retry, got %#v", summary)
+			}
+			if len(run.requests) != 2 {
+				t.Fatalf("expected fallback retry request sequence, got %d requests", len(run.requests))
+			}
+			if run.requests[0].Model != "primary-model" {
+				t.Fatalf("expected first request to use primary model, got %q", run.requests[0].Model)
+			}
+			if run.requests[1].Model != "fallback-model" {
+				t.Fatalf("expected fallback request to use fallback model, got %q", run.requests[1].Model)
+			}
+		})
+	}
+}
+
+func TestLoopLogsModelFallbackDecision(t *testing.T) {
+	mgr := newFakeTaskManager(contracts.Task{ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen})
+	run := &fakeRunner{results: []contracts.RunnerResult{
+		{Status: contracts.RunnerResultFailed, Reason: "tool failure: external tool not available"},
+		{Status: contracts.RunnerResultCompleted},
+	}}
+	sink := &recordingSink{}
+	loop := NewLoop(mgr, run, sink, LoopOptions{
+		ParentID:      "root",
+		Model:         "primary-model",
+		FallbackModel: "fallback-model",
+	})
+
+	_, err := loop.Run(context.Background())
+	if err != nil {
+		t.Fatalf("loop failed: %v", err)
+	}
+
+	runnerStarted := eventsByType(sink.events, contracts.EventTypeRunnerStarted)
+	if len(runnerStarted) != 2 {
+		t.Fatalf("expected two runner_started events for fallback attempt, got %d", len(runnerStarted))
+	}
+	fallbackStart := runnerStarted[1]
+	if fallbackStart.Metadata["decision"] != "model_fallback" {
+		t.Fatalf("expected model_fallback decision, got %#v", fallbackStart.Metadata)
+	}
+	if fallbackStart.Metadata["model_previous"] != "primary-model" {
+		t.Fatalf("expected fallback to include previous model, got %#v", fallbackStart.Metadata)
+	}
+	if fallbackStart.Metadata["model"] != "fallback-model" {
+		t.Fatalf("expected fallback runner_started model to be fallback-model, got %#v", fallbackStart.Metadata)
+	}
+}
+
 func TestLoopEmitsReviewAttemptTelemetryOnPassAfterRetry(t *testing.T) {
 	mgr := newFakeTaskManager(contracts.Task{ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen})
 	run := &fakeRunner{results: []contracts.RunnerResult{
