@@ -99,6 +99,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch typed := msg.(type) {
 	case runner.Event:
 		m.appendLogLines(formatRunnerEventLine(typed))
+		if typed.Message != "" {
+			m.appendLogLines(formatActionMessageLine(typed.Message))
+		}
 		m.taskID = typed.IssueID
 		m.taskTitle = typed.Title
 		m.phase = getPhaseLabel(typed.Type)
@@ -316,6 +319,23 @@ func formatRunnerEventLine(event runner.Event) string {
 		parts = append(parts, "event update")
 	}
 	return strings.Join(parts, " ")
+}
+
+func formatActionMessageLine(message string) string {
+	if message == "" {
+		return ""
+	}
+
+	cleanMessage := strings.TrimSpace(message)
+	if cleanMessage == "" {
+		return ""
+	}
+
+	style := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#8ca0d7")).
+		Italic(true)
+
+	return style.Render("→ " + cleanMessage)
 }
 
 func (m Model) lastOutputAge() string {

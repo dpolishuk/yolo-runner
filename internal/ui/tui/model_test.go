@@ -683,6 +683,100 @@ func TestModelRendersAgentThoughtsAsMarkdown(t *testing.T) {
 	}
 }
 
+func TestModelRendersThoughtEventInLogViewport(t *testing.T) {
+	fixedNow := time.Date(2026, 2, 10, 12, 0, 10, 0, time.UTC)
+	m := NewModel(func() time.Time { return fixedNow })
+
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 12})
+	m = updated.(Model)
+
+	updated, _ = m.Update(runner.Event{
+		Type:      runner.EventOpenCodeStart,
+		IssueID:   "task-1",
+		Title:     "Example Task",
+		EmittedAt: fixedNow.Add(-5 * time.Second),
+		Thought:   "## Analysis\n\nAgent should inspect the repository before editing files.",
+	})
+	m = updated.(Model)
+
+	view := strings.TrimSpace(m.View())
+	lines := strings.Split(view, "\n")
+
+	thoughtLineIndex := -1
+	statusBarIndex := -1
+	for i, line := range lines {
+		if strings.Contains(line, "Analysis") || strings.Contains(line, "inspect the repository") {
+			thoughtLineIndex = i
+		}
+		if strings.Contains(line, "task-1") && strings.Contains(line, "starting opencode") {
+			statusBarIndex = i
+		}
+	}
+
+	if thoughtLineIndex == -1 {
+		t.Fatalf("expected rendered thought content in log viewport, got: %q", view)
+	}
+	if statusBarIndex == -1 {
+		t.Fatalf("expected status bar in view, got: %q", view)
+	}
+	if thoughtLineIndex >= statusBarIndex {
+		t.Fatalf("expected thought content to render above status bar, got thought index %d status bar index %d", thoughtLineIndex, statusBarIndex)
+	}
+}
+
+func TestModelRendersActionMessagesInViewportWithStyle(t *testing.T) {
+	fixedNow := time.Date(2026, 2, 10, 12, 0, 10, 0, time.UTC)
+	m := NewModel(func() time.Time { return fixedNow })
+
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 12})
+	m = updated.(Model)
+
+	updated, _ = m.Update(runner.Event{
+		Type:      runner.EventSelectTask,
+		IssueID:   "task-1",
+		Title:     "Example Task",
+		EmittedAt: fixedNow.Add(-6 * time.Second),
+	})
+	m = updated.(Model)
+
+	actionMessage := "Inspecting local git status"
+	updated, _ = m.Update(runner.Event{
+		Type:      runner.EventBeadsUpdate,
+		IssueID:   "task-1",
+		Title:     "Example Task",
+		EmittedAt: fixedNow.Add(-5 * time.Second),
+		Message:   actionMessage,
+	})
+	m = updated.(Model)
+
+	expectedStyled := formatActionMessageLine(actionMessage)
+	view := strings.TrimSpace(m.View())
+	if !strings.Contains(view, expectedStyled) {
+		t.Fatalf("expected styled action message in view, got: %q", view)
+	}
+
+	lines := strings.Split(view, "\n")
+	styleLineIndex := -1
+	statusBarIndex := -1
+	for i, line := range lines {
+		if strings.Contains(line, expectedStyled) {
+			styleLineIndex = i
+		}
+		if strings.Contains(line, "task-1") && strings.Contains(line, "updating task status") {
+			statusBarIndex = i
+		}
+	}
+	if styleLineIndex == -1 {
+		t.Fatalf("expected action message line in log viewport, got: %q", view)
+	}
+	if statusBarIndex == -1 {
+		t.Fatalf("expected status bar in view, got: %q", view)
+	}
+	if styleLineIndex >= statusBarIndex {
+		t.Fatalf("expected styled action message above status bar, got action message index %d status bar index %d", styleLineIndex, statusBarIndex)
+	}
+}
+
 func TestModelUsesStatusBarComponent(t *testing.T) {
 	fixedNow := time.Date(2026, 1, 19, 12, 0, 10, 0, time.UTC)
 	m := NewModel(func() time.Time { return fixedNow })
