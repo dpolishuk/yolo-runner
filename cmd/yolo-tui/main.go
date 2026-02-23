@@ -285,7 +285,11 @@ func stylePanelLines(lines []monitor.UIPanelLine, width int) []displayLine {
 				glyph = "[+]"
 			}
 		}
-		text := strings.Repeat("  ", maxInt(0, line.Depth)) + glyph + " " + line.Label
+		label := line.Label
+		if line.Completed && !strings.HasPrefix(strings.TrimSpace(label), "✅") {
+			label = "✅ " + label
+		}
+		text := strings.Repeat("  ", maxInt(0, line.Depth)) + glyph + " " + label
 		tone := "normal"
 		if line.Severity == "warning" {
 			tone = "warning"

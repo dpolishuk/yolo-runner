@@ -357,6 +357,103 @@ func TestModelPanelDoesNotMarkInProgressTaskAsCompleted(t *testing.T) {
 	}
 }
 
+func TestModelUIPanelLinesExposeCompletedTaskState(t *testing.T) {
+	now := time.Date(2026, 2, 10, 12, 17, 0, 0, time.UTC)
+	model := NewModel(func() time.Time { return now })
+	model.panelRowsDirty = true
+	model.panelExpand["tasks"] = true
+
+	model.Apply(contracts.Event{
+		Type:      contracts.EventTypeTaskStarted,
+		TaskID:    "task-1",
+		TaskTitle: "Completed",
+		QueuePos:  1,
+		Timestamp: now.Add(-8 * time.Second),
+	})
+	model.Apply(contracts.Event{
+		Type:      contracts.EventTypeTaskFinished,
+		TaskID:    "task-1",
+		TaskTitle: "Completed",
+		Message:   "done",
+		Timestamp: now.Add(-6 * time.Second),
+	})
+	model.Apply(contracts.Event{
+		Type:      contracts.EventTypeTaskStarted,
+		TaskID:    "task-2",
+		TaskTitle: "In Progress",
+		QueuePos:  2,
+		Timestamp: now.Add(-4 * time.Second),
+	})
+
+	state := model.UIState()
+	completed, ok := panelLineForTask(state.PanelLines, "task-1")
+	if !ok {
+		t.Fatalf("expected panel line for task-1, got %#v", state.PanelLines)
+	}
+	if !completed.Completed {
+		t.Fatalf("expected completed task line to be marked completed, got %#v", completed)
+	}
+	inProgress, ok := panelLineForTask(state.PanelLines, "task-2")
+	if !ok {
+		t.Fatalf("expected panel line for task-2, got %#v", state.PanelLines)
+	}
+	if inProgress.Completed {
+		t.Fatalf("did not expect in-progress task line to be marked completed, got %#v", inProgress)
+	}
+}
+
+func TestModelCompletedTaskMarkerPersistsWhilePanelScrolls(t *testing.T) {
+	now := time.Date(2026, 2, 10, 12, 18, 0, 0, time.UTC)
+	model := NewModel(func() time.Time { return now })
+	model.SetViewportHeight(5)
+	model.panelExpand["tasks"] = true
+
+	for i := 1; i <= 12; i++ {
+		model.Apply(contracts.Event{
+			Type:      contracts.EventTypeTaskStarted,
+			TaskID:    fmt.Sprintf("task-%02d", i),
+			TaskTitle: fmt.Sprintf("Task %02d", i),
+			QueuePos:  i,
+			Timestamp: now.Add(time.Duration(-i) * time.Second),
+		})
+	}
+	model.Apply(contracts.Event{
+		Type:      contracts.EventTypeTaskFinished,
+		TaskID:    "task-07",
+		TaskTitle: "Task 07",
+		Message:   "completed",
+		Timestamp: now.Add(-1 * time.Second),
+	})
+
+	visibleRows := model.panelRows()
+	completedRow, ok := panelRowForTask(visibleRows, "task-07")
+	if !ok {
+		t.Fatalf("expected task-07 in panel rows, got %#v", visibleRows)
+	}
+	if !completedRow.completed {
+		t.Fatalf("expected completed marker state for task-07 before scrolling, got %#v", completedRow)
+	}
+
+	for i := 0; i < 6; i++ {
+		model.HandleKey("down")
+		model.HandleKey("down")
+		model.HandleKey("up")
+
+		completedRow, ok = panelRowForTask(model.panelRows(), "task-07")
+		if !ok {
+			t.Fatalf("expected task-07 in panel rows after scroll step %d, got %#v", i, model.panelRows())
+		}
+		if !completedRow.completed {
+			t.Fatalf("expected completed marker state for task-07 after scroll step %d, got %#v", i, completedRow)
+		}
+
+		state := model.UIState()
+		if visibleLine, visible := panelLineForTask(state.PanelLines, "task-07"); visible && !visibleLine.Completed {
+			t.Fatalf("expected visible task-07 line to remain completed during scroll step %d, got %#v", i, visibleLine)
+		}
+	}
+}
+
 func TestModelInvalidKeysDoNotCorruptPanelNavigationState(t *testing.T) {
 	now := time.Date(2026, 2, 10, 12, 12, 0, 0, time.UTC)
 	model := NewModel(func() time.Time { return now })
@@ -552,6 +649,19 @@ func panelLineForTask(state []UIPanelLine, taskID string) (UIPanelLine, bool) {
 		}
 	}
 	return UIPanelLine{}, false
+}
+
+func panelRowForTask(rows []panelRow, taskID string) (panelRow, bool) {
+	target := taskID
+	if !strings.HasPrefix(taskID, "task:") {
+		target = "task:" + taskID
+	}
+	for _, row := range rows {
+		if row.id == target {
+			return row, true
+		}
+	}
+	return panelRow{}, false
 }
 
 func panelExpandEquals(a map[string]bool, b map[string]bool) bool {

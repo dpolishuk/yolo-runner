@@ -62,13 +62,14 @@ type UIState struct {
 }
 
 type UIPanelLine struct {
-	ID       string
-	Depth    int
-	Label    string
-	Severity string
-	Selected bool
-	Expanded bool
-	Leaf     bool
+	ID        string
+	Depth     int
+	Label     string
+	Completed bool
+	Severity  string
+	Selected  bool
+	Expanded  bool
+	Leaf      bool
 }
 
 type UIWorkerSummary struct {
@@ -454,13 +455,14 @@ func (m *Model) uiPanelLines() []UIPanelLine {
 	for i := start; i < end; i++ {
 		row := rows[i]
 		lines = append(lines, UIPanelLine{
-			ID:       row.id,
-			Depth:    row.indent,
-			Label:    row.label,
-			Severity: row.severity,
-			Selected: i == cursor,
-			Expanded: row.expanded,
-			Leaf:     !row.hasChildren,
+			ID:        row.id,
+			Depth:     row.indent,
+			Label:     row.label,
+			Completed: row.completed,
+			Severity:  row.severity,
+			Selected:  i == cursor,
+			Expanded:  row.expanded,
+			Leaf:      !row.hasChildren,
 		})
 	}
 	if hidden := len(rows) - end; hidden > 0 {
@@ -555,6 +557,7 @@ type panelRow struct {
 	id          string
 	indent      int
 	label       string
+	completed   bool
 	severity    string
 	hasChildren bool
 	expanded    bool
@@ -591,6 +594,7 @@ func (m *Model) panelRows() []panelRow {
 						id:          "worker:" + workerID + ":task:" + task.TaskID,
 						indent:      3,
 						label:       renderTaskPanelLabel(task),
+						completed:   isTaskCompleted(task),
 						severity:    deriveTaskSeverity(task),
 						hasChildren: false,
 					})
@@ -608,6 +612,7 @@ func (m *Model) panelRows() []panelRow {
 				id:          "task:" + taskID,
 				indent:      2,
 				label:       renderTaskPanelLabel(task),
+				completed:   isTaskCompleted(task),
 				severity:    deriveTaskSeverity(task),
 				hasChildren: false,
 			})
@@ -1002,10 +1007,14 @@ func renderCurrentTask(id string, title string) string {
 
 func renderTaskPanelLabel(task TaskState) string {
 	label := renderCurrentTask(task.TaskID, task.Title)
-	if isCompletedTerminalStatus(normalizeTerminalStatus(task.TerminalStatus)) {
+	if isTaskCompleted(task) {
 		return "✅ " + label
 	}
 	return label
+}
+
+func isTaskCompleted(task TaskState) bool {
+	return isCompletedTerminalStatus(normalizeTerminalStatus(task.TerminalStatus))
 }
 
 func renderHistoryLine(event contracts.Event) string {
