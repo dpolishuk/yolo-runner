@@ -157,6 +157,55 @@ func TestLoopRetriesReviewFailThenCompletes(t *testing.T) {
 	}
 }
 
+func TestLoopInvokesReviewRunnerWhenReviewModeEnabled(t *testing.T) {
+	mgr := newFakeTaskManager(contracts.Task{ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen})
+	run := &fakeRunner{results: []contracts.RunnerResult{
+		{Status: contracts.RunnerResultCompleted},
+		{Status: contracts.RunnerResultCompleted, ReviewReady: true},
+	}}
+	loop := NewLoop(mgr, run, nil, LoopOptions{ParentID: "root", MaxRetries: 1, RequireReview: true, Backend: "codex", Model: "openai/gpt-5.3-codex"})
+
+	_, err := loop.Run(context.Background())
+	if err != nil {
+		t.Fatalf("loop failed: %v", err)
+	}
+	if len(run.requests) != 2 {
+		t.Fatalf("expected implement+review request count, got %d", len(run.requests))
+	}
+	if run.requests[0].Mode != contracts.RunnerModeImplement {
+		t.Fatalf("expected first request mode=implement, got %s", run.requests[0].Mode)
+	}
+	if run.requests[1].Mode != contracts.RunnerModeReview {
+		t.Fatalf("expected second request mode=review, got %s", run.requests[1].Mode)
+	}
+	if run.requests[1].Model != "openai/gpt-5.3-codex" {
+		t.Fatalf("expected review request to use configured model, got %q", run.requests[1].Model)
+	}
+}
+
+func TestLoopPassesConfiguredModelToReviewRunnerRequest(t *testing.T) {
+	mgr := newFakeTaskManager(contracts.Task{ID: "t-2", Title: "Task 2", Status: contracts.TaskStatusOpen})
+	run := &fakeRunner{results: []contracts.RunnerResult{
+		{Status: contracts.RunnerResultCompleted},
+		{Status: contracts.RunnerResultCompleted, ReviewReady: true},
+	}}
+	loop := NewLoop(mgr, run, nil, LoopOptions{ParentID: "root", MaxRetries: 1, RequireReview: true, Model: "kimi-k2", Backend: "kimi"})
+
+	_, err := loop.Run(context.Background())
+	if err != nil {
+		t.Fatalf("loop failed: %v", err)
+	}
+	if len(run.requests) != 2 {
+		t.Fatalf("expected two runner requests, got %d", len(run.requests))
+	}
+	if run.requests[0].Model != "kimi-k2" {
+		t.Fatalf("expected implement request model to be propagated, got %q", run.requests[0].Model)
+	}
+	if run.requests[1].Model != "kimi-k2" {
+		t.Fatalf("expected review request model to be propagated, got %q", run.requests[1].Model)
+	}
+}
+
 func TestLoopEmitsReviewAttemptTelemetryOnPassAfterRetry(t *testing.T) {
 	mgr := newFakeTaskManager(contracts.Task{ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen})
 	run := &fakeRunner{results: []contracts.RunnerResult{
