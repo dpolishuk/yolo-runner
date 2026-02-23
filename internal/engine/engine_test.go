@@ -232,6 +232,33 @@ func TestTaskEngineBuildGraphRejectsSelfCycleDependencies(t *testing.T) {
 	}
 }
 
+func TestTaskEngineBuildGraphRejectsParentCyclesWithPath(t *testing.T) {
+	engine := NewTaskEngine()
+	tree := &contracts.TaskTree{
+		Root: contracts.Task{ID: "root", Status: contracts.TaskStatusOpen},
+		Tasks: map[string]contracts.Task{
+			"root": {ID: "root", Status: contracts.TaskStatusOpen},
+			"a":    {ID: "a", Status: contracts.TaskStatusOpen},
+			"b":    {ID: "b", Status: contracts.TaskStatusOpen},
+		},
+		Relations: []contracts.TaskRelation{
+			{FromID: "a", ToID: "b", Type: contracts.RelationParent},
+			{FromID: "b", ToID: "a", Type: contracts.RelationParent},
+		},
+	}
+
+	_, err := engine.BuildGraph(tree)
+	if err == nil {
+		t.Fatalf("expected circular dependency error, got nil")
+	}
+	if !strings.Contains(err.Error(), "circular dependency") {
+		t.Fatalf("expected circular dependency message, got %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), "a -> b -> a") {
+		t.Fatalf("expected parent cycle path in error, got %q", err.Error())
+	}
+}
+
 func TestTaskEngineBuildGraphRejectsTwoNodeCircularDependenciesWithPath(t *testing.T) {
 	engine := NewTaskEngine()
 	tree := &contracts.TaskTree{
