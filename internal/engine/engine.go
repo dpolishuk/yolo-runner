@@ -191,7 +191,11 @@ func (e *TaskEngine) CalculateConcurrency(graph *contracts.TaskGraph, opts contr
 			if dependency == nil {
 				continue
 			}
-			if _, exists := graph.Nodes[dependency.ID]; exists {
+			dependencyNode := graph.Nodes[dependency.ID]
+			if dependencyNode == nil {
+				continue
+			}
+			if dependencyNode.Status != contracts.TaskStatusClosed {
 				deps++
 			}
 		}

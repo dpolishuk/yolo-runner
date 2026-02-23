@@ -702,6 +702,22 @@ func TestTaskEngineCalculateConcurrencyAcrossTopologies(t *testing.T) {
 			},
 			want: 16,
 		},
+		{
+			name: "closed dependency does not reduce initial parallelism",
+			tree: &contracts.TaskTree{
+				Root: contracts.Task{ID: "root", Status: contracts.TaskStatusClosed},
+				Tasks: map[string]contracts.Task{
+					"root": {ID: "root", Status: contracts.TaskStatusClosed},
+					"a": {ID: "a", Status: contracts.TaskStatusClosed},
+					"b": {ID: "b", Status: contracts.TaskStatusOpen},
+					"c": {ID: "c", Status: contracts.TaskStatusOpen},
+				},
+				Relations: []contracts.TaskRelation{
+					{FromID: "c", ToID: "a", Type: contracts.RelationDependsOn},
+				},
+			},
+			want: 2,
+		},
 	}
 
 	for _, tc := range tests {
