@@ -272,21 +272,27 @@ install_release() {
 		tar -xzf "$artifact_path" -C "$extract_dir"
 	fi
 
-	local bin_name
-	bin_name=$(binary_name "$os")
-	local binary
-	binary=$(find "$extract_dir" -type f -name "$bin_name" | head -n1)
-	if [[ -z "$binary" ]]; then
-		echo "expected binary not found in artifact: $bin_name" >&2
-		exit 1
-	fi
-
 	local target_dir
 	target_dir=$(install_dir_for_os "$os")
 	mkdir -p "$target_dir"
-	mv "$binary" "$target_dir/$bin_name"
-	chmod +x "$target_dir/$bin_name"
-	echo "installed $bin_name to $target_dir"
+
+	local installed_any=0
+	while IFS= read -r binary; do
+		if [[ -z "$binary" ]]; then
+			continue
+		fi
+		local base_name
+		base_name=$(basename "$binary")
+		mv "$binary" "$target_dir/$base_name"
+		chmod +x "$target_dir/$base_name"
+		echo "installed $base_name to $target_dir"
+		installed_any=1
+	done < <(find "$extract_dir" -type f)
+
+	if [[ "$installed_any" -eq 0 ]]; then
+		echo "expected binaries not found in artifact: $artifact" >&2
+		exit 1
+	fi
 }
 
 main() {
