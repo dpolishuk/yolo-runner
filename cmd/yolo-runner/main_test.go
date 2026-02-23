@@ -10,15 +10,15 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sync"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/egv/yolo-runner/v2/internal/opencode"
 	"github.com/egv/yolo-runner/v2/internal/runner"
 	"github.com/egv/yolo-runner/v2/internal/ui/tui"
-	tea "github.com/charmbracelet/bubbletea"
 )
 
 type fakeRunner struct {
@@ -442,6 +442,17 @@ func writeRootYoloFile(t *testing.T, repoRoot string, payload string) {
 	}
 }
 
+func writeReleaseAgentFile(t *testing.T, repoRoot string, payload string) {
+	t.Helper()
+	releasePath := filepath.Join(repoRoot, "agent", "release.md")
+	if err := os.MkdirAll(filepath.Dir(releasePath), 0o755); err != nil {
+		t.Fatalf("mkdir release template dir: %v", err)
+	}
+	if err := os.WriteFile(releasePath, []byte(payload), 0o644); err != nil {
+		t.Fatalf("write release agent template: %v", err)
+	}
+}
+
 func TestRunOnceMainUsesTUIOnTTYByDefault(t *testing.T) {
 	fakeProgram := newFakeTUIProgram()
 	prevIsTerminal := isTerminal
@@ -802,6 +813,33 @@ func TestRunOnceMainInitCreatesAgentDir(t *testing.T) {
 	}
 	if string(content) != "root-agent" {
 		t.Fatalf("expected agent file to be created")
+	}
+}
+
+func TestRunOnceMainInitInstallsReleaseSkillTemplate(t *testing.T) {
+	tempDir := t.TempDir()
+	writeRootYoloFile(t, tempDir, "root-agent")
+	writeReleaseAgentFile(t, tempDir, "release-agent-template")
+
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	exit := &fakeExit{}
+
+	code := RunOnceMain([]string{"init", "--repo", tempDir}, nil, exit.Exit, stdout, stderr, nil, nil)
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d", code)
+	}
+	if exit.code != 0 {
+		t.Fatalf("expected exit code 0, got %d", exit.code)
+	}
+	releasePath := filepath.Join(tempDir, ".opencode", "agent", "release.md")
+	releaseContent, err := os.ReadFile(releasePath)
+	if err != nil {
+		t.Fatalf("read release skill file: %v", err)
+	}
+	if string(releaseContent) != "release-agent-template" {
+		t.Fatalf("expected release skill file to be installed")
 	}
 }
 
