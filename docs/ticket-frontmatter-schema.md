@@ -1,10 +1,10 @@
-# Ticket Frontmatter Dependency Schema
+# Ticket Frontmatter Schema
 
 This document defines the ticket frontmatter contract used by all tk-style ticket files.
 
 ## Ticket Frontmatter Schema
 
-`deps` is the only dependency-specific ticket field required by this contract:
+`deps` and runtime overrides are supported by this contract:
 
 | Field | Type | Required | Semantics |
 | --- | --- | --- | --- |
@@ -12,6 +12,12 @@ This document defines the ticket frontmatter contract used by all tk-style ticke
 | `status` | string | yes | Ticket lifecycle state |
 | `title` | string | yes | Human-readable summary |
 | `deps` | array of strings | yes (can be empty) | List of task IDs this ticket depends on |
+| `model` | string | no | Runner model override for this task |
+| `backend` | string | no | Runner backend override (`opencode`, `codex`, `claude`, `kimi`) |
+| `skillset` | string | no | Skill profile override for this task |
+| `tools` | array of strings | no | Optional tool names available to the runner |
+| `timeout` | string | no | Runner timeout override as a Go duration, for example `15m` |
+| `mode` | string | no | Runner mode for this task (`implement`, `review`) |
 
 ### `deps` rules
 
@@ -21,6 +27,32 @@ This document defines the ticket frontmatter contract used by all tk-style ticke
 - A task is runnable only when all IDs listed in `deps` are marked complete.
 - `deps` can be unsorted in authoring; parsers should treat it as a set for gating.
 - Cyclic dependency references are invalid and should be rejected as invalid ticket graph input.
+
+### Runtime config rules
+
+- `model` must be a non-empty string.
+- `backend` must be one of `opencode`, `codex`, `claude`, `kimi`.
+- `skillset` must be a non-empty string.
+- `tools`, when present, must be an array of non-empty strings.
+- `timeout`, when present, must be a parseable Go duration and not less than `0`.
+- `mode` must be `implement` or `review`.
+
+### Per-task config example
+
+```yaml
+id: yr-task-a
+status: open
+title: Generate API docs
+deps: [yr-base]
+model: openai/gpt-5.3-codex
+backend: codex
+skillset: documentation
+tools:
+  - shell
+  - git
+timeout: 20m
+mode: implement
+```
 
 ## Dependency Example Patterns
 
