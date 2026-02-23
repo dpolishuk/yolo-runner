@@ -535,6 +535,38 @@ func TestLoopBlocksTaskBelowCoverageThreshold(t *testing.T) {
 	if got := mgr.dataByID["t-1"]["triage_reason"]; !strings.Contains(got, "below threshold") {
 		t.Fatalf("expected triage_reason to mention coverage threshold, got %q", got)
 	}
+	if strings.TrimSpace(mgr.dataByID["t-1"]["quality_gate_comment"]) == "" {
+		t.Fatalf("expected quality gate comment to be stored for blocked task")
+	}
+}
+
+func TestLoopBlocksTaskBelowCoverageThresholdEvenWithHighQualityScore(t *testing.T) {
+	mgr := newFakeTaskManager(contracts.Task{
+		ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen,
+		Metadata: map[string]string{
+			"quality_score": "92",
+			"coverage":      "45",
+		},
+	})
+	run := &fakeRunner{results: []contracts.RunnerResult{{Status: contracts.RunnerResultCompleted}}}
+	loop := NewLoop(mgr, run, nil, LoopOptions{ParentID: "root", QualityGateThreshold: 50})
+
+	summary, err := loop.Run(context.Background())
+	if err != nil {
+		t.Fatalf("loop failed: %v", err)
+	}
+	if summary.Blocked != 1 {
+		t.Fatalf("expected blocked summary, got %#v", summary)
+	}
+	if mgr.statusByID["t-1"] != contracts.TaskStatusBlocked {
+		t.Fatalf("expected blocked status, got %s", mgr.statusByID["t-1"])
+	}
+	if len(run.requests) != 0 {
+		t.Fatalf("expected no runner requests when blocked by coverage gate, got %d", len(run.requests))
+	}
+	if got := mgr.dataByID["t-1"]["triage_reason"]; !strings.Contains(got, "below threshold") {
+		t.Fatalf("expected triage_reason to mention coverage threshold, got %q", got)
+	}
 }
 
 func TestLoopBlocksTaskBelowQualityThresholdWithAutoComment(t *testing.T) {
