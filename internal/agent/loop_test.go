@@ -2378,6 +2378,108 @@ func TestLoopHonorsConcurrencyLimit(t *testing.T) {
 	}
 }
 
+func TestLoopAutoConcurrencyFromDependencyGraph(t *testing.T) {
+	storage := newSpyStorageBackend(
+		[]contracts.Task{
+			{ID: "root", Title: "Root", Status: contracts.TaskStatusClosed},
+			{ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen, ParentID: "root"},
+			{ID: "t-2", Title: "Task 2", Status: contracts.TaskStatusOpen, ParentID: "root"},
+			{ID: "t-3", Title: "Task 3", Status: contracts.TaskStatusOpen, ParentID: "root"},
+			{ID: "t-4", Title: "Task 4", Status: contracts.TaskStatusOpen, ParentID: "root"},
+		},
+		[]contracts.TaskRelation{
+			{FromID: "t-1", ToID: "root", Type: contracts.RelationDependsOn},
+			{FromID: "t-2", ToID: "root", Type: contracts.RelationDependsOn},
+			{FromID: "t-3", ToID: "root", Type: contracts.RelationDependsOn},
+			{FromID: "t-4", ToID: "root", Type: contracts.RelationDependsOn},
+		},
+	)
+	run := &fakeRunner{}
+
+	engine := enginepkg.NewTaskEngine()
+	manager := newStorageEngineTaskManager(storage, engine, "root")
+	loop := NewLoop(manager, run, nil, LoopOptions{ParentID: "root", Concurrency: 0, DryRun: true})
+
+	summary, err := loop.Run(context.Background())
+	if err != nil {
+		t.Fatalf("loop failed: %v", err)
+	}
+	if got := summary.Skipped; got != 1 {
+		t.Fatalf("expected exactly one task skipped in dry run, got %d", got)
+	}
+	if loop.options.Concurrency != 4 {
+		t.Fatalf("expected auto concurrency to be 4, got %d", loop.options.Concurrency)
+	}
+}
+
+func TestLoopRespectsConfiguredConcurrencyCapForAutoCalculation(t *testing.T) {
+	storage := newSpyStorageBackend(
+		[]contracts.Task{
+			{ID: "root", Title: "Root", Status: contracts.TaskStatusClosed},
+			{ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen, ParentID: "root"},
+			{ID: "t-2", Title: "Task 2", Status: contracts.TaskStatusOpen, ParentID: "root"},
+			{ID: "t-3", Title: "Task 3", Status: contracts.TaskStatusOpen, ParentID: "root"},
+			{ID: "t-4", Title: "Task 4", Status: contracts.TaskStatusOpen, ParentID: "root"},
+		},
+		[]contracts.TaskRelation{
+			{FromID: "t-1", ToID: "root", Type: contracts.RelationDependsOn},
+			{FromID: "t-2", ToID: "root", Type: contracts.RelationDependsOn},
+			{FromID: "t-3", ToID: "root", Type: contracts.RelationDependsOn},
+			{FromID: "t-4", ToID: "root", Type: contracts.RelationDependsOn},
+		},
+	)
+	run := &fakeRunner{}
+
+	engine := enginepkg.NewTaskEngine()
+	manager := newStorageEngineTaskManager(storage, engine, "root")
+	loop := NewLoop(manager, run, nil, LoopOptions{ParentID: "root", Concurrency: 2, DryRun: true})
+
+	summary, err := loop.Run(context.Background())
+	if err != nil {
+		t.Fatalf("loop failed: %v", err)
+	}
+	if got := summary.Skipped; got != 1 {
+		t.Fatalf("expected exactly one task skipped in dry run, got %d", got)
+	}
+	if loop.options.Concurrency != 2 {
+		t.Fatalf("expected configured cap to remain 2, got %d", loop.options.Concurrency)
+	}
+}
+
+func TestLoopDefaultsToAutoConcurrencyWhenNoLimitProvided(t *testing.T) {
+	storage := newSpyStorageBackend(
+		[]contracts.Task{
+			{ID: "root", Title: "Root", Status: contracts.TaskStatusClosed},
+			{ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen, ParentID: "root"},
+			{ID: "t-2", Title: "Task 2", Status: contracts.TaskStatusOpen, ParentID: "root"},
+			{ID: "t-3", Title: "Task 3", Status: contracts.TaskStatusOpen, ParentID: "root"},
+			{ID: "t-4", Title: "Task 4", Status: contracts.TaskStatusOpen, ParentID: "root"},
+		},
+		[]contracts.TaskRelation{
+			{FromID: "t-1", ToID: "root", Type: contracts.RelationDependsOn},
+			{FromID: "t-2", ToID: "root", Type: contracts.RelationDependsOn},
+			{FromID: "t-3", ToID: "root", Type: contracts.RelationDependsOn},
+			{FromID: "t-4", ToID: "root", Type: contracts.RelationDependsOn},
+		},
+	)
+	run := &fakeRunner{}
+
+	engine := enginepkg.NewTaskEngine()
+	manager := newStorageEngineTaskManager(storage, engine, "root")
+	loop := NewLoop(manager, run, nil, LoopOptions{ParentID: "root", DryRun: true})
+
+	summary, err := loop.Run(context.Background())
+	if err != nil {
+		t.Fatalf("loop failed: %v", err)
+	}
+	if got := summary.Skipped; got != 1 {
+		t.Fatalf("expected exactly one task skipped in dry run, got %d", got)
+	}
+	if loop.options.Concurrency != 4 {
+		t.Fatalf("expected auto concurrency to default to 4, got %d", loop.options.Concurrency)
+	}
+}
+
 func TestLoopSkipsExecutionWhenTaskLockDenied(t *testing.T) {
 	mgr := newFakeTaskManager(contracts.Task{ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen})
 	run := &fakeRunner{results: []contracts.RunnerResult{{Status: contracts.RunnerResultCompleted}}}

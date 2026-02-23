@@ -99,17 +99,27 @@ func NewLoopWithTaskEngine(storage contracts.StorageBackend, taskEngine contract
 
 func (l *Loop) Run(ctx context.Context) (contracts.LoopSummary, error) {
 	summary := contracts.LoopSummary{}
-	if l.options.Concurrency <= 0 {
-		l.options.Concurrency = 1
+	requestedConcurrency := l.options.Concurrency
+	if requestedConcurrency < 0 {
+		requestedConcurrency = 1
 	}
 	if calculator, ok := l.tasks.(taskConcurrencyCalculator); ok {
-		recommended, err := calculator.CalculateConcurrency(ctx, l.options.Concurrency)
+		recommended, err := calculator.CalculateConcurrency(ctx, requestedConcurrency)
 		if err != nil {
 			return summary, err
 		}
-		if recommended > 0 {
+		if requestedConcurrency == 0 || recommended > 0 {
 			l.options.Concurrency = recommended
+		} else {
+			l.options.Concurrency = requestedConcurrency
 		}
+	} else if requestedConcurrency == 0 {
+		l.options.Concurrency = 1
+	} else {
+		l.options.Concurrency = requestedConcurrency
+	}
+	if l.options.Concurrency <= 0 {
+		l.options.Concurrency = 1
 	}
 
 	if l.options.DryRun {
