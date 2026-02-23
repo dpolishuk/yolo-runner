@@ -198,6 +198,9 @@ func (m *Model) PerformanceSnapshot() PerformanceSnapshot {
 
 func (m *Model) HandleKey(key string) {
 	rows := m.panelRows()
+	if key == " " {
+		key = "space"
+	}
 	if len(rows) == 0 {
 		m.panelCursor = 0
 		return

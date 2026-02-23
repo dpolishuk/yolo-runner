@@ -281,6 +281,55 @@ func TestModelSupportsExpandCollapseViaEnterSpaceAndVimKeys(t *testing.T) {
 	assertContains(t, view, "> [+] worker-0 severity=warning")
 }
 
+func TestModelSupportsSpacebarShortcutLiteralForToggle(t *testing.T) {
+	now := time.Date(2026, 2, 10, 12, 11, 0, 0, time.UTC)
+	model := NewModel(func() time.Time { return now })
+
+	model.Apply(contracts.Event{Type: contracts.EventTypeRunStarted, Metadata: map[string]string{"root_id": "yr-2y0b"}, Timestamp: now.Add(-10 * time.Second)})
+	model.Apply(contracts.Event{Type: contracts.EventTypeTaskStarted, TaskID: "task-1", TaskTitle: "First", WorkerID: "worker-0", QueuePos: 1, Timestamp: now.Add(-9 * time.Second)})
+	model.Apply(contracts.Event{Type: contracts.EventTypeRunnerWarning, TaskID: "task-1", WorkerID: "worker-0", Message: "stalled", Timestamp: now.Add(-8 * time.Second)})
+
+	model.HandleKey("down")
+	model.HandleKey(" ")
+	view := model.View()
+	assertContains(t, view, "> [+] Workers severity=warning")
+
+	model.HandleKey(" ")
+	view = model.View()
+	assertContains(t, view, "> [-] Workers severity=warning")
+	assertContains(t, view, "[+] worker-0 severity=warning")
+}
+
+func TestModelInvalidKeysDoNotCorruptPanelNavigationState(t *testing.T) {
+	now := time.Date(2026, 2, 10, 12, 12, 0, 0, time.UTC)
+	model := NewModel(func() time.Time { return now })
+
+	model.Apply(contracts.Event{Type: contracts.EventTypeRunStarted, Metadata: map[string]string{"root_id": "yr-2y0b"}, Timestamp: now.Add(-10 * time.Second)})
+	model.Apply(contracts.Event{Type: contracts.EventTypeTaskStarted, TaskID: "task-1", TaskTitle: "First", WorkerID: "worker-0", QueuePos: 1, Timestamp: now.Add(-9 * time.Second)})
+	model.Apply(contracts.Event{Type: contracts.EventTypeRunnerWarning, TaskID: "task-1", WorkerID: "worker-0", Message: "stalled", Timestamp: now.Add(-8 * time.Second)})
+
+	model.HandleKey("down")
+	model.HandleKey("down")
+
+	beforeCursor := model.panelCursor
+	beforeRowsDirty := model.panelRowsDirty
+	beforeExpand := clonePanelExpand(model.panelExpand)
+
+	for _, key := range []string{"", "tab", "foo", "ctrl+x", "escape", "invalid"} {
+		model.HandleKey(key)
+	}
+
+	if model.panelCursor != beforeCursor {
+		t.Fatalf("expected panel cursor to remain %d, got %d", beforeCursor, model.panelCursor)
+	}
+	if model.panelRowsDirty != beforeRowsDirty {
+		t.Fatalf("expected panelRowsDirty to remain %t, got %t", beforeRowsDirty, model.panelRowsDirty)
+	}
+	if !panelExpandEquals(beforeExpand, model.panelExpand) {
+		t.Fatalf("expected panel expansion state to be unchanged")
+	}
+}
+
 func TestModelBoundsHistoryWithPerformanceControls(t *testing.T) {
 	now := time.Date(2026, 2, 10, 12, 11, 0, 0, time.UTC)
 	model := NewModel(func() time.Time { return now })
@@ -389,6 +438,26 @@ func assertNotContains(t *testing.T, text string, expected string) {
 	if contains(text, expected) {
 		t.Fatalf("did not expect %q in %q", expected, text)
 	}
+}
+
+func clonePanelExpand(in map[string]bool) map[string]bool {
+	out := make(map[string]bool, len(in))
+	for id, expanded := range in {
+		out[id] = expanded
+	}
+	return out
+}
+
+func panelExpandEquals(a map[string]bool, b map[string]bool) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for id, aExpanded := range a {
+		if bExpanded, ok := b[id]; !ok || bExpanded != aExpanded {
+			return false
+		}
+	}
+	return true
 }
 
 func contains(text string, sub string) bool {
