@@ -249,10 +249,12 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 
 	if qualityScore, ok := taskQualityScore(task.Metadata); ok && l.options.QualityGateThreshold > 0 && qualityScore < l.options.QualityGateThreshold {
 		qualityGateReason := fmt.Sprintf("quality score %d is below threshold %d", qualityScore, l.options.QualityGateThreshold)
+		qualityComment := qualityGateComment(task.Metadata, qualityScore, l.options.QualityGateThreshold)
 		qualityMetadata := map[string]string{
 			"quality_score":     strconv.Itoa(qualityScore),
 			"quality_threshold": strconv.Itoa(l.options.QualityGateThreshold),
 			"quality_gate":      "true",
+			"quality_gate_comment": qualityComment,
 		}
 		if l.options.AllowLowQuality {
 			warningMetadata := map[string]string{
@@ -281,6 +283,7 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 				"quality_score":     strconv.Itoa(qualityScore),
 				"quality_threshold": strconv.Itoa(l.options.QualityGateThreshold),
 				"quality_gate":      "true",
+				"quality_gate_comment": qualityComment,
 			}
 			blockedData = appendDecisionMetadata(blockedData, "blocked", qualityGateReason)
 			if err := l.markTaskBlockedWithData(task.ID, blockedData); err != nil {
@@ -1048,6 +1051,47 @@ func taskQualityScore(metadata map[string]string) (int, bool) {
 		return 0, false
 	}
 	return score, true
+}
+
+func qualityGateComment(metadata map[string]string, score int, threshold int) string {
+	parts := []string{
+		fmt.Sprintf("quality score %d is below threshold %d", score, threshold),
+		"",
+	}
+
+	issues := qualityGateIssues(metadata)
+	if len(issues) == 0 {
+		return strings.Join(append(parts, "Please update the task to address these issues and rerun validation."), "\n")
+	}
+
+	formattedIssues := make([]string, 0, len(issues))
+	for _, issue := range issues {
+		formattedIssues = append(formattedIssues, "- "+issue)
+	}
+	insertAt := len(parts) - 1
+	parts = append(parts[:insertAt], append([]string{"Quality issues:"}, formattedIssues...)...)
+	parts = append(parts, "Please update the task to address these issues and rerun validation.")
+	return strings.Join(parts, "\n")
+}
+
+func qualityGateIssues(metadata map[string]string) []string {
+	raw := strings.TrimSpace(metadata["quality_issues"])
+	if raw == "" {
+		return nil
+	}
+	lines := strings.Split(raw, "\n")
+	issues := make([]string, 0, len(lines))
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		trimmed = strings.TrimPrefix(trimmed, "- ")
+		trimmed = strings.TrimPrefix(trimmed, "* ")
+		trimmed = strings.TrimSpace(trimmed)
+		if trimmed == "" {
+			continue
+		}
+		issues = append(issues, trimmed)
+	}
+	return issues
 }
 
 func reviewRetryBlockersFromMetadata(metadata map[string]string) string {
