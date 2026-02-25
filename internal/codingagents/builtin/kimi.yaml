@@ -1,4 +1,25 @@
 name: kimi
+type: kimi
+backend: kimi
+model: kimi-k2
+capabilities:
+  languages:
+    - go
+    - python
+    - kotlin
+  features:
+    - implement
+    - review
+    - stream
+    - service_proxy
+    - larger_model
+config:
+  timeout: 30s
+health:
+  enabled: true
+  endpoint: http://localhost:0/healthz
+  interval: 5s
+  timeout: 2s
 adapter: kimi
 supports_review: true
 supports_stream: true

@@ -1,0 +1,11 @@
+- name: codex
+  type: codex
+  backend: codex
+  model: gpt-5
+  capabilities:
+    languages: []
+    features: [review]
+  config:
+    timeout: 45s
+  health:
+    enabled: true

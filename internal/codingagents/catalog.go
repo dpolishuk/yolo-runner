@@ -25,6 +25,12 @@ const (
 
 type BackendDefinition struct {
 	Name                string                   `yaml:"name" json:"name"`
+	Type                string                   `yaml:"type" json:"type"`
+	Backend             string                   `yaml:"backend" json:"backend"`
+	Model               string                   `yaml:"model" json:"model"`
+	Capabilities        BackendCapabilityProfile `yaml:"capabilities" json:"capabilities"`
+	Config              map[string]any           `yaml:"config" json:"config"`
+	Health              *BackendHealthConfig     `yaml:"health" json:"health"`
 	Adapter             string                   `yaml:"adapter" json:"adapter"`
 	Binary              string                   `yaml:"binary" json:"binary"`
 	Command             string                   `yaml:"command" json:"command"`
@@ -34,6 +40,22 @@ type BackendDefinition struct {
 	DistributedCaps     []distributed.Capability `yaml:"distributed_capabilities" json:"distributed_capabilities"`
 	SupportedModels     []string                 `yaml:"supported_models" json:"supported_models"`
 	RequiredCredentials []string                 `yaml:"required_credentials" json:"required_credentials"`
+}
+
+type BackendCapabilityProfile struct {
+	Languages []string `yaml:"languages" json:"languages"`
+	Features  []string `yaml:"features" json:"features"`
+}
+
+type BackendHealthConfig struct {
+	Enabled  bool              `yaml:"enabled" json:"enabled"`
+	Endpoint string            `yaml:"endpoint" json:"endpoint"`
+	Command  string            `yaml:"command" json:"command"`
+	Method   string            `yaml:"method" json:"method"`
+	Headers  map[string]string `yaml:"headers" json:"headers"`
+	Timeout  string            `yaml:"timeout" json:"timeout"`
+	Interval string            `yaml:"interval" json:"interval"`
+	Config   map[string]any    `yaml:"config" json:"config"`
 }
 
 type BackendCapabilities struct {
@@ -237,12 +259,13 @@ func parseBackendDefinition(payload []byte, extension string) (BackendDefinition
 	if definition.Name == "" {
 		return BackendDefinition{}, fmt.Errorf("backend name is required")
 	}
-	if definition.Adapter == "" {
-		definition.Adapter = "command"
-	}
 	if definition.Command != "" && definition.Binary == "" {
 		definition.Binary = definition.Command
 	}
+	if definition.Backend == "" {
+		definition.Backend = definition.Name
+	}
+	definition = normalizeBackendDefinition(definition)
 	return definition, nil
 }
 
@@ -288,18 +311,71 @@ func validateBackendDefinition(definition BackendDefinition) error {
 }
 
 func normalizeBackendDefinition(definition BackendDefinition) BackendDefinition {
+	definition.Type = strings.ToLower(strings.TrimSpace(definition.Type))
+	definition.Backend = strings.ToLower(strings.TrimSpace(definition.Backend))
+	definition.Model = strings.TrimSpace(definition.Model)
+	if definition.Type != "" {
+		definition.Type = strings.ToLower(definition.Type)
+	}
+	definition.Health = normalizeHealthConfig(definition.Health)
 	definition.Name = normalizeBackend(definition.Name)
+	if definition.Name == "" {
+		definition.Name = definition.Backend
+	}
+	if definition.Backend == "" {
+		definition.Backend = definition.Name
+	}
+	if definition.Adapter == "" {
+		definition.Adapter = definition.Type
+	}
 	definition.Adapter = strings.ToLower(strings.TrimSpace(definition.Adapter))
+	if definition.Adapter == "" {
+		definition.Adapter = definition.Type
+	}
+	if definition.Adapter == "" {
+		definition.Adapter = definition.Backend
+	}
 	definition.Binary = strings.TrimSpace(definition.Binary)
 	definition.Command = strings.TrimSpace(definition.Command)
-	if definition.Command != "" && definition.Binary == "" {
+	if definition.Command != "" {
 		definition.Binary = definition.Command
+	}
+	if definition.Command == "" && definition.Binary == "" && definition.Config != nil {
+		if value, ok := configValueString(definition.Config, "command"); ok {
+			definition.Command = value
+		}
+	}
+	if definition.Binary == "" && definition.Config != nil {
+		if value, ok := configValueString(definition.Config, "binary"); ok {
+			definition.Binary = value
+		}
+	}
+	if definition.Command == "" && definition.Binary != "" {
+		definition.Command = definition.Binary
 	}
 	if definition.Adapter == "gemini" {
 		definition.Adapter = "command"
 		if definition.Binary == "" {
 			definition.Binary = "gemini"
 		}
+	}
+
+	definition.Config = normalizeBackendConfigMap(definition.Config)
+	configArgs := configValueStrings(definition.Config, "args")
+	if len(definition.Args) == 0 && len(configArgs) > 0 {
+		definition.Args = configArgs
+	}
+	definition.RequiredCredentials = append(normalizeStringSlice(definition.RequiredCredentials), configValueStrings(definition.Config, "api_key_env")...)
+	definition.RequiredCredentials = normalizeStringSlice(definition.RequiredCredentials)
+	definition.Capabilities = normalizeBackendCapabilityProfile(definition.Capabilities)
+	if len(definition.Capabilities.Features) > 0 {
+		if !definition.SupportsReview {
+			definition.SupportsReview = containsBackendFeature(definition.Capabilities.Features, "review")
+		}
+		if !definition.SupportsStream {
+			definition.SupportsStream = containsBackendFeature(definition.Capabilities.Features, "stream")
+		}
+		definition.DistributedCaps = mergeCapabilityConfig(definition.DistributedCaps, definition.Capabilities.Features)
 	}
 
 	definition.Args = normalizeStringSlice(definition.Args)
@@ -374,6 +450,141 @@ func normalizeDistributedCaps(caps []distributed.Capability) []distributed.Capab
 		return nil
 	}
 	return out
+}
+
+func normalizeBackendConfigMap(values map[string]any) map[string]any {
+	if len(values) == 0 {
+		return nil
+	}
+	out := map[string]any{}
+	for key, raw := range values {
+		trimmedKey := strings.TrimSpace(strings.ToLower(key))
+		if trimmedKey == "" {
+			continue
+		}
+		out[trimmedKey] = raw
+	}
+	return out
+}
+
+func configValueString(config map[string]any, key string) (string, bool) {
+	if len(config) == 0 || strings.TrimSpace(key) == "" {
+		return "", false
+	}
+	raw, ok := config[key]
+	if !ok {
+		return "", false
+	}
+	value, ok := raw.(string)
+	if !ok {
+		return "", false
+	}
+	return strings.TrimSpace(value), value != ""
+}
+
+func configValueStrings(config map[string]any, key string) []string {
+	if len(config) == 0 || strings.TrimSpace(key) == "" {
+		return nil
+	}
+	raw, ok := config[key]
+	if !ok {
+		return nil
+	}
+	entries := make([]string, 0)
+	switch typed := raw.(type) {
+	case string:
+		value := strings.TrimSpace(typed)
+		if value == "" {
+			return nil
+		}
+		return []string{value}
+	case []any:
+		for _, item := range typed {
+			value, ok := item.(string)
+			if !ok {
+				continue
+			}
+			value = strings.TrimSpace(value)
+			if value == "" {
+				continue
+			}
+			entries = append(entries, value)
+		}
+	}
+	return entries
+}
+
+func normalizeBackendCapabilityProfile(profile BackendCapabilityProfile) BackendCapabilityProfile {
+	profile.Languages = normalizeStringSlice(profile.Languages)
+	profile.Features = normalizeStringSlice(profile.Features)
+	return profile
+}
+
+func normalizeHealthConfig(health *BackendHealthConfig) *BackendHealthConfig {
+	if health == nil {
+		return nil
+	}
+	health.Endpoint = strings.TrimSpace(health.Endpoint)
+	health.Command = strings.TrimSpace(health.Command)
+	health.Method = strings.ToUpper(strings.TrimSpace(health.Method))
+	health.Timeout = strings.TrimSpace(health.Timeout)
+	health.Interval = strings.TrimSpace(health.Interval)
+	if len(health.Headers) == 0 {
+		health.Headers = nil
+	} else {
+		headers := make(map[string]string, len(health.Headers))
+		for key, value := range health.Headers {
+			trimmedKey := strings.TrimSpace(key)
+			trimmedValue := strings.TrimSpace(value)
+			if trimmedKey == "" || trimmedValue == "" {
+				continue
+			}
+			headers[trimmedKey] = trimmedValue
+		}
+		health.Headers = headers
+	}
+	return health
+}
+
+func containsBackendFeature(features []string, needle string) bool {
+	for _, feature := range features {
+		if strings.EqualFold(strings.TrimSpace(feature), needle) {
+			return true
+		}
+	}
+	return false
+}
+
+func mergeCapabilityConfig(existing []distributed.Capability, features []string) []distributed.Capability {
+	caps := make([]distributed.Capability, 0, len(existing))
+	caps = append(caps, existing...)
+	seen := map[distributed.Capability]struct{}{}
+	for _, capability := range existing {
+		seen[capability] = struct{}{}
+	}
+	for _, raw := range features {
+		switch distributed.Capability(strings.ToLower(strings.TrimSpace(raw))) {
+		case distributed.CapabilityImplement:
+			addDistributedCapability(&caps, seen, distributed.CapabilityImplement)
+		case distributed.CapabilityReview:
+			addDistributedCapability(&caps, seen, distributed.CapabilityReview)
+		case distributed.CapabilityRewriteTask:
+			addDistributedCapability(&caps, seen, distributed.CapabilityRewriteTask)
+		case distributed.CapabilityLargerModel:
+			addDistributedCapability(&caps, seen, distributed.CapabilityLargerModel)
+		case distributed.CapabilityServiceProxy:
+			addDistributedCapability(&caps, seen, distributed.CapabilityServiceProxy)
+		}
+	}
+	return caps
+}
+
+func addDistributedCapability(out *[]distributed.Capability, seen map[distributed.Capability]struct{}, capability distributed.Capability) {
+	if _, ok := seen[capability]; ok {
+		return
+	}
+	seen[capability] = struct{}{}
+	*out = append(*out, capability)
 }
 
 func supportedDistributedCapability(value distributed.Capability) (distributed.Capability, bool) {
