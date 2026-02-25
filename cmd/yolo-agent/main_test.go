@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -16,6 +17,7 @@ import (
 	"github.com/egv/yolo-runner/v2/internal/contracts"
 	"github.com/egv/yolo-runner/v2/internal/distributed"
 	"github.com/egv/yolo-runner/v2/internal/linear"
+	"github.com/egv/yolo-runner/v2/internal/github"
 )
 
 func TestRunMainParsesFlagsAndInvokesRun(t *testing.T) {
@@ -687,7 +689,7 @@ func TestMaybeWrapWithMastermindProvidesServiceHandlerToExecuteRequests(t *testi
 	wrappedRunner, closeDistributed, err := maybeWrapWithMastermind(ctx, runConfig{
 		role:                 agentRoleMaster,
 		distributedBusPrefix: "unit",
-	}, serviceRunner)
+	}, serviceRunner, nil)
 	if err != nil {
 		t.Fatalf("expected mastermind setup to succeed, got %v", err)
 	}
@@ -782,7 +784,7 @@ func TestMaybeWrapWithMastermindRejectsUnsupportedServiceNames(t *testing.T) {
 	wrappedRunner, closeDistributed, err := maybeWrapWithMastermind(ctx, runConfig{
 		role:                 agentRoleMaster,
 		distributedBusPrefix: "unit",
-	}, serviceRunner)
+	}, serviceRunner, nil)
 	if err != nil {
 		t.Fatalf("expected mastermind setup to succeed, got %v", err)
 	}
@@ -818,6 +820,185 @@ func TestMaybeWrapWithMastermindRejectsUnsupportedServiceNames(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatalf("expected unsupported service request to fail")
+	}
+}
+
+func TestDiscoverTaskStatusBackendsForMastermindIncludesAdditionalTrackerProfiles(t *testing.T) {
+	repoRoot := t.TempDir()
+	writeTrackerConfigYAML(t, repoRoot, `
+profiles:
+  default:
+    tracker:
+      type: tk
+  linear:
+    tracker:
+      type: linear
+      linear:
+        scope:
+          workspace: playground
+        auth:
+          token_env: LINEAR_TOKEN
+  github:
+    tracker:
+      type: github
+      github:
+        scope:
+          owner: org
+          repo: repo
+        auth:
+          token_env: GITHUB_TOKEN
+`)
+	t.Setenv("LINEAR_TOKEN", "linear-token")
+	t.Setenv("GITHUB_TOKEN", "github-token")
+
+	originalTKStorage := newTKStorageBackend
+	originalLinearStorage := newLinearStorageBackend
+	originalGitHubStorage := newGitHubStorageBackend
+	t.Cleanup(func() {
+		newTKStorageBackend = originalTKStorage
+		newLinearStorageBackend = originalLinearStorage
+		newGitHubStorageBackend = originalGitHubStorage
+	})
+
+	discoveredByID := map[string]contracts.StorageBackend{}
+	newTKStorageBackend = func(string) (contracts.StorageBackend, error) {
+		backend := &testStorageBackend{}
+		discoveredByID["tk"] = backend
+		return backend, nil
+	}
+	newLinearStorageBackend = func(_ linear.Config) (contracts.StorageBackend, error) {
+		backend := &testStorageBackend{}
+		discoveredByID["linear"] = backend
+		return backend, nil
+	}
+	newGitHubStorageBackend = func(_ github.Config) (contracts.StorageBackend, error) {
+		backend := &testStorageBackend{}
+		discoveredByID["github"] = backend
+		return backend, nil
+	}
+
+	taskStatusBackends := discoverTaskStatusBackendsForMastermind(runConfig{
+		repoRoot: repoRoot,
+		rootID:   "root-1",
+		role:     agentRoleMaster,
+		profile:  "default",
+	}, map[string]contracts.StorageBackend{})
+
+	if len(taskStatusBackends) != 3 {
+		t.Fatalf("expected 3 backends, got %d", len(taskStatusBackends))
+	}
+	if _, ok := discoveredByID["tk"]; !ok {
+		t.Fatalf("expected tk backend to be built")
+	}
+	if _, ok := discoveredByID["linear"]; !ok {
+		t.Fatalf("expected linear backend to be built")
+	}
+	if _, ok := discoveredByID["github"]; !ok {
+		t.Fatalf("expected github backend to be built")
+	}
+}
+
+func TestMaybeWrapWithMastermindWiresDiscoveredBackendsForStatusWrites(t *testing.T) {
+	t.Setenv("YOLO_INBOX_WRITE_TOKEN", "token")
+	t.Setenv("LINEAR_TOKEN", "linear-token")
+	t.Setenv("GITHUB_TOKEN", "github-token")
+	repoRoot := t.TempDir()
+	writeTrackerConfigYAML(t, repoRoot, `
+profiles:
+  default:
+    tracker:
+      type: tk
+  linear:
+    tracker:
+      type: linear
+      linear:
+        scope:
+          workspace: playground
+        auth:
+          token_env: LINEAR_TOKEN
+  github:
+    tracker:
+      type: github
+      github:
+        scope:
+          owner: org
+          repo: repo
+        auth:
+          token_env: GITHUB_TOKEN
+`)
+
+	originalBusFactory := newDistributedBus
+	t.Cleanup(func() {
+		newDistributedBus = originalBusFactory
+	})
+	bus := distributed.NewMemoryBus()
+	newDistributedBus = func(_ string, _ string) (distributed.Bus, error) {
+		return bus, nil
+	}
+
+	tkBackend := &testStorageBackend{}
+	linearBackend := &testStorageBackend{}
+	githubBackend := &testStorageBackend{}
+	originalTKStorage := newTKStorageBackend
+	originalLinearStorage := newLinearStorageBackend
+	originalGitHubStorage := newGitHubStorageBackend
+	t.Cleanup(func() {
+		newTKStorageBackend = originalTKStorage
+		newLinearStorageBackend = originalLinearStorage
+		newGitHubStorageBackend = originalGitHubStorage
+	})
+	newTKStorageBackend = func(_ string) (contracts.StorageBackend, error) { return tkBackend, nil }
+	newLinearStorageBackend = func(_ linear.Config) (contracts.StorageBackend, error) { return linearBackend, nil }
+	newGitHubStorageBackend = func(_ github.Config) (contracts.StorageBackend, error) { return githubBackend, nil }
+
+	serviceRunner := &serviceTrackingRunner{}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	wrappedRunner, closeDistributed, err := maybeWrapWithMastermind(ctx, runConfig{
+		role:                 agentRoleMaster,
+		repoRoot:             repoRoot,
+		rootID:               "root-1",
+		profile:              "default",
+		distributedBusPrefix:  "unit",
+	}, serviceRunner, map[string]contracts.StorageBackend{
+		"tk": tkBackend,
+	})
+	if err != nil {
+		t.Fatalf("expected mastermind setup to succeed, got %v", err)
+	}
+	if closeDistributed == nil {
+		t.Fatalf("expected close callback for mastermind wrapper")
+	}
+	t.Cleanup(func() {
+		_ = closeDistributed()
+	})
+
+	mm, ok := wrappedRunner.(distributedMastermindRunner)
+	if !ok {
+		t.Fatalf("expected wrapped runner to be distributed mastermind runner, got %T", wrappedRunner)
+	}
+	_, err = mm.mastermind.PublishTaskStatusUpdate(ctx, distributed.TaskStatusUpdatePayload{
+		TaskID:    "task-1",
+		Status:    contracts.TaskStatusClosed,
+		AuthToken: "token",
+	})
+	if err != nil {
+		t.Fatalf("publish task status update: %v", err)
+	}
+
+	deadline := time.Now().Add(1 * time.Second)
+	for {
+		tkCalls := tkBackend.callsFor("task-1")
+		linearCalls := linearBackend.callsFor("task-1")
+		githubCalls := githubBackend.callsFor("task-1")
+		if tkCalls == 1 && linearCalls == 1 && githubCalls == 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("expected status writes on discovered backends, got tk=%d linear=%d github=%d", tkCalls, linearCalls, githubCalls)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 
@@ -1395,6 +1576,70 @@ func (r *progressRunner) Run(_ context.Context, request contracts.RunnerRequest)
 		return contracts.RunnerResult{Status: contracts.RunnerResultCompleted}, nil
 	}
 	return contracts.RunnerResult{Status: contracts.RunnerResultCompleted, ReviewReady: true}, nil
+}
+
+type testStorageBackend struct {
+	mu       sync.Mutex
+	statuses map[string]contracts.TaskStatus
+	calls    map[string]int
+}
+
+func (b *testStorageBackend) GetTaskTree(context.Context, string) (*contracts.TaskTree, error) {
+	return &contracts.TaskTree{
+		Root: contracts.Task{
+			ID:     "root-1",
+			Status: contracts.TaskStatusOpen,
+		},
+		Tasks: map[string]contracts.Task{
+			"root-1": {ID: "root-1", Status: contracts.TaskStatusOpen},
+		},
+	}, nil
+}
+
+func (b *testStorageBackend) GetTask(_ context.Context, taskID string) (*contracts.Task, error) {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return nil, fmt.Errorf("task id is required")
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	status, ok := b.statuses[taskID]
+	if !ok {
+		return &contracts.Task{ID: taskID}, nil
+	}
+	return &contracts.Task{ID: taskID, Status: status}, nil
+}
+
+func (b *testStorageBackend) SetTaskStatus(_ context.Context, taskID string, status contracts.TaskStatus) error {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return fmt.Errorf("task id is required")
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.statuses == nil {
+		b.statuses = map[string]contracts.TaskStatus{}
+	}
+	if b.calls == nil {
+		b.calls = map[string]int{}
+	}
+	b.calls[taskID]++
+	b.statuses[taskID] = status
+	return nil
+}
+
+func (b *testStorageBackend) SetTaskData(_ context.Context, taskID string, data map[string]string) error {
+	return nil
+}
+
+func (b *testStorageBackend) callsFor(taskID string) int {
+	taskID = strings.TrimSpace(taskID)
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.calls == nil {
+		return 0
+	}
+	return b.calls[taskID]
 }
 
 func TestRunMainRequiresRoot(t *testing.T) {
