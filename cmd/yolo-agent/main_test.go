@@ -3,16 +3,20 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/egv/yolo-runner/v2/internal/contracts"
+	"github.com/egv/yolo-runner/v2/internal/distributed"
+	"github.com/egv/yolo-runner/v2/internal/github"
 	"github.com/egv/yolo-runner/v2/internal/linear"
 )
 
@@ -81,6 +85,62 @@ func TestRunMainParsesQualityGateFlagsAndOverride(t *testing.T) {
 	}
 	if !got.allowLowQuality {
 		t.Fatalf("expected allow-low-quality=true, got false")
+	}
+}
+
+func TestRunMainParsesQualityGateTools(t *testing.T) {
+	called := false
+	var got runConfig
+	run := func(_ context.Context, cfg runConfig) error {
+		called = true
+		got = cfg
+		return nil
+	}
+
+	code := RunMain([]string{
+		"--repo", "/repo",
+		"--root", "root-1",
+		"--quality-gate-tools", "task_validator,dependency_checker",
+	}, run)
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d", code)
+	}
+	if !called {
+		t.Fatalf("expected run function to be called")
+	}
+	if len(got.qualityGateTools) != 2 {
+		t.Fatalf("expected two quality gate tools, got %#v", got.qualityGateTools)
+	}
+	if got.qualityGateTools[0] != "task_validator" || got.qualityGateTools[1] != "dependency_checker" {
+		t.Fatalf("unexpected quality gate tools ordering/values: %#v", got.qualityGateTools)
+	}
+}
+
+func TestRunMainParsesQCGateTools(t *testing.T) {
+	called := false
+	var got runConfig
+	run := func(_ context.Context, cfg runConfig) error {
+		called = true
+		got = cfg
+		return nil
+	}
+
+	code := RunMain([]string{
+		"--repo", "/repo",
+		"--root", "root-1",
+		"--qc-gate-tools", "test_runner, linter, coverage_checker",
+	}, run)
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d", code)
+	}
+	if !called {
+		t.Fatalf("expected run function to be called")
+	}
+	if len(got.qcGateTools) != 3 {
+		t.Fatalf("expected three qc gate tools, got %#v", got.qcGateTools)
+	}
+	if got.qcGateTools[0] != "test_runner" || got.qcGateTools[1] != "linter" || got.qcGateTools[2] != "coverage_checker" {
+		t.Fatalf("unexpected qc gate tools ordering/values: %#v", got.qcGateTools)
 	}
 }
 
@@ -283,6 +343,100 @@ func TestRunMainUsesProfileDefaultBackendWhenBackendFlagsAreUnset(t *testing.T) 
 	}
 	if got.backend != backendClaude {
 		t.Fatalf("expected profile default backend=%q, got %q", backendClaude, got.backend)
+	}
+}
+
+func TestRunMainLoadsBackendDefinitionFromCustomCatalog(t *testing.T) {
+	repoRoot := t.TempDir()
+	catalogDir := filepath.Join(repoRoot, ".yolo-runner", "coding-agents")
+	if err := os.MkdirAll(catalogDir, 0o755); err != nil {
+		t.Fatalf("create custom catalog dir: %v", err)
+	}
+	customPath := filepath.Join(catalogDir, "custom-cli.yaml")
+	if err := os.WriteFile(customPath, []byte(`
+name: custom
+adapter: command
+binary: /usr/bin/custom-cli
+args:
+  - --prompt
+  - "{{prompt}}"
+supports_review: true
+supports_stream: true
+required_credentials:
+  - CUSTOM_AGENT_TOKEN
+supported_models:
+  - custom-*
+`), 0o644); err != nil {
+		t.Fatalf("write custom backend definition: %v", err)
+	}
+	t.Setenv("CUSTOM_AGENT_TOKEN", "custom-token")
+
+	called := false
+	var got runConfig
+	run := func(_ context.Context, cfg runConfig) error {
+		called = true
+		got = cfg
+		return nil
+	}
+
+	code := RunMain([]string{
+		"--repo", repoRoot,
+		"--root", "root-1",
+		"--agent-backend", "custom",
+		"--model", "custom-model",
+	}, run)
+	if code != 0 {
+		t.Fatalf("expected exit code 0 for catalog-defined backend, got %d", code)
+	}
+	if !called {
+		t.Fatalf("expected run function to be called")
+	}
+	if got.backend != "custom" {
+		t.Fatalf("expected backend=%q, got %q", "custom", got.backend)
+	}
+}
+
+func TestRunMainRejectsCatalogBackendWithMissingCredentials(t *testing.T) {
+	repoRoot := t.TempDir()
+	catalogDir := filepath.Join(repoRoot, ".yolo-runner", "coding-agents")
+	if err := os.MkdirAll(catalogDir, 0o755); err != nil {
+		t.Fatalf("create custom catalog dir: %v", err)
+	}
+	customPath := filepath.Join(catalogDir, "custom-cli.yaml")
+	if err := os.WriteFile(customPath, []byte(`
+name: custom
+adapter: command
+binary: /usr/bin/custom-cli
+args:
+  - --prompt
+  - "{{prompt}}"
+supports_review: true
+supports_stream: true
+required_credentials:
+  - CUSTOM_AGENT_TOKEN
+`), 0o644); err != nil {
+		t.Fatalf("write custom backend definition: %v", err)
+	}
+
+	called := false
+	stderrText := captureStderr(t, func() {
+		code := RunMain([]string{
+			"--repo", repoRoot,
+			"--root", "root-1",
+			"--agent-backend", "custom",
+		}, func(context.Context, runConfig) error {
+			called = true
+			return nil
+		})
+		if code != 1 {
+			t.Fatalf("expected exit code 1 for missing credential, got %d", code)
+		}
+	})
+	if called {
+		t.Fatalf("expected run function not to be called when backend validation fails")
+	}
+	if !strings.Contains(stderrText, "missing auth token from CUSTOM_AGENT_TOKEN") {
+		t.Fatalf("expected missing credential validation error, got %q", stderrText)
 	}
 }
 
@@ -549,6 +703,28 @@ func TestRunMainAcceptsKimiBackend(t *testing.T) {
 	}
 }
 
+func TestRunMainAcceptsGeminiBackend(t *testing.T) {
+	t.Setenv("GEMINI_API_KEY", "token")
+	called := false
+	var got runConfig
+	run := func(_ context.Context, cfg runConfig) error {
+		called = true
+		got = cfg
+		return nil
+	}
+
+	code := RunMain([]string{"--repo", "/repo", "--root", "root-1", "--backend", "gemini", "--model", "gemini-flash"}, run)
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d", code)
+	}
+	if !called {
+		t.Fatalf("expected run function to be called")
+	}
+	if got.backend != backendGemini {
+		t.Fatalf("expected backend=%q, got %q", backendGemini, got.backend)
+	}
+}
+
 func TestRunMainAcceptsClaudeBackend(t *testing.T) {
 	called := false
 	var got runConfig
@@ -602,6 +778,418 @@ func TestRunMainParsesStreamFlag(t *testing.T) {
 	}
 	if !got.stream {
 		t.Fatalf("expected stream=true")
+	}
+}
+
+func TestRunMainParsesDistributedExecutorRoleAndConfig(t *testing.T) {
+	tempDir := t.TempDir()
+	called := false
+	var got runConfig
+	run := func(_ context.Context, cfg runConfig) error {
+		called = true
+		got = cfg
+		return nil
+	}
+
+	code := RunMain([]string{
+		"--repo", tempDir,
+		"--role", agentRoleWorker,
+		"--distributed-bus-backend", distributedBusNATS,
+		"--distributed-bus-address", "nats://localhost:4222",
+		"--distributed-bus-prefix", "team",
+		"--distributed-executor-id", "executor-42",
+		"--distributed-executor-capabilities", "implement,review,service_proxy",
+		"--distributed-heartbeat-interval", "7s",
+		"--distributed-request-timeout", "31s",
+		"--distributed-registry-ttl", "40s",
+	}, run)
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d", code)
+	}
+	if !called {
+		t.Fatalf("expected run function to be called")
+	}
+	if got.role != agentRoleWorker {
+		t.Fatalf("expected role=%q, got %q", agentRoleWorker, got.role)
+	}
+	if got.distributedBusBackend != distributedBusNATS {
+		t.Fatalf("expected distributed bus backend %q, got %q", distributedBusNATS, got.distributedBusBackend)
+	}
+	if got.distributedBusAddress != "nats://localhost:4222" {
+		t.Fatalf("unexpected distributed bus address %q", got.distributedBusAddress)
+	}
+	if got.distributedBusPrefix != "team" {
+		t.Fatalf("expected prefix team, got %q", got.distributedBusPrefix)
+	}
+	if got.distributedRoleID != "executor-42" {
+		t.Fatalf("unexpected executor id %q", got.distributedRoleID)
+	}
+	if got.distributedHeartbeatInterval != 7*time.Second {
+		t.Fatalf("expected heartbeat 7s, got %s", got.distributedHeartbeatInterval)
+	}
+	if got.distributedRequestTimeout != 31*time.Second {
+		t.Fatalf("expected request timeout 31s, got %s", got.distributedRequestTimeout)
+	}
+	if got.distributedRegistryTTL != 40*time.Second {
+		t.Fatalf("expected registry TTL 40s, got %s", got.distributedRegistryTTL)
+	}
+	if !reflect.DeepEqual(got.distributedExecutorCapabilities, []distributed.Capability{distributed.CapabilityImplement, distributed.CapabilityReview, distributed.CapabilityServiceProxy}) {
+		t.Fatalf("unexpected capabilities: %#v", got.distributedExecutorCapabilities)
+	}
+}
+
+func TestMaybeWrapWithMastermindProvidesServiceHandlerToExecuteRequests(t *testing.T) {
+	originalBusFactory := newDistributedBus
+	t.Cleanup(func() {
+		newDistributedBus = originalBusFactory
+	})
+
+	bus := distributed.NewMemoryBus()
+	newDistributedBus = func(_ string, _ string) (distributed.Bus, error) {
+		return bus, nil
+	}
+
+	serviceRunner := &serviceTrackingRunner{
+		result: contracts.RunnerResult{
+			Status:    contracts.RunnerResultCompleted,
+			Artifacts: map[string]string{"local": "service"},
+		},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	wrappedRunner, distributedBus, closeDistributed, err := maybeWrapWithMastermind(ctx, runConfig{
+		role:                 agentRoleMaster,
+		distributedBusPrefix: "unit",
+	}, serviceRunner, nil)
+	if distributedBus == nil {
+		t.Fatalf("expected distributed bus from mastermind wrapper")
+	}
+	if err != nil {
+		t.Fatalf("expected mastermind setup to succeed, got %v", err)
+	}
+	if closeDistributed == nil {
+		t.Fatalf("expected close callback for mastermind wrapper")
+	}
+	t.Cleanup(func() {
+		_ = closeDistributed()
+	})
+
+	mm, ok := wrappedRunner.(distributedMastermindRunner)
+	if !ok {
+		t.Fatalf("expected wrapped runner to be distributed mastermind runner, got %T", wrappedRunner)
+	}
+	if err := mm.mastermind.Start(ctx); err != nil {
+		t.Fatalf("start mastermind: %v", err)
+	}
+
+	executor := distributed.NewExecutorWorker(distributed.ExecutorWorkerOptions{
+		ID:           "executor",
+		Bus:          bus,
+		Runner:       serviceRunner,
+		Subjects:     distributed.DefaultEventSubjects("unit"),
+		Capabilities: []distributed.Capability{distributed.CapabilityReview},
+	})
+	go func() {
+		_ = executor.Start(ctx)
+	}()
+
+	time.Sleep(20 * time.Millisecond)
+
+	response, err := executor.RequestService(ctx, distributed.ServiceRequestPayload{
+		TaskID:  "task-1",
+		Service: "review-with-larger-model",
+		Metadata: map[string]string{
+			"prompt":    "Please review the change",
+			"parent_id": "parent-1",
+			"repo_root": "/workspace",
+			"timeout":   "500ms",
+			"model":     "larger",
+		},
+	})
+	if err != nil {
+		t.Fatalf("executor RequestService failed: %v", err)
+	}
+	if response.Artifacts["service"] != "review-with-larger-model" {
+		t.Fatalf("expected service artifact %q, got %q", "review-with-larger-model", response.Artifacts["service"])
+	}
+	if response.Artifacts["mode"] != string(contracts.RunnerModeReview) {
+		t.Fatalf("expected mode artifact %q, got %q", contracts.RunnerModeReview, response.Artifacts["mode"])
+	}
+
+	req, ok := serviceRunner.lastRequest()
+	if !ok {
+		t.Fatalf("expected local runner request")
+	}
+	if req.ParentID != "parent-1" {
+		t.Fatalf("expected parent_id %q, got %q", "parent-1", req.ParentID)
+	}
+	if req.TaskID != "task-1" {
+		t.Fatalf("expected task_id %q, got %q", "task-1", req.TaskID)
+	}
+	if req.Mode != contracts.RunnerModeReview {
+		t.Fatalf("expected runner mode %q, got %q", contracts.RunnerModeReview, req.Mode)
+	}
+	if req.Model != "larger" {
+		t.Fatalf("expected model %q, got %q", "larger", req.Model)
+	}
+	if req.RepoRoot != "/workspace" {
+		t.Fatalf("expected repo_root %q, got %q", "/workspace", req.RepoRoot)
+	}
+	if req.Timeout != 500*time.Millisecond {
+		t.Fatalf("expected timeout %s, got %s", 500*time.Millisecond, req.Timeout)
+	}
+}
+
+func TestMaybeWrapWithMastermindRejectsUnsupportedServiceNames(t *testing.T) {
+	originalBusFactory := newDistributedBus
+	t.Cleanup(func() {
+		newDistributedBus = originalBusFactory
+	})
+
+	bus := distributed.NewMemoryBus()
+	newDistributedBus = func(_ string, _ string) (distributed.Bus, error) {
+		return bus, nil
+	}
+
+	serviceRunner := &serviceTrackingRunner{result: contracts.RunnerResult{Status: contracts.RunnerResultCompleted}}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	wrappedRunner, distributedBus, closeDistributed, err := maybeWrapWithMastermind(ctx, runConfig{
+		role:                 agentRoleMaster,
+		distributedBusPrefix: "unit",
+	}, serviceRunner, nil)
+	if distributedBus == nil {
+		t.Fatalf("expected distributed bus from mastermind wrapper")
+	}
+	if err != nil {
+		t.Fatalf("expected mastermind setup to succeed, got %v", err)
+	}
+	t.Cleanup(func() {
+		_ = closeDistributed()
+	})
+
+	mm, ok := wrappedRunner.(distributedMastermindRunner)
+	if !ok {
+		t.Fatalf("expected wrapped runner to be distributed mastermind runner, got %T", wrappedRunner)
+	}
+	if err := mm.mastermind.Start(ctx); err != nil {
+		t.Fatalf("start mastermind: %v", err)
+	}
+
+	executor := distributed.NewExecutorWorker(distributed.ExecutorWorkerOptions{
+		ID:           "executor",
+		Bus:          bus,
+		Runner:       serviceRunner,
+		Subjects:     distributed.DefaultEventSubjects("unit"),
+		Capabilities: []distributed.Capability{distributed.CapabilityReview},
+	})
+	go func() {
+		_ = executor.Start(ctx)
+	}()
+
+	time.Sleep(20 * time.Millisecond)
+
+	_, err = executor.RequestService(ctx, distributed.ServiceRequestPayload{
+		TaskID:   "task-2",
+		Service:  "unsupported-service",
+		Metadata: map[string]string{"prompt": "noop"},
+	})
+	if err == nil {
+		t.Fatalf("expected unsupported service request to fail")
+	}
+}
+
+func TestDiscoverTaskStatusBackendsForMastermindIncludesAdditionalTrackerProfiles(t *testing.T) {
+	repoRoot := t.TempDir()
+	writeTrackerConfigYAML(t, repoRoot, `
+profiles:
+  default:
+    tracker:
+      type: tk
+  linear:
+    tracker:
+      type: linear
+      linear:
+        scope:
+          workspace: playground
+        auth:
+          token_env: LINEAR_TOKEN
+  github:
+    tracker:
+      type: github
+      github:
+        scope:
+          owner: org
+          repo: repo
+        auth:
+          token_env: GITHUB_TOKEN
+`)
+	t.Setenv("LINEAR_TOKEN", "linear-token")
+	t.Setenv("GITHUB_TOKEN", "github-token")
+
+	originalTKStorage := newTKStorageBackend
+	originalLinearStorage := newLinearStorageBackend
+	originalGitHubStorage := newGitHubStorageBackend
+	t.Cleanup(func() {
+		newTKStorageBackend = originalTKStorage
+		newLinearStorageBackend = originalLinearStorage
+		newGitHubStorageBackend = originalGitHubStorage
+	})
+
+	discoveredByID := map[string]contracts.StorageBackend{}
+	newTKStorageBackend = func(string) (contracts.StorageBackend, error) {
+		backend := &testStorageBackend{}
+		discoveredByID["tk"] = backend
+		return backend, nil
+	}
+	newLinearStorageBackend = func(_ linear.Config) (contracts.StorageBackend, error) {
+		backend := &testStorageBackend{}
+		discoveredByID["linear"] = backend
+		return backend, nil
+	}
+	newGitHubStorageBackend = func(_ github.Config) (contracts.StorageBackend, error) {
+		backend := &testStorageBackend{}
+		discoveredByID["github"] = backend
+		return backend, nil
+	}
+
+	taskStatusBackends := discoverTaskStatusBackendsForMastermind(runConfig{
+		repoRoot: repoRoot,
+		rootID:   "root-1",
+		role:     agentRoleMaster,
+		profile:  "default",
+	}, map[string]contracts.StorageBackend{})
+
+	if len(taskStatusBackends) != 3 {
+		t.Fatalf("expected 3 backends, got %d", len(taskStatusBackends))
+	}
+	if _, ok := discoveredByID["tk"]; !ok {
+		t.Fatalf("expected tk backend to be built")
+	}
+	if _, ok := discoveredByID["linear"]; !ok {
+		t.Fatalf("expected linear backend to be built")
+	}
+	if _, ok := discoveredByID["github"]; !ok {
+		t.Fatalf("expected github backend to be built")
+	}
+}
+
+func TestMaybeWrapWithMastermindWiresDiscoveredBackendsForStatusWrites(t *testing.T) {
+	t.Setenv("YOLO_INBOX_WRITE_TOKEN", "token")
+	t.Setenv("LINEAR_TOKEN", "linear-token")
+	t.Setenv("GITHUB_TOKEN", "github-token")
+	repoRoot := t.TempDir()
+	writeTrackerConfigYAML(t, repoRoot, `
+profiles:
+  default:
+    tracker:
+      type: tk
+  linear:
+    tracker:
+      type: linear
+      linear:
+        scope:
+          workspace: playground
+        auth:
+          token_env: LINEAR_TOKEN
+  github:
+    tracker:
+      type: github
+      github:
+        scope:
+          owner: org
+          repo: repo
+        auth:
+          token_env: GITHUB_TOKEN
+`)
+
+	originalBusFactory := newDistributedBus
+	t.Cleanup(func() {
+		newDistributedBus = originalBusFactory
+	})
+	bus := distributed.NewMemoryBus()
+	newDistributedBus = func(_ string, _ string) (distributed.Bus, error) {
+		return bus, nil
+	}
+
+	tkBackend := &testStorageBackend{}
+	linearBackend := &testStorageBackend{}
+	githubBackend := &testStorageBackend{}
+	originalTKStorage := newTKStorageBackend
+	originalLinearStorage := newLinearStorageBackend
+	originalGitHubStorage := newGitHubStorageBackend
+	t.Cleanup(func() {
+		newTKStorageBackend = originalTKStorage
+		newLinearStorageBackend = originalLinearStorage
+		newGitHubStorageBackend = originalGitHubStorage
+	})
+	newTKStorageBackend = func(_ string) (contracts.StorageBackend, error) { return tkBackend, nil }
+	newLinearStorageBackend = func(_ linear.Config) (contracts.StorageBackend, error) { return linearBackend, nil }
+	newGitHubStorageBackend = func(_ github.Config) (contracts.StorageBackend, error) { return githubBackend, nil }
+
+	serviceRunner := &serviceTrackingRunner{}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	wrappedRunner, distributedBus, closeDistributed, err := maybeWrapWithMastermind(ctx, runConfig{
+		role:                 agentRoleMaster,
+		repoRoot:             repoRoot,
+		rootID:               "root-1",
+		profile:              "default",
+		distributedBusPrefix: "unit",
+	}, serviceRunner, map[string]contracts.StorageBackend{
+		"tk": tkBackend,
+	})
+	if distributedBus == nil {
+		t.Fatalf("expected distributed bus from mastermind wrapper")
+	}
+	if err != nil {
+		t.Fatalf("expected mastermind setup to succeed, got %v", err)
+	}
+	if closeDistributed == nil {
+		t.Fatalf("expected close callback for mastermind wrapper")
+	}
+	t.Cleanup(func() {
+		_ = closeDistributed()
+	})
+
+	mm, ok := wrappedRunner.(distributedMastermindRunner)
+	if !ok {
+		t.Fatalf("expected wrapped runner to be distributed mastermind runner, got %T", wrappedRunner)
+	}
+	_, err = mm.mastermind.PublishTaskStatusUpdate(ctx, distributed.TaskStatusUpdatePayload{
+		TaskID:    "task-1",
+		Status:    contracts.TaskStatusClosed,
+		AuthToken: "token",
+	})
+	if err != nil {
+		t.Fatalf("publish task status update: %v", err)
+	}
+
+	deadline := time.Now().Add(1 * time.Second)
+	for {
+		tkCalls := tkBackend.callsFor("task-1")
+		linearCalls := linearBackend.callsFor("task-1")
+		githubCalls := githubBackend.callsFor("task-1")
+		if tkCalls == 1 && linearCalls == 1 && githubCalls == 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("expected status writes on discovered backends, got tk=%d linear=%d github=%d", tkCalls, linearCalls, githubCalls)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestRunMainRejectsInvalidDistributedRole(t *testing.T) {
+	code := RunMain([]string{"--repo", t.TempDir(), "--role", "unknown"}, func(context.Context, runConfig) error {
+		t.Fatalf("run function should not be called")
+		return nil
+	})
+	if code != 1 {
+		t.Fatalf("expected exit code 1, got %d", code)
 	}
 }
 
@@ -1130,6 +1718,29 @@ func (testRunner) Run(context.Context, contracts.RunnerRequest) (contracts.Runne
 	return contracts.RunnerResult{Status: contracts.RunnerResultCompleted}, nil
 }
 
+type serviceTrackingRunner struct {
+	mu       sync.Mutex
+	result   contracts.RunnerResult
+	err      error
+	requests []contracts.RunnerRequest
+}
+
+func (r *serviceTrackingRunner) Run(_ context.Context, req contracts.RunnerRequest) (contracts.RunnerResult, error) {
+	r.mu.Lock()
+	r.requests = append(r.requests, req)
+	r.mu.Unlock()
+	return r.result, r.err
+}
+
+func (r *serviceTrackingRunner) lastRequest() (contracts.RunnerRequest, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.requests) == 0 {
+		return contracts.RunnerRequest{}, false
+	}
+	return r.requests[len(r.requests)-1], true
+}
+
 type progressRunner struct {
 	updates []contracts.RunnerProgress
 	calls   int
@@ -1146,6 +1757,70 @@ func (r *progressRunner) Run(_ context.Context, request contracts.RunnerRequest)
 		return contracts.RunnerResult{Status: contracts.RunnerResultCompleted}, nil
 	}
 	return contracts.RunnerResult{Status: contracts.RunnerResultCompleted, ReviewReady: true}, nil
+}
+
+type testStorageBackend struct {
+	mu       sync.Mutex
+	statuses map[string]contracts.TaskStatus
+	calls    map[string]int
+}
+
+func (b *testStorageBackend) GetTaskTree(context.Context, string) (*contracts.TaskTree, error) {
+	return &contracts.TaskTree{
+		Root: contracts.Task{
+			ID:     "root-1",
+			Status: contracts.TaskStatusOpen,
+		},
+		Tasks: map[string]contracts.Task{
+			"root-1": {ID: "root-1", Status: contracts.TaskStatusOpen},
+		},
+	}, nil
+}
+
+func (b *testStorageBackend) GetTask(_ context.Context, taskID string) (*contracts.Task, error) {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return nil, fmt.Errorf("task id is required")
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	status, ok := b.statuses[taskID]
+	if !ok {
+		return &contracts.Task{ID: taskID}, nil
+	}
+	return &contracts.Task{ID: taskID, Status: status}, nil
+}
+
+func (b *testStorageBackend) SetTaskStatus(_ context.Context, taskID string, status contracts.TaskStatus) error {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return fmt.Errorf("task id is required")
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.statuses == nil {
+		b.statuses = map[string]contracts.TaskStatus{}
+	}
+	if b.calls == nil {
+		b.calls = map[string]int{}
+	}
+	b.calls[taskID]++
+	b.statuses[taskID] = status
+	return nil
+}
+
+func (b *testStorageBackend) SetTaskData(_ context.Context, taskID string, data map[string]string) error {
+	return nil
+}
+
+func (b *testStorageBackend) callsFor(taskID string) int {
+	taskID = strings.TrimSpace(taskID)
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.calls == nil {
+		return 0
+	}
+	return b.calls[taskID]
 }
 
 func TestRunMainRequiresRoot(t *testing.T) {

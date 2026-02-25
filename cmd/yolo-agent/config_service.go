@@ -29,7 +29,11 @@ func (s trackerConfigService) ResolveAgentDefaults(repoRoot string) (yoloAgentCo
 	if err != nil {
 		return yoloAgentConfigDefaults{}, err
 	}
-	return resolveYoloAgentConfigDefaults(model.Agent)
+	catalog, err := loadCodingAgentsCatalog(repoRoot)
+	if err != nil {
+		return yoloAgentConfigDefaults{}, err
+	}
+	return resolveYoloAgentConfigDefaults(model.Agent, catalog)
 }
 
 func (s trackerConfigService) ResolveTrackerProfile(repoRoot string, selectedProfile string, trackerTypeOverride string, rootID string, getenv func(string) string) (resolvedTrackerProfile, error) {

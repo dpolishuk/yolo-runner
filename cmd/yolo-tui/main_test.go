@@ -2,14 +2,16 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/egv/yolo-runner/v2/internal/contracts"
-	"github.com/egv/yolo-runner/v2/internal/ui/monitor"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/egv/yolo-runner/v2/internal/contracts"
+	"github.com/egv/yolo-runner/v2/internal/distributed"
+	"github.com/egv/yolo-runner/v2/internal/ui/monitor"
 )
 
 func TestRunMainRendersMonitorViewFromStdin(t *testing.T) {
@@ -26,6 +28,104 @@ func TestRunMainRendersMonitorViewFromStdin(t *testing.T) {
 	}
 	if !contains(out.String(), "Current Task: task-1 - Readable task") {
 		t.Fatalf("expected current task in output, got %q", out.String())
+	}
+}
+
+func TestRenderBodyShowsTaskDetailsForCurrentTask(t *testing.T) {
+	model := newFullscreenModel(make(chan streamMsg), nil, true)
+	now := time.Date(2026, 2, 10, 12, 0, 0, 0, time.UTC)
+	model.monitor.Apply(contracts.Event{
+		Type:      contracts.EventTypeTaskStarted,
+		TaskID:    "task-1",
+		TaskTitle: "Readable task",
+		QueuePos:  2,
+		Priority:  7,
+		Metadata: map[string]string{
+			"parent_id":     "parent-1",
+			"dependencies":  "dep-1, dep-2",
+			"worker_id":     "worker-1",
+		},
+		Timestamp: now,
+	})
+	model.monitor.Apply(contracts.Event{
+		Type:     contracts.EventTypeRunnerCommandStarted,
+		TaskID:   "task-1",
+		TaskTitle:"Readable task",
+		Message:  "run",
+	})
+	model.detailsCollapsed = false
+	body := model.renderBody()
+
+	if !strings.Contains(body, "task=task-1 - Readable task") {
+		t.Fatalf("expected task details to include current task, got %q", body)
+	}
+	if !strings.Contains(body, "parent=parent-1") {
+		t.Fatalf("expected task details to include parent id, got %q", body)
+	}
+	if !strings.Contains(body, "dependencies=dep-1, dep-2") {
+		t.Fatalf("expected task details to include dependencies, got %q", body)
+	}
+	if !strings.Contains(body, "queue_pos=2 priority=7") {
+		t.Fatalf("expected task detail metrics to include queue and priority, got %q", body)
+	}
+}
+
+func TestRunMainSupportsDistributedBusEventsFromEnvelope(t *testing.T) {
+	bus := distributed.NewMemoryBus()
+	originalBusFactory := newDistributedBus
+	t.Cleanup(func() {
+		newDistributedBus = originalBusFactory
+	})
+	newDistributedBus = func(_ string, _ string) (distributed.Bus, error) {
+		return bus, nil
+	}
+
+	out := &bytes.Buffer{}
+	errOut := &bytes.Buffer{}
+	publishErr := make(chan error, 1)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		time.Sleep(20 * time.Millisecond)
+		subject := distributed.DefaultEventSubjects("unit").MonitorEvent
+		event, err := distributed.NewEventEnvelope(distributed.EventTypeMonitorEvent, "agent", "", distributed.MonitorEventPayload{
+			Event: contracts.Event{
+				Type:      contracts.EventTypeTaskStarted,
+				TaskID:    "task-1",
+				TaskTitle: "Bus task",
+				Message:   "started",
+				Timestamp: time.Date(2026, time.January, 10, 12, 0, 0, 0, time.UTC),
+			},
+		})
+		if err != nil {
+			publishErr <- err
+			return
+		}
+		_ = bus.Publish(context.Background(), subject, event)
+		time.Sleep(20 * time.Millisecond)
+		_ = bus.Close()
+		publishErr <- nil
+	}()
+
+	code := RunMain([]string{
+		"--events-bus",
+		"--events-bus-backend", "redis",
+		"--events-bus-address", "mem://unit-test",
+		"--events-bus-prefix", "unit",
+		"--events-bus-source", "agent",
+	}, nil, out, errOut)
+	if code != 0 {
+		t.Fatalf("expected code 0, got %d stderr=%q", code, errOut.String())
+	}
+	<-done
+	if err := <-publishErr; err != nil {
+		t.Fatalf("publish monitor envelope: %v", err)
+	}
+	if !contains(out.String(), "Current Task: task-1 - Bus task") {
+		t.Fatalf("expected bus event in output, got %q", out.String())
+	}
+	if errOut.String() != "" {
+		t.Fatalf("unexpected stderr output: %q", errOut.String())
 	}
 }
 
@@ -117,6 +217,47 @@ func TestRenderFromReaderContinuesAfterMalformedEventWithFallbackWarning(t *test
 	}
 	if !contains(out.String(), "runner_finished") {
 		t.Fatalf("expected stream to continue after malformed event, got %q", out.String())
+	}
+}
+
+func TestParseMonitorEnvelopeSkipsWrongSourceFilter(t *testing.T) {
+	event, err := distributed.NewEventEnvelope(distributed.EventTypeMonitorEvent, "worker", "", distributed.MonitorEventPayload{
+		Event: contracts.Event{
+			Type: contracts.EventTypeTaskStarted,
+		},
+	})
+	if err != nil {
+		t.Fatalf("create monitor envelope: %v", err)
+	}
+	_, ok, err := parseMonitorEnvelope(event, "master")
+	if err != nil {
+		t.Fatalf("parse monitor envelope failed: %v", err)
+	}
+	if ok {
+		t.Fatalf("expected event to be filtered out")
+	}
+}
+
+func TestParseMonitorEnvelopeReturnsMonitorEvent(t *testing.T) {
+	event, err := distributed.NewEventEnvelope(distributed.EventTypeMonitorEvent, "master", "", distributed.MonitorEventPayload{
+		Event: contracts.Event{
+			Type:      contracts.EventTypeTaskStarted,
+			TaskID:    "task-1",
+			TaskTitle: "Filtered task",
+		},
+	})
+	if err != nil {
+		t.Fatalf("create monitor envelope: %v", err)
+	}
+	parsed, ok, err := parseMonitorEnvelope(event, "")
+	if err != nil {
+		t.Fatalf("parse monitor envelope failed: %v", err)
+	}
+	if !ok {
+		t.Fatalf("expected envelope to be accepted")
+	}
+	if parsed.TaskID != "task-1" || parsed.TaskTitle != "Filtered task" {
+		t.Fatalf("unexpected parsed event %#v", parsed)
 	}
 }
 

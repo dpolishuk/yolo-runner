@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/egv/yolo-runner/v2/internal/codingagents"
 	"github.com/egv/yolo-runner/v2/internal/claude"
 	"github.com/egv/yolo-runner/v2/internal/codex"
 	"github.com/egv/yolo-runner/v2/internal/contracts"
@@ -79,14 +80,22 @@ func newLinearSessionJobProcessorFromEnv() (*linearSessionJobProcessor, error) {
 		repoRoot = wd
 	}
 	repoRoot = ensureLinearWorkerRepoPath(repoRoot)
+	codingAgents, err := codingagents.LoadCatalog(repoRoot)
+	if err != nil {
+		return nil, fmt.Errorf("load coding agent catalog: %w", err)
+	}
 
 	backend := strings.ToLower(strings.TrimSpace(firstNonEmptyEnv(envLinearWorkerBackend, "YOLO_AGENT_BACKEND")))
 	if backend == "" {
 		backend = defaultLinearWorkerBackend
 	}
 	binary := strings.TrimSpace(os.Getenv(envLinearWorkerBinary))
-	runner, err := newLinearWorkerRunner(backend, binary)
+	runner, err := newLinearWorkerRunner(codingAgents, backend, binary)
 	if err != nil {
+		return nil, err
+	}
+	model := strings.TrimSpace(os.Getenv(envLinearWorkerModel))
+	if err := codingAgents.ValidateBackendUsage(backend, model, os.Getenv); err != nil {
 		return nil, err
 	}
 
@@ -113,8 +122,8 @@ func newLinearSessionJobProcessorFromEnv() (*linearSessionJobProcessor, error) {
 	}
 
 	return &linearSessionJobProcessor{
-		repoRoot:      repoRoot,
-		model:         strings.TrimSpace(os.Getenv(envLinearWorkerModel)),
+	repoRoot:      repoRoot,
+	model:         model,
 		runnerTimeout: runnerTimeout,
 		runner:        runner,
 		activities:    activityClient,
@@ -138,8 +147,14 @@ func resolveLinearWorkerRunnerTimeout() (time.Duration, error) {
 	return timeout, nil
 }
 
-func newLinearWorkerRunner(backend string, binary string) (contracts.AgentRunner, error) {
-	switch strings.ToLower(strings.TrimSpace(backend)) {
+func newLinearWorkerRunner(catalog codingagents.Catalog, backend string, binary string) (contracts.AgentRunner, error) {
+	normalized := strings.ToLower(strings.TrimSpace(backend))
+	definition, ok := catalog.Backend(normalized)
+	if !ok {
+		return nil, fmt.Errorf("unsupported linear worker backend %q", backend)
+	}
+
+	switch strings.ToLower(strings.TrimSpace(definition.Adapter)) {
 	case "opencode":
 		return opencode.NewCLIRunnerAdapter(opencode.CommandRunner{}, nil, "", ""), nil
 	case "codex":
@@ -148,6 +163,8 @@ func newLinearWorkerRunner(backend string, binary string) (contracts.AgentRunner
 		return claude.NewCLIRunnerAdapter(binary, nil), nil
 	case "kimi":
 		return kimi.NewCLIRunnerAdapter(binary, nil), nil
+	case "command":
+		return codingagents.NewGenericCLIRunnerAdapter(definition.Name, definition.Binary, definition.Args, nil), nil
 	default:
 		return nil, fmt.Errorf("unsupported linear worker backend %q", backend)
 	}

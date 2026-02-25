@@ -61,7 +61,11 @@ func defaultRunConfigValidateCommand(args []string) int {
 	if err != nil {
 		return reportInvalidConfig(err, format)
 	}
-	if _, err := resolveYoloAgentConfigDefaults(model.Agent); err != nil {
+	catalog, err := loadCodingAgentsCatalog(*repo)
+	if err != nil {
+		return reportInvalidConfig(err, format)
+	}
+	if _, err := resolveYoloAgentConfigDefaults(model.Agent, catalog); err != nil {
 		return reportInvalidConfig(err, format)
 	}
 
@@ -244,7 +248,7 @@ func inferConfigReason(message string, field string) string {
 func inferConfigRemediation(field string, message string) string {
 	switch field {
 	case "agent.backend":
-		return "Set agent.backend to one of: opencode, codex, claude, kimi in .yolo-runner/config.yaml."
+		return "Set agent.backend to a configured coding backend in .yolo-runner/config.yaml."
 	case "agent.concurrency":
 		return "Set agent.concurrency to an integer greater than 0 in .yolo-runner/config.yaml."
 	case "agent.retry_budget":

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -12,10 +14,33 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/egv/yolo-runner/v2/internal/contracts"
+	"github.com/egv/yolo-runner/v2/internal/distributed"
 	"github.com/egv/yolo-runner/v2/internal/ui/monitor"
 	"github.com/egv/yolo-runner/v2/internal/version"
 	"golang.org/x/term"
 )
+
+const (
+	distributedBusRedis        = "redis"
+	distributedBusNATS         = "nats"
+	runDefaultEventsBusBackend = "redis"
+	runDefaultEventsBusPrefix  = "yolo"
+	runDefaultMonitorSourceEnv = "YOLO_MONITOR_SOURCE_ID"
+	runDefaultBusBackendEnv    = "YOLO_DISTRIBUTED_BUS_BACKEND"
+	runDefaultBusAddressEnv    = "YOLO_DISTRIBUTED_BUS_ADDRESS"
+	runDefaultBusPrefixEnv     = "YOLO_DISTRIBUTED_BUS_PREFIX"
+)
+
+var newDistributedBus = func(backend string, address string) (distributed.Bus, error) {
+	switch strings.TrimSpace(backend) {
+	case distributedBusRedis:
+		return distributed.NewRedisBus(address)
+	case distributedBusNATS:
+		return distributed.NewNATSBus(address)
+	default:
+		return nil, fmt.Errorf("unsupported distributed bus backend %q", backend)
+	}
+}
 
 func main() {
 	os.Exit(RunMain(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
@@ -29,10 +54,31 @@ func RunMain(args []string, in io.Reader, out io.Writer, errOut io.Writer) int {
 
 	fs := flag.NewFlagSet("yolo-tui", flag.ContinueOnError)
 	fs.SetOutput(errOut)
-	eventsStdin := fs.Bool("events-stdin", true, "Read NDJSON events from stdin")
+	eventsStdin := fs.Bool("events-stdin", false, "Read NDJSON events from stdin")
+	eventsBus := fs.Bool("events-bus", false, "Read monitor events from distributed bus")
+	busBackend := fs.String("events-bus-backend", "", "Distributed bus backend (redis, nats)")
+	busAddress := fs.String("events-bus-address", "", "Distributed bus address")
+	busPrefix := fs.String("events-bus-prefix", "", "Distributed bus subject prefix")
+	busSource := fs.String("events-bus-source", "", "Monitor source filter")
 	demoState := fs.Bool("demo-state", false, "Render seeded demo state and stay open")
 	if err := fs.Parse(args); err != nil {
 		return 1
+	}
+
+	if *eventsBus && *eventsStdin {
+		fmt.Fprintln(errOut, "set exactly one event input mode: --events-stdin or --events-bus")
+		return 1
+	}
+	setFlags := map[string]struct{}{}
+	fs.Visit(func(f *flag.Flag) {
+		setFlags[f.Name] = struct{}{}
+	})
+	if _, eventsStdinSet := setFlags["events-stdin"]; !eventsStdinSet && !*eventsBus {
+		*eventsStdin = true
+	}
+	if _, eventsBusSet := setFlags["events-bus"]; !eventsBusSet && !*eventsStdin {
+		// default remains stdin when bus flag is not explicitly set
+		*eventsStdin = true
 	}
 
 	if *demoState {
@@ -50,28 +96,89 @@ func RunMain(args []string, in io.Reader, out io.Writer, errOut io.Writer) int {
 		return 0
 	}
 
-	if !*eventsStdin {
+	if !*eventsBus && !*eventsStdin {
 		fmt.Fprintln(errOut, "--events-stdin must be enabled")
 		return 1
 	}
 	if in == nil {
-		fmt.Fprintln(errOut, "stdin reader is required")
-		return 1
+		if !*eventsBus {
+			fmt.Fprintln(errOut, "stdin reader is required")
+			return 1
+		}
 	}
 
-	if shouldUseFullscreen(out) {
-		if err := runFullscreenFromReader(in, out, errOut); err != nil {
+	if !*eventsBus {
+		if shouldUseFullscreen(out) {
+			if err := runFullscreenFromReader(in, out, errOut); err != nil {
+				fmt.Fprintln(errOut, err)
+				return 1
+			}
+			return 0
+		}
+		if err := renderFromReader(in, out, errOut); err != nil {
 			fmt.Fprintln(errOut, err)
 			return 1
 		}
 		return 0
 	}
 
-	if err := renderFromReader(in, out, errOut); err != nil {
+	selectedBackend := strings.TrimSpace(*busBackend)
+	if selectedBackend == "" {
+		selectedBackend = strings.TrimSpace(os.Getenv(runDefaultBusBackendEnv))
+	}
+	if selectedBackend == "" {
+		selectedBackend = runDefaultEventsBusBackend
+	}
+	var err error
+	selectedBackend, err = normalizeDistributedBusBackend(selectedBackend)
+	if err != nil {
+		fmt.Fprintln(errOut, err)
+		return 1
+	}
+	selectedAddress := strings.TrimSpace(*busAddress)
+	if selectedAddress == "" {
+		selectedAddress = strings.TrimSpace(os.Getenv(runDefaultBusAddressEnv))
+	}
+	if selectedAddress == "" {
+		fmt.Fprintln(errOut, "--events-bus-address is required")
+		return 1
+	}
+	selectedPrefix := strings.TrimSpace(*busPrefix)
+	if selectedPrefix == "" {
+		selectedPrefix = strings.TrimSpace(os.Getenv(runDefaultBusPrefixEnv))
+	}
+	if selectedPrefix == "" {
+		selectedPrefix = runDefaultEventsBusPrefix
+	}
+	selectedSource := strings.TrimSpace(*busSource)
+	if selectedSource == "" {
+		selectedSource = strings.TrimSpace(os.Getenv(runDefaultMonitorSourceEnv))
+	}
+
+	if shouldUseFullscreen(out) {
+		if err := runFullscreenFromBus(selectedBackend, selectedAddress, selectedPrefix, selectedSource, out, errOut); err != nil {
+			fmt.Fprintln(errOut, err)
+			return 1
+		}
+		return 0
+	}
+
+	if err := renderFromBus(selectedBackend, selectedAddress, selectedPrefix, selectedSource, out, errOut); err != nil {
 		fmt.Fprintln(errOut, err)
 		return 1
 	}
 	return 0
+}
+
+func normalizeDistributedBusBackend(raw string) (string, error) {
+	switch strings.TrimSpace(raw) {
+	case "", distributedBusRedis:
+		return distributedBusRedis, nil
+	case distributedBusNATS:
+		return distributedBusNATS, nil
+	default:
+		return "", fmt.Errorf("unsupported distributed bus backend %q (supported: %s, %s)", raw, distributedBusRedis, distributedBusNATS)
+	}
 }
 
 func shouldUseFullscreen(out io.Writer) bool {
@@ -254,13 +361,16 @@ func (m *fullscreenModel) renderBody() string {
 	if m.detailsCollapsed {
 		panes = append(panes, renderCollapsedPane(width, "📦 Details", "press d to expand", lipgloss.Color("18")))
 	} else {
-		details := []string{}
-		details = append(details, "phase="+state.Phase, "last_output="+state.LastOutputAge)
+		details := []string{"phase=" + state.Phase, "last_output=" + state.LastOutputAge}
 		details = append(details, state.Performance...)
 		details = append(details, state.RunParams...)
+		details = append(details, "", "task_details:")
+		details = append(details, state.TaskDetails...)
 		panes = append(panes, renderPane(width, "📦 Details", stylePlainLines(details, width-4), lipgloss.Color("18")))
 	}
 
+	panes = append(panes, renderPane(width, "🗂 Queue (priority)", stylePlainLines(state.Queue, width-4), lipgloss.Color("20")))
+	panes = append(panes, renderPane(width, "🌳 Task Graph", stylePlainLines(state.TaskGraph, width-4), lipgloss.Color("21")))
 	workerPane := renderPane(width, "👷 Workers", styleWorkerLines(state.WorkerSummaries, width-4), lipgloss.Color("19"))
 	panes = append(panes, workerPane)
 
@@ -558,6 +668,19 @@ func isTerminalEvent(eventType contracts.EventType) bool {
 func runFullscreenFromReader(reader io.Reader, out io.Writer, errOut io.Writer) error {
 	stream := make(chan streamMsg, 64)
 	go decodeEvents(reader, stream)
+	return runFullscreenFromStream(stream, out, errOut)
+}
+
+func runFullscreenFromBus(busBackend, busAddress, busPrefix, busSource string, out io.Writer, errOut io.Writer) error {
+	stream, stop, err := startMonitorEventStream(busBackend, busAddress, busPrefix, busSource)
+	if err != nil {
+		return err
+	}
+	defer stop()
+	return runFullscreenFromStream(stream, out, errOut)
+}
+
+func runFullscreenFromStream(stream <-chan streamMsg, out io.Writer, errOut io.Writer) error {
 	program := tea.NewProgram(
 		newFullscreenModel(stream, nil, false),
 		tea.WithOutput(out),
@@ -567,6 +690,67 @@ func runFullscreenFromReader(reader io.Reader, out io.Writer, errOut io.Writer) 
 		return err
 	}
 	_ = errOut
+	return nil
+}
+
+func renderFromBus(busBackend, busAddress, busPrefix, busSource string, out io.Writer, errOut io.Writer) error {
+	stream, stop, err := startMonitorEventStream(busBackend, busAddress, busPrefix, busSource)
+	if err != nil {
+		return err
+	}
+	defer stop()
+	return renderFromStream(stream, out, errOut)
+}
+
+func renderFromReader(reader io.Reader, out io.Writer, errOut io.Writer) error {
+	stream := make(chan streamMsg, 64)
+	go decodeEvents(reader, stream)
+	return renderFromStream(stream, out, errOut)
+}
+
+func renderFromStream(stream <-chan streamMsg, out io.Writer, errOut io.Writer) error {
+	m := monitor.NewModel(nil)
+	haveEvents := false
+	decodeFailures := 0
+	for {
+		msg, ok := <-stream
+		if !ok {
+			break
+		}
+		switch typed := msg.(type) {
+		case eventMsg:
+			decodeFailures = 0
+			haveEvents = true
+			m.Apply(typed.event)
+		case decodeErrorMsg:
+			decodeFailures++
+			haveEvents = true
+			m.Apply(contracts.Event{
+				Type:    contracts.EventTypeRunnerWarning,
+				Message: "decode_error: " + typed.err.Error(),
+			})
+			if _, writeErr := io.WriteString(out, m.View()); writeErr != nil {
+				return writeErr
+			}
+			if errOut != nil {
+				_, _ = io.WriteString(errOut, "event decode warning: "+typed.err.Error()+"\n")
+			}
+			if decodeFailures >= 3 {
+				return fmt.Errorf("failed to decode event stream after %d errors: %w", decodeFailures, typed.err)
+			}
+			continue
+		default:
+			continue
+		}
+		if _, writeErr := io.WriteString(out, m.View()); writeErr != nil {
+			return writeErr
+		}
+	}
+	if !haveEvents {
+		if _, writeErr := io.WriteString(out, m.View()); writeErr != nil {
+			return writeErr
+		}
+	}
 	return nil
 }
 
@@ -631,42 +815,69 @@ func decodeEvents(reader io.Reader, out chan<- streamMsg) {
 	}
 }
 
-func renderFromReader(reader io.Reader, out io.Writer, errOut io.Writer) error {
-	decoder := contracts.NewEventDecoder(reader)
-	m := monitor.NewModel(nil)
-	haveEvents := false
-	decodeFailures := 0
-	for {
-		event, err := decoder.Next()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			decodeFailures++
-			haveEvents = true
-			m.Apply(contracts.Event{Type: contracts.EventTypeRunnerWarning, Message: "decode_error: " + err.Error()})
-			if _, writeErr := io.WriteString(out, m.View()); writeErr != nil {
-				return writeErr
-			}
-			if errOut != nil {
-				_, _ = io.WriteString(errOut, "event decode warning: "+err.Error()+"\n")
-			}
-			if decodeFailures >= 3 {
-				return fmt.Errorf("failed to decode event stream after %d errors: %w", decodeFailures, err)
-			}
-			continue
-		}
-		decodeFailures = 0
-		haveEvents = true
-		m.Apply(event)
-		if _, writeErr := io.WriteString(out, m.View()); writeErr != nil {
-			return writeErr
-		}
+func startMonitorEventStream(busBackend string, busAddress string, busPrefix string, busSource string) (<-chan streamMsg, func(), error) {
+	bus, err := newDistributedBus(busBackend, busAddress)
+	if err != nil {
+		return nil, nil, err
 	}
-	if !haveEvents {
-		if _, writeErr := io.WriteString(out, m.View()); writeErr != nil {
-			return writeErr
-		}
+	subject := distributed.DefaultEventSubjects(busPrefix).MonitorEvent
+	ctx, cancel := context.WithCancel(context.Background())
+	out := make(chan streamMsg, 64)
+
+	rawEvents, unsubscribe, err := bus.Subscribe(ctx, subject)
+	if err != nil {
+		_ = bus.Close()
+		cancel()
+		close(out)
+		return nil, nil, err
 	}
-	return nil
+
+	stop := func() {
+		cancel()
+		if unsubscribe != nil {
+			unsubscribe()
+		}
+		_ = bus.Close()
+	}
+
+	go func() {
+		defer close(out)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case env, ok := <-rawEvents:
+				if !ok {
+					return
+				}
+				event, shouldUse, err := parseMonitorEnvelope(env, busSource)
+				if err != nil {
+					out <- decodeErrorMsg{err: err}
+					continue
+				}
+				if !shouldUse {
+					continue
+				}
+				out <- eventMsg{event: event}
+			}
+		}
+	}()
+	return out, stop, nil
+}
+
+func parseMonitorEnvelope(envelope distributed.EventEnvelope, sourceFilter string) (contracts.Event, bool, error) {
+	if envelope.Type != distributed.EventTypeMonitorEvent {
+		return contracts.Event{}, false, nil
+	}
+	if sourceFilter != "" && strings.TrimSpace(envelope.Source) != strings.TrimSpace(sourceFilter) {
+		return contracts.Event{}, false, nil
+	}
+	payload := distributed.MonitorEventPayload{}
+	if err := json.Unmarshal(envelope.Payload, &payload); err != nil {
+		return contracts.Event{}, true, err
+	}
+	if payload.Event.Type == "" && payload.Event.TaskID == "" && payload.Event.WorkerID == "" && payload.Event.TaskTitle == "" && payload.Event.Message == "" {
+		return contracts.Event{}, true, nil
+	}
+	return payload.Event, true, nil
 }

@@ -1,0 +1,99 @@
+[
+  {
+    "name": "codex",
+    "type": "codex",
+    "backend": "codex",
+    "model": "gpt-5",
+    "capabilities": {
+      "languages": ["go", "python", "typescript"],
+      "features": ["implement", "review", "stream", "larger_model", "service_proxy"]
+    },
+    "config": {
+      "api_key_env": "OPENAI_API_KEY",
+      "timeout": "45s"
+    }
+  },
+  {
+    "name": "opencode",
+    "type": "opencode",
+    "backend": "opencode",
+    "model": "zai-coding-plan/glm-4.7",
+    "capabilities": {
+      "languages": ["go", "python", "rust"],
+      "features": ["implement", "review", "service_proxy", "larger_model", "stream"]
+    },
+    "config": {
+      "api_key_env": "OPENCODE_TOKEN",
+      "timeout": "30s"
+    },
+    "health": {
+      "enabled": true,
+      "endpoint": "http://localhost:0/healthz",
+      "interval": "5s",
+      "timeout": "2s"
+    }
+  },
+  {
+    "name": "claude",
+    "type": "claude",
+    "backend": "claude",
+    "model": "claude-opus-4-1",
+    "capabilities": {
+      "languages": ["go", "python", "javascript"],
+      "features": ["implement", "review", "stream", "service_proxy"]
+    },
+    "config": {
+      "api_key_env": "ANTHROPIC_API_KEY",
+      "timeout": "30s"
+    },
+    "health": {
+      "enabled": true,
+      "endpoint": "http://localhost:0/healthz",
+      "interval": "5s",
+      "timeout": "2s"
+    }
+  },
+  {
+    "name": "kimi",
+    "type": "kimi",
+    "backend": "kimi",
+    "model": "kimi-k2",
+    "capabilities": {
+      "languages": ["go", "python", "kotlin"],
+      "features": ["implement", "review", "stream", "service_proxy", "larger_model"]
+    },
+    "config": {
+      "api_key_env": "MOONSHOT_API_KEY",
+      "timeout": "30s"
+    },
+    "health": {
+      "enabled": true,
+      "endpoint": "http://localhost:0/healthz",
+      "interval": "5s",
+           "timeout": "2s"
+    }
+  },
+  {
+    "name": "gemini",
+    "type": "command",
+    "backend": "gemini",
+    "model": "gemini-2.5-flash",
+    "adapter": "command",
+    "capabilities": {
+      "languages": ["go", "python", "nodejs"],
+      "features": ["implement", "review", "larger_model"]
+    },
+    "config": {
+      "binary": "gemini",
+      "args": ["exec", "--prompt", "{{prompt}}"],
+      "api_key_env": "GEMINI_API_KEY",
+      "timeout": "30s"
+    },
+    "health": {
+      "enabled": true,
+      "command": "gemini --version",
+      "interval": "5s",
+      "timeout": "2s"
+    }
+  }
+]

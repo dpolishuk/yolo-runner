@@ -1,10 +1,20 @@
 package main
 
 import (
+	"github.com/egv/yolo-runner/v2/internal/codingagents"
 	"strings"
 	"testing"
 	"time"
 )
+
+func testCatalog(t *testing.T) codingagents.Catalog {
+	t.Helper()
+	catalog, err := codingagents.LoadCatalog(t.TempDir())
+	if err != nil {
+		t.Fatalf("load coding agents catalog: %v", err)
+	}
+	return catalog
+}
 
 func TestResolveYoloAgentConfigDefaultsParsesConfiguredValues(t *testing.T) {
 	concurrency := 3
@@ -17,7 +27,7 @@ func TestResolveYoloAgentConfigDefaultsParsesConfiguredValues(t *testing.T) {
 		WatchdogTimeout:  "9m",
 		WatchdogInterval: "2s",
 		RetryBudget:      &retryBudget,
-	})
+	}, testCatalog(t))
 	if err != nil {
 		t.Fatalf("expected config defaults to parse, got %v", err)
 	}
@@ -47,7 +57,7 @@ func TestResolveYoloAgentConfigDefaultsParsesConfiguredValues(t *testing.T) {
 func TestResolveYoloAgentConfigDefaultsNormalizesConfiguredBackend(t *testing.T) {
 	defaults, err := resolveYoloAgentConfigDefaults(yoloAgentConfigModel{
 		Backend: "  CoDeX  ",
-	})
+	}, testCatalog(t))
 	if err != nil {
 		t.Fatalf("expected config defaults to parse, got %v", err)
 	}
@@ -59,7 +69,7 @@ func TestResolveYoloAgentConfigDefaultsNormalizesConfiguredBackend(t *testing.T)
 func TestResolveYoloAgentConfigDefaultsParsesConfiguredMode(t *testing.T) {
 	defaults, err := resolveYoloAgentConfigDefaults(yoloAgentConfigModel{
 		Mode: "  UI  ",
-	})
+	}, testCatalog(t))
 	if err != nil {
 		t.Fatalf("expected config defaults to parse, got %v", err)
 	}
@@ -71,7 +81,7 @@ func TestResolveYoloAgentConfigDefaultsParsesConfiguredMode(t *testing.T) {
 func TestResolveYoloAgentConfigDefaultsRejectsUnsupportedMode(t *testing.T) {
 	_, err := resolveYoloAgentConfigDefaults(yoloAgentConfigModel{
 		Mode: "unsupported",
-	})
+	}, testCatalog(t))
 	if err == nil {
 		t.Fatalf("expected unsupported mode to fail")
 	}
@@ -83,7 +93,7 @@ func TestResolveYoloAgentConfigDefaultsRejectsUnsupportedMode(t *testing.T) {
 func TestResolveYoloAgentConfigDefaultsRejectsUnsupportedBackend(t *testing.T) {
 	_, err := resolveYoloAgentConfigDefaults(yoloAgentConfigModel{
 		Backend: "unsupported",
-	})
+	}, testCatalog(t))
 	if err == nil {
 		t.Fatalf("expected unsupported backend to fail")
 	}
@@ -98,7 +108,7 @@ func TestResolveYoloAgentConfigDefaultsRejectsUnsupportedBackend(t *testing.T) {
 func TestResolveYoloAgentConfigDefaultsRejectsInvalidDuration(t *testing.T) {
 	_, err := resolveYoloAgentConfigDefaults(yoloAgentConfigModel{
 		RunnerTimeout: "soon",
-	})
+	}, testCatalog(t))
 	if err == nil {
 		t.Fatalf("expected invalid duration to fail")
 	}
@@ -114,7 +124,7 @@ func TestResolveYoloAgentConfigDefaultsRejectsNonPositiveConcurrency(t *testing.
 	concurrency := 0
 	_, err := resolveYoloAgentConfigDefaults(yoloAgentConfigModel{
 		Concurrency: &concurrency,
-	})
+	}, testCatalog(t))
 	if err == nil {
 		t.Fatalf("expected non-positive concurrency to fail")
 	}
@@ -127,7 +137,7 @@ func TestResolveYoloAgentConfigDefaultsRejectsNegativeRetryBudget(t *testing.T) 
 	retryBudget := -1
 	_, err := resolveYoloAgentConfigDefaults(yoloAgentConfigModel{
 		RetryBudget: &retryBudget,
-	})
+	}, testCatalog(t))
 	if err == nil {
 		t.Fatalf("expected negative retry budget to fail")
 	}
@@ -139,7 +149,7 @@ func TestResolveYoloAgentConfigDefaultsRejectsNegativeRetryBudget(t *testing.T) 
 func TestResolveYoloAgentConfigDefaultsRejectsNegativeRunnerTimeout(t *testing.T) {
 	_, err := resolveYoloAgentConfigDefaults(yoloAgentConfigModel{
 		RunnerTimeout: "-1s",
-	})
+	}, testCatalog(t))
 	if err == nil {
 		t.Fatalf("expected negative runner timeout to fail")
 	}
@@ -151,7 +161,7 @@ func TestResolveYoloAgentConfigDefaultsRejectsNegativeRunnerTimeout(t *testing.T
 func TestResolveYoloAgentConfigDefaultsRejectsNonPositiveWatchdogTimeout(t *testing.T) {
 	_, err := resolveYoloAgentConfigDefaults(yoloAgentConfigModel{
 		WatchdogTimeout: "0s",
-	})
+	}, testCatalog(t))
 	if err == nil {
 		t.Fatalf("expected non-positive watchdog timeout to fail")
 	}
@@ -163,7 +173,7 @@ func TestResolveYoloAgentConfigDefaultsRejectsNonPositiveWatchdogTimeout(t *test
 func TestResolveYoloAgentConfigDefaultsRejectsNonPositiveWatchdogInterval(t *testing.T) {
 	_, err := resolveYoloAgentConfigDefaults(yoloAgentConfigModel{
 		WatchdogInterval: "0s",
-	})
+	}, testCatalog(t))
 	if err == nil {
 		t.Fatalf("expected non-positive watchdog interval to fail")
 	}

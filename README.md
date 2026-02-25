@@ -1,16 +1,97 @@
 # Yolo Runner
 
-Runs OpenCode in YOLO mode against a single bead task at a time. The runner owns task selection, status updates, and logging; the agent only executes the task it is given.
+AI-powered task execution system with pluggable storage backends (GitHub, Linear, TK), dependency-aware scheduling, and smart concurrency calculation. The runner owns task selection, status updates, and logging; agents execute tasks they're given.
 
-## v2 Migration
+## Features
 
-The repo now supports split v2 CLIs:
+- **Pluggable Storage Backends**: GitHub Issues, Linear, or local TK (markdown) tickets
+- **Task Engine**: Graph-based scheduler with dependency resolution and parent-child hierarchies
+- **Smart Concurrency**: Automatically calculates optimal parallel execution from dependency graphs
+- **TDD Mode**: Strict Red/Green/Refactor enforcement for test-driven development
+- **Structured Logging**: JSONL event streams with log browser TUI
+- **Installation Scripts**: One-line install via `install.sh` or `install.ps1`
+- **Auto-Update**: Built-in binary updates from GitHub releases
+- **Multi-Backend Support**: OpenCode, Codex, Claude, Kimi
 
-- `yolo-agent` for orchestration
-- `yolo-task` for task manager operations
-- `yolo-tui` for read-only event monitoring
+## CLI Tools
+
+- `yolo-agent` - Task orchestration and scheduling
+- `yolo-task` - Task management operations
+- `yolo-tui` - Real-time event monitoring with log browser
+- `yolo-linear-worker` - Linear webhook processor
+- `yolo-linear-webhook` - Linear webhook handler
 
 See `MIGRATION.md` for command mapping and compatibility details.
+
+## Installation
+
+### One-Line Install
+
+```bash
+# macOS/Linux
+curl -sSL https://raw.githubusercontent.com/egv/yolo-runner/main/install.sh | bash
+
+# Windows PowerShell
+irm https://raw.githubusercontent.com/egv/yolo-runner/main/install.ps1 | iex
+```
+
+### From Source
+
+```bash
+make install
+```
+
+### Update Existing Installation
+
+```bash
+./bin/yolo-runner update
+./bin/yolo-runner update --release v1.2.3  # Pin to specific version
+```
+
+## Storage Backends
+
+Yolo-runner supports multiple task storage backends:
+
+### GitHub Issues
+
+```yaml
+# .yolo-runner/config.yaml
+profiles:
+  github:
+    tracker:
+      type: github
+      github:
+        scope:
+          owner: egv
+          repo: yolo-runner
+        auth:
+          token_env: GITHUB_TOKEN
+```
+
+### Linear
+
+```yaml
+profiles:
+  linear:
+    tracker:
+      type: linear
+      linear:
+        scope:
+          workspace: my-workspace
+        auth:
+          token_env: LINEAR_API_KEY
+```
+
+### TK (Local Markdown)
+
+```yaml
+profiles:
+  tk:
+    tracker:
+      type: tk
+```
+
+TK stores tickets as markdown files in `.tickets/` with frontmatter for metadata.
 
 ## GUI Architecture Requirements
 
@@ -52,15 +133,47 @@ From repo root:
 make build
 ```
 
-## Installation matrix
+## Version Management
 
-Installation verification lives in `docs/install-matrix.md`, which defines supported platform/architecture coverage and expected validation behavior for:
+### Check Version
 
-- source install (`make install`)
-- release artifacts
-- installation script
+```bash
+./bin/yolo-agent --version
+./bin/yolo-runner --version
+./bin/yolo-tui --version
+```
 
-The matrix is the single source of truth for install-path CI checks and shell-specific command expectations.
+### Update Binary
+
+```bash
+# Update to latest release
+./bin/yolo-runner update
+
+# Update to specific version
+./bin/yolo-runner update --release v1.2.3
+
+# Update with custom OS/arch
+./bin/yolo-runner update --os linux --arch arm64
+```
+
+Update flags:
+- `--release VERSION` - Target version (default: `latest`)
+- `--os OS` - Target OS: `linux`, `darwin`, `windows`
+- `--arch ARCH` - Target arch: `amd64`, `arm64`
+- `--install-dir PATH` - Custom install directory
+- `--release-api URL` - GitHub API base URL
+
+## Installation Matrix
+
+Supported platforms:
+
+| Platform | Architecture | Install Method |
+|----------|--------------|----------------|
+| macOS    | amd64, arm64 | install.sh, make install, release |
+| Linux    | amd64, arm64 | install.sh, make install, release |
+| Windows  | amd64        | install.ps1, release |
+
+Installation verification: `docs/install-matrix.md`
 
 ## Test
 
@@ -68,7 +181,35 @@ The matrix is the single source of truth for install-path CI checks and shell-sp
 make test
 ```
 
-## E8 Release Gate Checklist
+## Release Gates
+
+### E8 Self-Hosting Demos
+
+Run the E8 release gate after self-hosting demos:
+
+```bash
+make release-gate-e8
+```
+
+Verifies:
+- `TestE2E_CodexTKConcurrency2LandsViaMergeQueue`
+- `TestE2E_ClaudeConflictRetryPathFinalizesWithLandingOrBlockedTriage`
+- `TestE2E_KimiLinearProfileProcessesAndClosesIssue`
+- `TestE2E_GitHubProfileProcessesAndClosesIssue`
+
+### CI/CD Workflows
+
+**GitHub Actions:**
+- `.github/workflows/ci.yml` - Build and test on push/PR
+- `.github/workflows/release.yml` - Automated releases on tags
+
+**Release Process:**
+1. Tag: `git tag v1.2.3`
+2. Push: `git push origin v1.2.3`
+3. Release workflow publishes artifacts
+4. Install script pulls latest
+
+### E8 Release Gate Checklist
 
 After completing the E8 self-host demos, run the release gate checklist:
 
@@ -126,6 +267,77 @@ Install constraints:
 - On Windows, `--install-dir` must be an absolute Windows path (drive/UNC path) or the command fails with `unsupported Windows install path`.
 - Ensure the install directory is on `PATH`, or run `./bin/yolo-runner` with the full path.
 
+## Features & Flags
+
+### Task Engine (Graph-Based Scheduling)
+
+The Task Engine builds a directed graph from task relationships:
+
+- **Dependencies**: `depends-on` relationships block tasks until dependencies complete
+- **Parent-Child**: Epic/task hierarchies are respected
+- **Smart Concurrency**: Automatically calculated from graph structure
+
+Example dependency in ticket frontmatter:
+```yaml
+---
+id: task-123
+deps: [task-456, task-789]
+---
+```
+
+### Concurrency Calculation
+
+Concurrency is calculated dynamically based on the dependency graph:
+
+```bash
+# Auto-calculate from graph (respects dependencies)
+./bin/yolo-agent --repo . --root <epic> --concurrency auto
+
+# Fixed concurrency (default: 1)
+./bin/yolo-agent --repo . --root <epic> --concurrency 3
+```
+
+### TDD Mode (Strict Test-Driven Development)
+
+Enforces Red/Green/Refactor workflow:
+
+```bash
+./bin/yolo-agent --repo . --root <epic> --tdd
+```
+
+When `--tdd` is enabled:
+- Tests must be written first (RED)
+- Implementation makes tests pass (GREEN)
+- Refactor while keeping tests green
+
+### Task Quality Gate
+
+Validates task clarity before execution:
+
+```bash
+./bin/yolo-agent --repo . --root <epic> --quality-gate
+```
+
+Checks for:
+- Clear description
+- Concrete acceptance criteria
+- No vague language ("maybe", "consider")
+- Required fields present
+
+### Log Browser TUI
+
+Browse logs grouped by task:
+
+```bash
+./bin/yolo-tui --events-stdin < runner-logs/run.events.jsonl
+```
+
+Features:
+- Tree view of tasks and epics
+- Search/filter logs
+- View agent thoughts and decisions
+- Export logs
+
 ## Run
 
 From repo root:
@@ -141,24 +353,39 @@ Common options:
 - `--max N` limit number of tasks processed
 - `--dry-run` print the task prompt without running OpenCode
 - `--headless` disable the TUI (useful for CI or non-TTY runs)
+- `--concurrency N` or `--concurrency auto` - Parallel task execution (default: 1)
+- `--tdd` enable strict TDD mode (Red/Green/Refactor)
+- `--quality-gate` validate task clarity before execution
+- `--mode ui|headless` force UI or headless mode
+- `--stream` output JSONL events for TUI consumption
+- `--events PATH` write events to file
+- `--retry-budget N` max retries per task (default: 5)
+- `--profile NAME` use tracker profile from config
+- `--backend codex|claude|kimi|opencode` agent backend
+- `--model MODEL` model name (e.g., openai/gpt-5.3-codex)
+- `--runner-timeout DURATION` per-task timeout (e.g., 20m)
 
-### Stdin GUI Operator Flow
+### Streaming Mode (Real-time TUI)
 
-Use streaming mode to drive `yolo-tui` from stdin in real time:
-
-```
-./bin/yolo-agent --repo . --root <root-id> --model openai/gpt-5.3-codex --stream | ./bin/yolo-tui --events-stdin
-```
-
-The monitor is decoder-safe: malformed NDJSON lines are surfaced as `decode_error` warnings in the UI and stderr while valid subsequent events continue rendering.
-
-`yolo-agent` also accepts `--tdd` to enable strict Red/Green/Refactor guidance in implementation prompts:
+Stream events to TUI for real-time monitoring:
 
 ```bash
-./bin/yolo-agent --repo . --root <root-id> --model openai/gpt-5.3-codex --tdd --stream | ./bin/yolo-tui --events-stdin
+./bin/yolo-agent --repo . --root <root-id> --stream | ./bin/yolo-tui --events-stdin
 ```
 
-When `--tdd` is omitted, the agent still enforces existing implementation requirements but does not include the full explicit Red/Green/Refactor workflow.
+Save events to file while streaming:
+
+```bash
+./bin/yolo-agent --repo . --root <root-id> --stream --events "run-$(date +%Y%m%d).events.jsonl" | ./bin/yolo-tui --events-stdin
+```
+
+TDD mode with streaming:
+
+```bash
+./bin/yolo-agent --repo . --root <root-id> --tdd --stream | ./bin/yolo-tui --events-stdin
+```
+
+The TUI is decoder-safe: malformed JSONL lines are surfaced as warnings while valid events continue rendering.
 
 ### `yolo-agent` preflight (commit + push first)
 
@@ -298,6 +525,37 @@ Machine-readable validation (for CI hooks):
 
 Troubleshooting details and additional failure/remediation cases are documented in `docs/config-workflow.md`.
 
+## Task Management
+
+### Creating Tickets
+
+**TK (Local Markdown):**
+```bash
+tk create "Task title" -t task -p 1
+tk create "Epic title" -t epic -p 0
+tk dep <task-id> <depends-on-id>  # Add dependency
+tk link <task1> <task2>          # Link related tasks
+```
+
+**GitHub Issues:**
+Standard GitHub issue creation with sub-issues for hierarchy.
+
+### Ticket Frontmatter Schema
+
+```yaml
+---
+id: unique-id
+parent: parent-epic-id  # For hierarchy
+deps: [dep1, dep2]       # Dependencies that block this task
+status: open|in_progress|closed
+type: task|epic|bug
+priority: 0-4            # 0=highest, 4=lowest
+assignee: username
+---
+```
+
+Full schema: `docs/ticket-frontmatter-schema.md`
+
 ## Task Prompt
 
 The prompt includes:
@@ -310,11 +568,44 @@ The runner selects work by traversing container types (epic, molecule). Traversa
 
 The YOLO agent must only work on the prompt provided. It must not call beads commands.
 
-## Logging
+## Structured Logging
+
+All events are emitted as JSONL (newline-delimited JSON) with consistent schema:
+
+```json
+{"type": "task_started", "task_id": "abc-123", "task_title": "...", "ts": "2026-02-22T10:00:00Z"}
+{"type": "runner_output", "task_id": "abc-123", "message": "...", "ts": "2026-02-22T10:00:05Z"}
+{"type": "task_finished", "task_id": "abc-123", "metadata": {"status": "completed"}, "ts": "2026-02-22T10:05:00Z"}
+```
+
+Log locations:
+- Events: `runner-logs/<run-id>.events.jsonl`
+- Agent output: `.yolo-runner/clones/<task-id>/runner-logs/`
+- Schema: `docs/logging-schema.md`
+
+### Log Browser
+
+Browse logs interactively:
+
+```bash
+# From saved events
+./bin/yolo-tui --events-file runner-logs/run.events.jsonl
+
+# From stdin
+cat runner-logs/run.events.jsonl | ./bin/yolo-tui --events-stdin
+```
+
+Features:
+- Tree view organized by epic → task
+- Filter by event type
+- Search messages
+- View agent thoughts and tool calls
+- Export filtered logs
+
+## Legacy Logging
 
 - Runner summary log: `runner-logs/beads_yolo_runner.jsonl`
 - Per-task OpenCode logs: `runner-logs/opencode/<issue-id>.jsonl`
-- Log line schema requirements are documented in `docs/logging-schema.md`
 
 ## Sample output
 
@@ -358,7 +649,20 @@ Success looks like: the runner finishes without errors, a single commit exists f
 
 ## Session Completion
 
-After finishing a batch of tasks, run `bd epic close-eligible` to close epics whose children are complete and keep `bd ready` output clean.
+After finishing a batch of tasks:
+
+```bash
+# Close completed epics
+tk epic close-eligible
+
+# Or for GitHub
+git issue list --state closed | gh issue edit <epic> --add-label "completed"
+
+# Clean up stale clones
+rm -rf .yolo-runner/clones/*
+```
+
+This keeps `tk ready` output clean and removes old working directories.
 
 ## Failure Modes
 
@@ -368,9 +672,61 @@ After finishing a batch of tasks, run `bd epic close-eligible` to close epics wh
 
 ## Troubleshooting
 
-If the runner refuses to start, the most common cause is a missing agent file or missing `permission: allow` line in `.opencode/agent/yolo.md`. The runner validates the agent at startup and exits when the file is missing or missing agent permissions.
+### Agent Not Found
 
-Recovery steps:
+```bash
+./bin/yolo-runner init --repo .
+```
+
+### Task Not Found in Clone
+
+**Cause:** Ticket/config changes not pushed to origin.
+
+**Fix:**
+```bash
+git add .tickets/*.md .yolo-runner/config.yaml
+git commit -m "Add ticket/config changes"
+git push
+```
+
+### Stale Clone State
+
+If a run is interrupted:
+
+```bash
+# Stop agent
+pkill yolo-agent
+
+# Reset task status
+tk status <task-id> open
+
+# Remove stale clone
+rm -rf .yolo-runner/clones/<task-id>
+
+# Clear scheduler state
+# Edit .yolo-runner/scheduler-state.json and remove stale entries
+```
+
+### Review Failures (TDD Mode)
+
+When using `--tdd`, review may fail if:
+- Production code is written before tests
+- Tests don't fail first (RED phase)
+- Implementation is too broad
+
+**Fix:** Remove production code, keep only failing tests, retry.
+
+### Debug Logging
+
+Enable verbose output:
+
+```bash
+./bin/yolo-agent --repo . --root <epic> --stream --verbose 2>&1 | tee debug.log
+```
+
+### Legacy Agent Issues
+
+If the runner refuses to start with agent errors:
 
 1. Run `./bin/yolo-runner init --repo .` to reinstall the agent file.
 2. Confirm `.opencode/agent/yolo.md` exists and includes `permission: allow`.
