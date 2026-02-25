@@ -181,7 +181,7 @@ func buildArgs(request contracts.RunnerRequest) []string {
 		args = append(args, "--model", model)
 	}
 	if prompt := strings.TrimSpace(request.Prompt); prompt != "" {
-		args = append(args, "--prompt", prompt)
+		args = append(args, prompt)
 	}
 	return args
 }
