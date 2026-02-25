@@ -21,6 +21,29 @@ func (r fakeRunner) Run(_ context.Context, request contracts.RunnerRequest) (con
 	return r.result, r.err
 }
 
+type scriptedRunner struct {
+	mu    sync.Mutex
+	calls int
+	runFn func(attempt int, ctx context.Context, request contracts.RunnerRequest) (contracts.RunnerResult, error)
+}
+
+func (r *scriptedRunner) Run(ctx context.Context, request contracts.RunnerRequest) (contracts.RunnerResult, error) {
+	r.mu.Lock()
+	r.calls++
+	attempt := r.calls
+	r.mu.Unlock()
+	if r.runFn == nil {
+		return contracts.RunnerResult{Status: contracts.RunnerResultCompleted}, nil
+	}
+	return r.runFn(attempt, ctx, request)
+}
+
+func (r *scriptedRunner) attempts() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.calls
+}
+
 func TestParseEventEnvelopeSupportsLegacyAndV1Schemas(t *testing.T) {
 	t.Run("legacy event defaults to v0", func(t *testing.T) {
 		legacyPayload := []byte(`{"type":"executor_registered","source":"old-exec","payload":{"executor_id":"exec-1","capabilities":["implement"]}}`)
@@ -119,6 +142,503 @@ func TestMastermindRoutesTaskBasedOnCapabilities(t *testing.T) {
 	}
 	if result.Artifacts["worker"] != "review" {
 		t.Fatalf("expected review worker result, got %v", result.Artifacts)
+	}
+}
+
+func TestExecutorWorkerRetriesRequestUntilSuccess(t *testing.T) {
+	bus := NewMemoryBus()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	subjects := DefaultEventSubjects("unit")
+
+	runner := &scriptedRunner{}
+	runner.runFn = func(attempt int, _ context.Context, request contracts.RunnerRequest) (contracts.RunnerResult, error) {
+		if attempt == 1 {
+			return contracts.RunnerResult{Status: contracts.RunnerResultFailed}, fmt.Errorf("temporary failure")
+		}
+		request.Metadata["attempt"] = "2"
+		return contracts.RunnerResult{
+			Status:    contracts.RunnerResultCompleted,
+			Reason:    "recovered",
+			StartedAt: time.Now().UTC(),
+			Artifacts: map[string]string{"attempt": request.Metadata["attempt"]},
+		}, nil
+	}
+
+	executor := NewExecutorWorker(ExecutorWorkerOptions{
+		ID:           "retry-exec",
+		Bus:          bus,
+		Runner:       runner,
+		Subjects:     subjects,
+		Capabilities: []Capability{CapabilityImplement},
+		MaxRetries:   1,
+	})
+	go func() { _ = executor.Start(ctx) }()
+
+	time.Sleep(20 * time.Millisecond)
+
+	resultCh, unsubscribeResult, err := bus.Subscribe(ctx, subjects.TaskResult)
+	if err != nil {
+		t.Fatalf("subscribe task result: %v", err)
+	}
+	defer unsubscribeResult()
+
+	request := contracts.RunnerRequest{
+		TaskID:     "retry-task",
+		Metadata:   map[string]string{},
+		MaxRetries: 1,
+	}
+	requestRaw, err := requestForTransport(request)
+	if err != nil {
+		t.Fatalf("encode runner request: %v", err)
+	}
+	dispatch := TaskDispatchPayload{
+		CorrelationID:        "retry-correlation",
+		TaskID:               "retry-task",
+		RequiredCapabilities: []Capability{CapabilityImplement},
+		Request:              requestRaw,
+	}
+	dispatchEnv, err := NewEventEnvelope(EventTypeTaskDispatch, "client", "retry-correlation", dispatch)
+	if err != nil {
+		t.Fatalf("build dispatch envelope: %v", err)
+	}
+	if err := bus.Publish(ctx, subjects.TaskDispatch, dispatchEnv); err != nil {
+		t.Fatalf("publish dispatch: %v", err)
+	}
+
+	resultPayload := readTaskResultPayload(t, resultCh)
+	if resultPayload.CorrelationID != "retry-correlation" {
+		t.Fatalf("expected correlation %q, got %q", "retry-correlation", resultPayload.CorrelationID)
+	}
+	if resultPayload.Result.Status != contracts.RunnerResultCompleted {
+		t.Fatalf("expected completed result, got %q", resultPayload.Result.Status)
+	}
+	if runner.attempts() != 2 {
+		t.Fatalf("expected two attempts with retry, got %d", runner.attempts())
+	}
+}
+
+func TestExecutorWorkerForwardsRunnerProgressToMonitorEvents(t *testing.T) {
+	bus := NewMemoryBus()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	subjects := DefaultEventSubjects("unit")
+
+	runner := &scriptedRunner{}
+	runner.runFn = func(_ int, _ context.Context, request contracts.RunnerRequest) (contracts.RunnerResult, error) {
+		if request.OnProgress != nil {
+			request.OnProgress(contracts.RunnerProgress{
+				Type:      "runner_output",
+				Message:   "build step",
+				Metadata:  map[string]string{"source": "stdout"},
+				Timestamp: time.Now().UTC(),
+			})
+			request.OnProgress(contracts.RunnerProgress{
+				Type:      "runner_output",
+				Message:   "warn step",
+				Metadata:  map[string]string{"source": "stderr"},
+				Timestamp: time.Now().UTC(),
+			})
+		}
+		return contracts.RunnerResult{Status: contracts.RunnerResultCompleted}, nil
+	}
+
+	executor := NewExecutorWorker(ExecutorWorkerOptions{
+		ID:           "progress-exec",
+		Bus:          bus,
+		Runner:       runner,
+		Subjects:     subjects,
+		Capabilities: []Capability{CapabilityImplement},
+	})
+	go func() { _ = executor.Start(ctx) }()
+
+	time.Sleep(20 * time.Millisecond)
+
+	monitorCh, unsubscribeMonitor, err := bus.Subscribe(ctx, subjects.MonitorEvent)
+	if err != nil {
+		t.Fatalf("subscribe monitor: %v", err)
+	}
+	defer unsubscribeMonitor()
+	resultCh, unsubscribeResult, err := bus.Subscribe(ctx, subjects.TaskResult)
+	if err != nil {
+		t.Fatalf("subscribe task result: %v", err)
+	}
+	defer unsubscribeResult()
+
+	requestRaw, err := requestForTransport(contracts.RunnerRequest{
+		TaskID: "progress-task",
+	})
+	if err != nil {
+		t.Fatalf("encode runner request: %v", err)
+	}
+	dispatch := TaskDispatchPayload{
+		CorrelationID:        "progress-correlation",
+		TaskID:               "progress-task",
+		RequiredCapabilities: []Capability{CapabilityImplement},
+		Request:              requestRaw,
+	}
+	dispatchEnv, err := NewEventEnvelope(EventTypeTaskDispatch, "client", "progress-correlation", dispatch)
+	if err != nil {
+		t.Fatalf("build dispatch envelope: %v", err)
+	}
+	if err := bus.Publish(ctx, subjects.TaskDispatch, dispatchEnv); err != nil {
+		t.Fatalf("publish dispatch: %v", err)
+	}
+
+	events := make([]contracts.Event, 0, 2)
+	timeout := time.After(1 * time.Second)
+	for len(events) < 2 {
+		select {
+		case raw := <-monitorCh:
+			if raw.Type != EventTypeMonitorEvent {
+				continue
+			}
+			payload := MonitorEventPayload{}
+			if len(raw.Payload) == 0 {
+				continue
+			}
+			if err := json.Unmarshal(raw.Payload, &payload); err != nil {
+				t.Fatalf("unmarshal monitor payload: %v", err)
+			}
+			events = append(events, payload.Event)
+		case <-timeout:
+			t.Fatalf("timed out waiting for progress events")
+		}
+	}
+
+	_ = readTaskResultPayload(t, resultCh)
+	if len(events) < 2 {
+		t.Fatalf("expected two progress events, got %d", len(events))
+	}
+	if events[0].Type != contracts.EventTypeRunnerOutput || events[0].Metadata["source"] != "stdout" {
+		t.Fatalf("expected stdout runner output event, got %#v", events[0])
+	}
+	if events[1].Type != contracts.EventTypeRunnerOutput || events[1].Metadata["source"] != "stderr" {
+		t.Fatalf("expected stderr runner output event, got %#v", events[1])
+	}
+}
+
+func TestExecutorWorkerCallsExecutionHooksPerAttempt(t *testing.T) {
+	bus := NewMemoryBus()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	subjects := DefaultEventSubjects("unit")
+
+	runner := &scriptedRunner{}
+	runner.runFn = func(attempt int, _ context.Context, _ contracts.RunnerRequest) (contracts.RunnerResult, error) {
+		if attempt == 1 {
+			return contracts.RunnerResult{Status: contracts.RunnerResultFailed}, fmt.Errorf("attempt 1 failed")
+		}
+		return contracts.RunnerResult{Status: contracts.RunnerResultCompleted}, nil
+	}
+
+	var preAttempts []int
+	var postAttempts []int
+	var postErrors []string
+	executor := NewExecutorWorker(ExecutorWorkerOptions{
+		ID:           "hooks-exec",
+		Bus:          bus,
+		Runner:       runner,
+		Subjects:     subjects,
+		Capabilities: []Capability{CapabilityImplement},
+		MaxRetries:   1,
+		PreExecutionHook: func(_ context.Context, _ contracts.RunnerRequest, attempt int) {
+			preAttempts = append(preAttempts, attempt)
+		},
+		PostExecutionHook: func(_ context.Context, _ contracts.RunnerRequest, result contracts.RunnerResult, err error, attempt int) {
+			postAttempts = append(postAttempts, attempt)
+			if err != nil {
+				postErrors = append(postErrors, err.Error())
+				return
+			}
+			postErrors = append(postErrors, string(result.Status))
+		},
+	})
+	go func() { _ = executor.Start(ctx) }()
+
+	time.Sleep(20 * time.Millisecond)
+
+	resultCh, unsubscribeResult, err := bus.Subscribe(ctx, subjects.TaskResult)
+	if err != nil {
+		t.Fatalf("subscribe task result: %v", err)
+	}
+	defer unsubscribeResult()
+
+	requestRaw, err := requestForTransport(contracts.RunnerRequest{
+		TaskID: "hooks-task",
+	})
+	if err != nil {
+		t.Fatalf("encode runner request: %v", err)
+	}
+	dispatch := TaskDispatchPayload{
+		CorrelationID:        "hooks-correlation",
+		TaskID:               "hooks-task",
+		RequiredCapabilities: []Capability{CapabilityImplement},
+		Request:              requestRaw,
+	}
+	dispatchEnv, err := NewEventEnvelope(EventTypeTaskDispatch, "client", "hooks-correlation", dispatch)
+	if err != nil {
+		t.Fatalf("build dispatch envelope: %v", err)
+	}
+	if err := bus.Publish(ctx, subjects.TaskDispatch, dispatchEnv); err != nil {
+		t.Fatalf("publish dispatch: %v", err)
+	}
+
+	result := readTaskResultPayload(t, resultCh)
+	if len(preAttempts) != 2 {
+		t.Fatalf("expected two pre-execution hook calls, got %d", len(preAttempts))
+	}
+	if len(postAttempts) != 2 {
+		t.Fatalf("expected two post-execution hook calls, got %d", len(postAttempts))
+	}
+	if preAttempts[0] != 1 || preAttempts[1] != 2 {
+		t.Fatalf("expected pre hook attempts [1 2], got %#v", preAttempts)
+	}
+	if postAttempts[0] != 1 || postAttempts[1] != 2 {
+		t.Fatalf("expected post hook attempts [1 2], got %#v", postAttempts)
+	}
+	if len(postErrors) != 2 {
+		t.Fatalf("expected two post hook statuses/errors, got %d", len(postErrors))
+	}
+	if postErrors[0] != "attempt 1 failed" {
+		t.Fatalf("expected first post hook to see first attempt error, got %q", postErrors[0])
+	}
+	if postErrors[1] != string(result.Result.Status) {
+		t.Fatalf("expected second post hook status to match final result, got %q vs %q", postErrors[1], result.Result.Status)
+	}
+}
+
+func TestExecutorWorkerPreservesCleanStateBetweenRetries(t *testing.T) {
+	bus := NewMemoryBus()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	subjects := DefaultEventSubjects("unit")
+
+	var mutatedOnSecondAttempt bool
+	runner := &scriptedRunner{}
+	runner.runFn = func(_ int, _ context.Context, request contracts.RunnerRequest) (contracts.RunnerResult, error) {
+		if request.Metadata["retry_marker"] != "" {
+			mutatedOnSecondAttempt = true
+		}
+		request.Metadata["retry_marker"] = "dirty"
+		if request.Metadata["retry_marker"] == "dirty" && runner.attempts() < 2 {
+			return contracts.RunnerResult{}, fmt.Errorf("first attempt fail")
+		}
+		return contracts.RunnerResult{Status: contracts.RunnerResultCompleted}, nil
+	}
+
+	executor := NewExecutorWorker(ExecutorWorkerOptions{
+		ID:           "state-exec",
+		Bus:          bus,
+		Runner:       runner,
+		Subjects:     subjects,
+		Capabilities: []Capability{CapabilityImplement},
+		MaxRetries:   1,
+	})
+	go func() { _ = executor.Start(ctx) }()
+
+	time.Sleep(20 * time.Millisecond)
+
+	resultCh, unsubscribeResult, err := bus.Subscribe(ctx, subjects.TaskResult)
+	if err != nil {
+		t.Fatalf("subscribe task result: %v", err)
+	}
+	defer unsubscribeResult()
+
+	requestRaw, err := requestForTransport(contracts.RunnerRequest{
+		TaskID:     "state-task",
+		Metadata:   map[string]string{"seed": "fresh"},
+		MaxRetries: 1,
+	})
+	if err != nil {
+		t.Fatalf("encode runner request: %v", err)
+	}
+	dispatch := TaskDispatchPayload{
+		CorrelationID:        "state-correlation",
+		TaskID:               "state-task",
+		RequiredCapabilities: []Capability{CapabilityImplement},
+		Request:              requestRaw,
+	}
+	dispatchEnv, err := NewEventEnvelope(EventTypeTaskDispatch, "client", "state-correlation", dispatch)
+	if err != nil {
+		t.Fatalf("build dispatch envelope: %v", err)
+	}
+	if err := bus.Publish(ctx, subjects.TaskDispatch, dispatchEnv); err != nil {
+		t.Fatalf("publish dispatch: %v", err)
+	}
+
+	_ = readTaskResultPayload(t, resultCh)
+	if runner.attempts() != 2 {
+		t.Fatalf("expected two attempts with retry, got %d", runner.attempts())
+	}
+	if mutatedOnSecondAttempt {
+		t.Fatalf("expected clean request metadata per attempt")
+	}
+}
+
+func TestExecutorWorkerSupportsPerAttemptTimeoutAndRetries(t *testing.T) {
+	bus := NewMemoryBus()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	subjects := DefaultEventSubjects("unit")
+
+	var secondAttemptSeenTimedOut bool
+	runner := &scriptedRunner{}
+	runner.runFn = func(attempt int, ctx context.Context, _ contracts.RunnerRequest) (contracts.RunnerResult, error) {
+		if attempt == 1 {
+			<-ctx.Done()
+			return contracts.RunnerResult{Status: contracts.RunnerResultFailed}, ctx.Err()
+		}
+		if ctx.Err() != nil {
+			secondAttemptSeenTimedOut = true
+		}
+		return contracts.RunnerResult{Status: contracts.RunnerResultCompleted}, nil
+	}
+
+	executor := NewExecutorWorker(ExecutorWorkerOptions{
+		ID:             "timeout-exec",
+		Bus:            bus,
+		Runner:         runner,
+		Subjects:       subjects,
+		Capabilities:   []Capability{CapabilityImplement},
+		MaxRetries:     1,
+		RequestTimeout: 20 * time.Millisecond,
+	})
+	go func() { _ = executor.Start(ctx) }()
+
+	time.Sleep(20 * time.Millisecond)
+
+	resultCh, unsubscribeResult, err := bus.Subscribe(ctx, subjects.TaskResult)
+	if err != nil {
+		t.Fatalf("subscribe task result: %v", err)
+	}
+	defer unsubscribeResult()
+
+	requestRaw, err := requestForTransport(contracts.RunnerRequest{
+		TaskID:     "timeout-task",
+		MaxRetries: 1,
+	})
+	if err != nil {
+		t.Fatalf("encode runner request: %v", err)
+	}
+	dispatch := TaskDispatchPayload{
+		CorrelationID:        "timeout-correlation",
+		TaskID:               "timeout-task",
+		RequiredCapabilities: []Capability{CapabilityImplement},
+		Request:              requestRaw,
+	}
+	dispatchEnv, err := NewEventEnvelope(EventTypeTaskDispatch, "client", "timeout-correlation", dispatch)
+	if err != nil {
+		t.Fatalf("build dispatch envelope: %v", err)
+	}
+	if err := bus.Publish(ctx, subjects.TaskDispatch, dispatchEnv); err != nil {
+		t.Fatalf("publish dispatch: %v", err)
+	}
+
+	result := readTaskResultPayload(t, resultCh)
+	if result.Result.Status != contracts.RunnerResultCompleted {
+		t.Fatalf("expected completed result after retry, got %q", result.Result.Status)
+	}
+	if secondAttemptSeenTimedOut {
+		t.Fatalf("expected fresh timeout context per attempt")
+	}
+}
+
+func readTaskResultPayload(t *testing.T, ch <-chan EventEnvelope) TaskResultPayload {
+	t.Helper()
+	timeout := time.After(1 * time.Second)
+	for {
+		select {
+		case raw, ok := <-ch:
+			if !ok {
+				t.Fatalf("task result channel closed")
+			}
+			if raw.Type != EventTypeTaskResult {
+				continue
+			}
+			payload := TaskResultPayload{}
+			if len(raw.Payload) == 0 {
+				continue
+			}
+			if err := json.Unmarshal(raw.Payload, &payload); err != nil {
+				t.Fatalf("unmarshal task result: %v", err)
+			}
+			return payload
+		case <-timeout:
+			t.Fatalf("timed out waiting for task result")
+		}
+	}
+}
+
+func TestExecutorWorkerSelectsBackendByMetadata(t *testing.T) {
+	bus := NewMemoryBus()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	subjects := DefaultEventSubjects("unit")
+
+	var selectedBackend string
+	codexRunner := &scriptedRunner{}
+	codexRunner.runFn = func(_ int, _ context.Context, request contracts.RunnerRequest) (contracts.RunnerResult, error) {
+		selectedBackend = "codex"
+		return contracts.RunnerResult{Status: contracts.RunnerResultCompleted}, nil
+	}
+	opencodeRunner := &scriptedRunner{}
+	opencodeRunner.runFn = func(_ int, _ context.Context, request contracts.RunnerRequest) (contracts.RunnerResult, error) {
+		selectedBackend = "opencode"
+		return contracts.RunnerResult{Status: contracts.RunnerResultCompleted}, nil
+	}
+
+	executor := NewExecutorWorker(ExecutorWorkerOptions{
+		ID:     "backend-exec",
+		Bus:    bus,
+		Runner: opencodeRunner,
+		Backends: map[string]contracts.AgentRunner{
+			"codex":    codexRunner,
+			"opencode": opencodeRunner,
+		},
+		Backend:      "opencode",
+		Subjects:     subjects,
+		Capabilities: []Capability{CapabilityImplement},
+	})
+	go func() { _ = executor.Start(ctx) }()
+	time.Sleep(20 * time.Millisecond)
+
+	resultCh, unsubscribeResult, err := bus.Subscribe(ctx, subjects.TaskResult)
+	if err != nil {
+		t.Fatalf("subscribe task result: %v", err)
+	}
+	defer unsubscribeResult()
+
+	requestRaw, err := requestForTransport(contracts.RunnerRequest{
+		TaskID:   "backend-task",
+		Metadata: map[string]string{"backend": "codex"},
+	})
+	if err != nil {
+		t.Fatalf("encode runner request: %v", err)
+	}
+	dispatch := TaskDispatchPayload{
+		CorrelationID:        "backend-correlation",
+		TaskID:               "backend-task",
+		RequiredCapabilities: []Capability{CapabilityImplement},
+		Request:              requestRaw,
+	}
+	dispatchEnv, err := NewEventEnvelope(EventTypeTaskDispatch, "client", "backend-correlation", dispatch)
+	if err != nil {
+		t.Fatalf("build dispatch envelope: %v", err)
+	}
+	if err := bus.Publish(ctx, subjects.TaskDispatch, dispatchEnv); err != nil {
+		t.Fatalf("publish dispatch: %v", err)
+	}
+
+	_ = readTaskResultPayload(t, resultCh)
+	if selectedBackend != "codex" {
+		t.Fatalf("expected backend codex to be selected, got %q", selectedBackend)
+	}
+	if codexRunner.attempts() != 1 {
+		t.Fatalf("expected codex runner to run once, got %d", codexRunner.attempts())
+	}
+	if opencodeRunner.attempts() != 0 {
+		t.Fatalf("expected default runner not used when backend explicitly requested")
 	}
 }
 
@@ -274,8 +794,8 @@ func TestMastermindAcknowledgesTaskStatusUpdateAcrossMultipleBackends(t *testing
 		RegistryTTL:    2 * time.Second,
 		RequestTimeout: 2 * time.Second,
 		StatusUpdateBackends: map[string]TaskStatusWriter{
-			"tk":      tkBackend,
-			"linear":  linearBackend,
+			"tk":     tkBackend,
+			"linear": linearBackend,
 		},
 		StatusUpdateAuthToken: "token",
 	})
@@ -394,8 +914,8 @@ func TestMastermindRejectsTaskStatusUpdateOnConflictAcrossMultipleBackends(t *te
 		RegistryTTL:    2 * time.Second,
 		RequestTimeout: 2 * time.Second,
 		StatusUpdateBackends: map[string]TaskStatusWriter{
-			"tk":    backendA,
-			"gh":    backendB,
+			"tk": backendA,
+			"gh": backendB,
 		},
 		StatusUpdateAuthToken: "token",
 	})
@@ -569,11 +1089,11 @@ func TestMastermindPublishesTaskGraphSnapshotsAndDiffsFromStatusBackends(t *test
 	})
 
 	mastermind := NewMastermind(MastermindOptions{
-		ID:             "mastermind",
-		Bus:            bus,
-		Subjects:       subjects,
-		RegistryTTL:    2 * time.Second,
-		TaskGraphSyncRoots: []string{"root-1"},
+		ID:                    "mastermind",
+		Bus:                   bus,
+		Subjects:              subjects,
+		RegistryTTL:           2 * time.Second,
+		TaskGraphSyncRoots:    []string{"root-1"},
 		TaskGraphSyncInterval: 20 * time.Millisecond,
 		StatusUpdateBackends: map[string]TaskStatusWriter{
 			"tk": graphBackend,

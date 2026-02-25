@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -14,21 +15,33 @@ type ExecutorWorkerOptions struct {
 	ID                string
 	Bus               Bus
 	Runner            contracts.AgentRunner
+	Backends          map[string]contracts.AgentRunner
+	Backend           string
 	Subjects          EventSubjects
 	Capabilities      []Capability
 	HeartbeatInterval time.Duration
 	RequestTimeout    time.Duration
 	Clock             func() time.Time
+	MaxRetries        int
+	RetryDelay        time.Duration
+	PreExecutionHook  func(context.Context, contracts.RunnerRequest, int)
+	PostExecutionHook func(context.Context, contracts.RunnerRequest, contracts.RunnerResult, error, int)
 }
 
 type ExecutorWorker struct {
 	id                string
 	bus               Bus
 	runner            contracts.AgentRunner
+	backends          map[string]contracts.AgentRunner
+	defaultBackend    string
 	subjects          EventSubjects
 	capabilities      CapabilitySet
 	heartbeatInterval time.Duration
 	requestTimeout    time.Duration
+	maxRetries        int
+	retryDelay        time.Duration
+	preExecutionHook  func(context.Context, contracts.RunnerRequest, int)
+	postExecutionHook func(context.Context, contracts.RunnerRequest, contracts.RunnerResult, error, int)
 	clock             func() time.Time
 }
 
@@ -41,10 +54,16 @@ func NewExecutorWorker(cfg ExecutorWorkerOptions) *ExecutorWorker {
 		id:                strings.TrimSpace(cfg.ID),
 		bus:               cfg.Bus,
 		runner:            cfg.Runner,
+		backends:          normalizeRunnerBackends(cfg.Backends),
+		defaultBackend:    strings.TrimSpace(strings.ToLower(cfg.Backend)),
 		subjects:          subjects,
 		capabilities:      NewCapabilitySet(cfg.Capabilities...),
 		heartbeatInterval: cfg.HeartbeatInterval,
 		requestTimeout:    cfg.RequestTimeout,
+		maxRetries:        cfg.MaxRetries,
+		retryDelay:        cfg.RetryDelay,
+		preExecutionHook:  cfg.PreExecutionHook,
+		postExecutionHook: cfg.PostExecutionHook,
 		clock: func() time.Time {
 			if cfg.Clock != nil {
 				return cfg.Clock().UTC()
@@ -65,7 +84,7 @@ func (w *ExecutorWorker) Start(ctx context.Context) error {
 	if w == nil || w.bus == nil {
 		return fmt.Errorf("executor worker bus is required")
 	}
-	if w.runner == nil {
+	if w.runner == nil && len(w.backends) == 0 {
 		return fmt.Errorf("executor worker runner is required")
 	}
 	interval := w.heartbeatInterval
@@ -149,14 +168,15 @@ func (w *ExecutorWorker) handleDispatch(ctx context.Context, env EventEnvelope) 
 	}
 
 	type runnerTransportRequest struct {
-		TaskID   string               `json:"task_id"`
-		ParentID string               `json:"parent_id"`
-		Prompt   string               `json:"prompt"`
-		Mode     contracts.RunnerMode `json:"mode"`
-		Model    string               `json:"model"`
-		RepoRoot string               `json:"repo_root"`
-		Timeout  time.Duration        `json:"timeout"`
-		Metadata map[string]string    `json:"metadata,omitempty"`
+		TaskID     string               `json:"task_id"`
+		ParentID   string               `json:"parent_id"`
+		Prompt     string               `json:"prompt"`
+		Mode       contracts.RunnerMode `json:"mode"`
+		Model      string               `json:"model"`
+		RepoRoot   string               `json:"repo_root"`
+		Timeout    time.Duration        `json:"timeout"`
+		MaxRetries int                  `json:"max_retries"`
+		Metadata   map[string]string    `json:"metadata,omitempty"`
 	}
 	transport := runnerTransportRequest{}
 	if len(payload.Request) == 0 {
@@ -166,43 +186,245 @@ func (w *ExecutorWorker) handleDispatch(ctx context.Context, env EventEnvelope) 
 		return
 	}
 	request := contracts.RunnerRequest{
-		TaskID:   transport.TaskID,
-		ParentID: transport.ParentID,
-		Prompt:   transport.Prompt,
-		Mode:     transport.Mode,
-		Model:    transport.Model,
-		RepoRoot: transport.RepoRoot,
-		Timeout:  transport.Timeout,
-		Metadata: transport.Metadata,
+		TaskID:     transport.TaskID,
+		ParentID:   transport.ParentID,
+		Prompt:     transport.Prompt,
+		Mode:       transport.Mode,
+		Model:      transport.Model,
+		RepoRoot:   transport.RepoRoot,
+		Timeout:    transport.Timeout,
+		MaxRetries: transport.MaxRetries,
+		Metadata:   transport.Metadata,
 	}
+
+	maxRetries := request.MaxRetries
+	if maxRetries < 0 {
+		maxRetries = 0
+	}
+	if maxRetries == 0 && w.maxRetries > 0 {
+		maxRetries = w.maxRetries
+	}
+	maxAttempts := maxRetries + 1
 	requestCtx := ctx
-	if request.Timeout > 0 {
-		deadline, cancel := context.WithTimeout(ctx, request.Timeout)
-		defer cancel()
-		requestCtx = deadline
-	} else if w.requestTimeout > 0 {
-		deadline, cancel := context.WithTimeout(ctx, w.requestTimeout)
-		defer cancel()
-		requestCtx = deadline
+	if requestCtx == nil {
+		requestCtx = context.Background()
 	}
-	result, err := w.runner.Run(requestCtx, request)
+
+	backend, requestRunner := w.resolveRunner(request.Metadata)
+	if requestRunner == nil {
+		finalErr := fmt.Errorf("no runner configured for backend %q", backend)
+		response := TaskResultPayload{
+			CorrelationID: payload.CorrelationID,
+			ExecutorID:    w.ID(),
+			Result: contracts.RunnerResult{
+				Status: contracts.RunnerResultFailed,
+				Reason: finalErr.Error(),
+			},
+			Error: finalErr.Error(),
+		}
+		responseEnv, envErr := NewEventEnvelope(EventTypeTaskResult, w.ID(), payload.CorrelationID, response)
+		if envErr == nil {
+			_ = w.bus.Publish(requestCtx, w.subjects.TaskResult, responseEnv)
+		}
+		return
+	}
+	executionTimeout := w.requestTimeoutFor(request)
+
+	if request.Metadata == nil {
+		request.Metadata = map[string]string{}
+	}
+	var finalResult contracts.RunnerResult
+	var finalErr error
+attemptLoop:
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		if requestCtx.Err() != nil {
+			finalErr = requestCtx.Err()
+			break
+		}
+		if attempt > 1 && w.retryDelay > 0 {
+			select {
+			case <-time.After(w.retryDelay):
+			case <-requestCtx.Done():
+				finalErr = requestCtx.Err()
+				break attemptLoop
+			}
+		}
+		attemptRequest := cloneRunnerRequest(request)
+		attemptRequest.OnProgress = w.progressForwarder(
+			requestCtx,
+			request.TaskID,
+			attempt,
+			backend,
+			attemptRequest.OnProgress,
+		)
+
+		if w.preExecutionHook != nil {
+			w.preExecutionHook(requestCtx, attemptRequest, attempt)
+		}
+
+		attemptCtx, cancel := contextForExecution(requestCtx, executionTimeout)
+		result, err := requestRunner.Run(attemptCtx, attemptRequest)
+		cancel()
+
+		if err != nil {
+			result.Status = contracts.RunnerResultFailed
+			if strings.TrimSpace(result.Reason) == "" {
+				result.Reason = err.Error()
+			}
+		}
+		finalResult = result
+		finalErr = err
+
+		if w.postExecutionHook != nil {
+			w.postExecutionHook(requestCtx, attemptRequest, result, err, attempt)
+		}
+		if err == nil && result.Status == contracts.RunnerResultCompleted {
+			break
+		}
+		if attempt >= maxAttempts {
+			break
+		}
+		if requestCtx.Err() != nil {
+			finalErr = requestCtx.Err()
+			break
+		}
+	}
+
 	response := TaskResultPayload{
 		CorrelationID: payload.CorrelationID,
 		ExecutorID:    w.ID(),
-		Result:        result,
+		Result:        finalResult,
 	}
-	if err != nil {
+	if finalErr != nil {
 		response.Result = contracts.RunnerResult{
 			Status: contracts.RunnerResultFailed,
-			Reason: err.Error(),
+			Reason: finalErr.Error(),
 		}
-		response.Error = err.Error()
+		response.Error = finalErr.Error()
 	}
 	responseEnv, err := NewEventEnvelope(EventTypeTaskResult, w.ID(), payload.CorrelationID, response)
 	if err != nil {
 		return
 	}
 	_ = w.bus.Publish(requestCtx, w.subjects.TaskResult, responseEnv)
+}
+
+func normalizeRunnerBackends(runners map[string]contracts.AgentRunner) map[string]contracts.AgentRunner {
+	normalized := map[string]contracts.AgentRunner{}
+	for backend, runner := range runners {
+		key := strings.TrimSpace(strings.ToLower(backend))
+		if key == "" || runner == nil {
+			continue
+		}
+		normalized[key] = runner
+	}
+	return normalized
+}
+
+func (w *ExecutorWorker) resolveRunner(metadata map[string]string) (string, contracts.AgentRunner) {
+	backend := strings.TrimSpace(strings.ToLower(metadata["backend"]))
+	if backend == "" {
+		backend = w.defaultBackend
+	}
+	if backend == "" {
+		backend = "default"
+	}
+	if selected, ok := w.backends[backend]; ok && selected != nil {
+		return backend, selected
+	}
+	if w.runner != nil {
+		return backend, w.runner
+	}
+	return backend, w.runner
+}
+
+func (w *ExecutorWorker) requestTimeoutFor(request contracts.RunnerRequest) time.Duration {
+	if request.Timeout > 0 {
+		return request.Timeout
+	}
+	return w.requestTimeout
+}
+
+func (w *ExecutorWorker) progressForwarder(ctx context.Context, taskID string, attempt int, backend string, original func(contracts.RunnerProgress)) func(contracts.RunnerProgress) {
+	return func(progress contracts.RunnerProgress) {
+		if w.bus == nil || w.subjects.MonitorEvent == "" {
+			return
+		}
+		if original != nil {
+			original(progress)
+		}
+		cloneProgressMetadata := cloneStringMap(progress.Metadata)
+		if cloneProgressMetadata == nil {
+			cloneProgressMetadata = map[string]string{}
+		}
+		cloneProgressMetadata["backend"] = backend
+		cloneProgressMetadata["attempt"] = strconv.Itoa(attempt)
+		eventTime := progress.Timestamp
+		if eventTime.IsZero() {
+			eventTime = time.Now().UTC()
+		}
+		eventType := eventTypeForRunnerProgress(progress.Type)
+		event := contracts.Event{
+			Type:      eventType,
+			TaskID:    taskID,
+			WorkerID:  w.ID(),
+			Message:   progress.Message,
+			Metadata:  cloneProgressMetadata,
+			Timestamp: eventTime,
+		}
+		progressEnv, envelopeErr := NewEventEnvelope(EventTypeMonitorEvent, w.ID(), "", MonitorEventPayload{Event: event})
+		if envelopeErr != nil {
+			return
+		}
+		_ = w.bus.Publish(ctx, w.subjects.MonitorEvent, progressEnv)
+	}
+}
+
+func contextForExecution(parent context.Context, timeout time.Duration) (context.Context, func()) {
+	if parent == nil {
+		parent = context.Background()
+	}
+	if timeout <= 0 {
+		return parent, func() {}
+	}
+	executionCtx, cancel := context.WithTimeout(parent, timeout)
+	return executionCtx, cancel
+}
+
+func cloneRunnerRequest(request contracts.RunnerRequest) contracts.RunnerRequest {
+	clone := request
+	clone.Metadata = cloneStringMap(request.Metadata)
+	if clone.Metadata == nil {
+		clone.Metadata = map[string]string{}
+	}
+	clone.OnProgress = request.OnProgress
+	return clone
+}
+
+func cloneStringMap(values map[string]string) map[string]string {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(values))
+	for key, value := range values {
+		out[strings.TrimSpace(key)] = value
+	}
+	return out
+}
+
+func eventTypeForRunnerProgress(progressType string) contracts.EventType {
+	switch strings.TrimSpace(progressType) {
+	case "runner_cmd_started":
+		return contracts.EventTypeRunnerCommandStarted
+	case "runner_cmd_finished":
+		return contracts.EventTypeRunnerCommandFinished
+	case "runner_output":
+		return contracts.EventTypeRunnerOutput
+	case "runner_warning":
+		return contracts.EventTypeRunnerWarning
+	default:
+		return contracts.EventTypeRunnerProgress
+	}
 }
 
 func (w *ExecutorWorker) RequestService(ctx context.Context, request ServiceRequestPayload) (ServiceResponsePayload, error) {

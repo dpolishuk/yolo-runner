@@ -351,6 +351,7 @@ func requestForTransport(request contracts.RunnerRequest) (json.RawMessage, erro
 		Model    string               `json:"model"`
 		RepoRoot string               `json:"repo_root"`
 		Timeout  time.Duration        `json:"timeout"`
+		MaxRetries int               `json:"max_retries"`
 		Metadata map[string]string    `json:"metadata,omitempty"`
 	}
 	transport := runnerTransportRequest{
@@ -361,6 +362,7 @@ func requestForTransport(request contracts.RunnerRequest) (json.RawMessage, erro
 		Model:    request.Model,
 		RepoRoot: request.RepoRoot,
 		Timeout:  request.Timeout,
+		MaxRetries: request.MaxRetries,
 		Metadata: request.Metadata,
 	}
 	raw, err := json.Marshal(transport)
