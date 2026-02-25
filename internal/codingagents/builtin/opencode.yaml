@@ -1,0 +1,9 @@
+name: opencode
+adapter: opencode
+supports_review: true
+supports_stream: true
+distributed_capabilities:
+  - implement
+  - review
+  - service_proxy
+  - larger_model

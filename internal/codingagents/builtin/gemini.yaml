@@ -1,0 +1,17 @@
+name: gemini
+adapter: command
+binary: gemini
+args:
+  - exec
+  - --prompt
+  - "{{prompt}}"
+supports_review: true
+supports_stream: true
+distributed_capabilities:
+  - implement
+  - review
+  - larger_model
+supported_models:
+  - gemini-*
+required_credentials:
+  - GEMINI_API_KEY

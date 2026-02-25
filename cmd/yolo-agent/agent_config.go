@@ -1,6 +1,7 @@
 package main
 
 import (
+	"github.com/egv/yolo-runner/v2/internal/codingagents"
 	"fmt"
 	"strings"
 	"time"
@@ -18,11 +19,19 @@ type yoloAgentConfigDefaults struct {
 }
 
 func loadYoloAgentConfigDefaults(repoRoot string) (yoloAgentConfigDefaults, error) {
-	return newTrackerConfigService().ResolveAgentDefaults(repoRoot)
+	catalog, err := loadCodingAgentsCatalog(repoRoot)
+	if err != nil {
+		return yoloAgentConfigDefaults{}, err
+	}
+	model, err := newTrackerConfigService().LoadModel(repoRoot)
+	if err != nil {
+		return yoloAgentConfigDefaults{}, err
+	}
+	return resolveYoloAgentConfigDefaults(model.Agent, catalog)
 }
 
-func resolveYoloAgentConfigDefaults(model yoloAgentConfigModel) (yoloAgentConfigDefaults, error) {
-	backend, err := normalizeAndValidateAgentBackend(model.Backend)
+func resolveYoloAgentConfigDefaults(model yoloAgentConfigModel, catalog codingagents.Catalog) (yoloAgentConfigDefaults, error) {
+	backend, err := normalizeAndValidateAgentBackend(model.Backend, catalog)
 	if err != nil {
 		return yoloAgentConfigDefaults{}, err
 	}
@@ -81,15 +90,15 @@ func resolveYoloAgentConfigDefaults(model yoloAgentConfigModel) (yoloAgentConfig
 	return defaults, nil
 }
 
-func normalizeAndValidateAgentBackend(raw string) (string, error) {
+func normalizeAndValidateAgentBackend(raw string, catalog codingagents.Catalog) (string, error) {
 	value := strings.TrimSpace(raw)
 	if value == "" {
 		return "", nil
 	}
 	normalized := normalizeBackend(value)
-	matrix := defaultBackendCapabilityMatrix()
-	if _, ok := matrix[normalized]; !ok {
-		return "", fmt.Errorf("agent.backend in %s must be one of: %s", trackerConfigRelPath, strings.Join(supportedBackends(matrix), ", "))
+	if _, ok := catalog.Backend(normalized); !ok {
+		backendNames := strings.Join(catalog.Names(), ", ")
+		return "", fmt.Errorf("agent.backend in %s must be one of: %s", trackerConfigRelPath, backendNames)
 	}
 	return normalized, nil
 }

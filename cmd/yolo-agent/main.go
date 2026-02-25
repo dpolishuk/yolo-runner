@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/egv/yolo-runner/v2/internal/agent"
+	"github.com/egv/yolo-runner/v2/internal/codingagents"
 	"github.com/egv/yolo-runner/v2/internal/claude"
 	"github.com/egv/yolo-runner/v2/internal/codex"
 	"github.com/egv/yolo-runner/v2/internal/contracts"
@@ -31,6 +32,7 @@ const (
 	backendCodex        = "codex"
 	backendClaude       = "claude"
 	backendKimi         = "kimi"
+	backendGemini        = "gemini"
 	agentModeStream     = "stream"
 	agentModeUI         = "ui"
 	agentRoleLocal      = "local"
@@ -71,6 +73,7 @@ type runConfig struct {
 	distributedBusAddress           string
 	distributedBusPrefix            string
 	distributedRoleID               string
+	codingAgents                    codingagents.Catalog
 	distributedExecutorCapabilities []distributed.Capability
 	distributedHeartbeatInterval    time.Duration
 	distributedRequestTimeout       time.Duration
@@ -87,6 +90,8 @@ var newDistributedBus = func(backend string, address string) (distributed.Bus, e
 		return nil, fmt.Errorf("unsupported distributed bus backend %q", backend)
 	}
 }
+
+var loadCodingAgentsCatalog = codingagents.LoadCatalog
 
 var runConfigValidateCommand = defaultRunConfigValidateCommand
 var launchYoloTUI = func() (io.WriteCloser, func() error, error) {
@@ -122,8 +127,8 @@ func RunMain(args []string, run func(context.Context, runConfig) error) int {
 	fs := flag.NewFlagSet("yolo-agent", flag.ContinueOnError)
 	repo := fs.String("repo", ".", "Repository root")
 	root := fs.String("root", "", "Root task ID")
-	backend := fs.String("backend", "", "DEPRECATED: use --agent-backend (opencode|codex|claude|kimi)")
-	agentBackend := fs.String("agent-backend", "", "Runner backend (opencode|codex|claude|kimi)")
+	backend := fs.String("backend", "", "DEPRECATED: use --agent-backend (opencode, codex, claude, kimi, gemini)")
+	agentBackend := fs.String("agent-backend", "", "Runner backend (opencode, codex, claude, kimi, gemini)")
 	model := fs.String("model", "", "Model for CLI agent")
 	profile := fs.String("profile", "", "Tracker profile name from .yolo-runner/config.yaml")
 	qualityThreshold := fs.Int("quality-threshold", 0, "Minimum quality score required to run a task")
@@ -147,7 +152,7 @@ func RunMain(args []string, run func(context.Context, runConfig) error) int {
 	distributedBusAddress := fs.String("distributed-bus-address", "", "Distributed bus address")
 	distributedBusPrefix := fs.String("distributed-bus-prefix", "", "Distributed bus subject prefix")
 	distributedExecutorID := fs.String("distributed-executor-id", "", "Distributed executor id (executor role)")
-	distributedExecutorCapabilities := fs.String("distributed-executor-capabilities", "implement,review", "Comma-separated capabilities to advertise in executor role")
+	distributedExecutorCapabilities := fs.String("distributed-executor-capabilities", "", "Comma-separated capabilities to advertise in executor role")
 	distributedHeartbeatInterval := fs.Duration("distributed-heartbeat-interval", 5*time.Second, "Heartbeat interval in executor role")
 	distributedRequestTimeout := fs.Duration("distributed-request-timeout", 30*time.Second, "Request timeout for task dispatch in mastermind/executor roles")
 	distributedRegistryTTL := fs.Duration("distributed-registry-ttl", 30*time.Second, "Executor registration TTL in mastermind role")
@@ -175,6 +180,11 @@ func RunMain(args []string, run func(context.Context, runConfig) error) int {
 
 	if *root == "" && selectedRole != agentRoleWorker {
 		fmt.Fprintln(os.Stderr, "--root is required")
+		return 1
+	}
+	codingAgents, err := loadCodingAgentsCatalog(*repo)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
 	configDefaults, err := loadYoloAgentConfigDefaults(*repo)
@@ -235,8 +245,12 @@ func RunMain(args []string, run func(context.Context, runConfig) error) int {
 	selectedBackend, _, err := selectBackend(selectedBackendRaw, backendSelectionOptions{
 		RequireReview: true,
 		Stream:        selectedStream,
-	}, defaultBackendCapabilityMatrix())
+	}, catalogBackendCapabilities(codingAgents))
 	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	if err := codingAgents.ValidateBackendUsage(selectedBackend, selectedModel, os.Getenv); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
@@ -291,7 +305,7 @@ func RunMain(args []string, run func(context.Context, runConfig) error) int {
 	if selectedDistributedBusPrefix == "" {
 		selectedDistributedBusPrefix = "yolo"
 	}
-	selectedDistributedExecutorCapabilities, err := parseDistributedExecutorCapabilities(*distributedExecutorCapabilities)
+	selectedDistributedExecutorCapabilities, err := distributedExecutorCapabilitiesForBackend(codingAgents, selectedBackend, *distributedExecutorCapabilities, flagWasSet("distributed-executor-capabilities"))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
@@ -343,6 +357,7 @@ func RunMain(args []string, run func(context.Context, runConfig) error) int {
 		distributedBusAddress:           selectedDistributedBusAddress,
 		distributedBusPrefix:            selectedDistributedBusPrefix,
 		distributedRoleID:               strings.TrimSpace(*distributedExecutorID),
+		codingAgents:                    codingAgents,
 		distributedExecutorCapabilities: selectedDistributedExecutorCapabilities,
 		distributedHeartbeatInterval:    selectedDistributedHeartbeatInterval,
 		distributedRequestTimeout:       selectedDistributedRequestTimeout,
@@ -377,6 +392,9 @@ func main() {
 }
 
 func defaultRun(ctx context.Context, cfg runConfig) error {
+	if err := resolveRunConfigCodingAgents(&cfg); err != nil {
+		return err
+	}
 	if cfg.role == agentRoleWorker {
 		return runDistributedExecutor(ctx, cfg)
 	}
@@ -425,25 +443,28 @@ func defaultRun(ctx context.Context, cfg runConfig) error {
 }
 
 func buildRunnerAdapter(cfg runConfig) (contracts.AgentRunner, error) {
-	selectedBackend, _, err := selectBackend(cfg.backend, backendSelectionOptions{
-		RequireReview: true,
-		Stream:        cfg.stream,
-	}, defaultBackendCapabilityMatrix())
-	if err != nil {
-		return nil, err
+	selectedBackend := normalizeBackend(cfg.backend)
+	if selectedBackend == "" {
+		return nil, fmt.Errorf("unsupported runner backend %q", cfg.backend)
+	}
+	definition, ok := cfg.codingAgents.Backend(selectedBackend)
+	if !ok {
+		return nil, fmt.Errorf("unsupported runner backend %q", cfg.backend)
 	}
 
-	switch selectedBackend {
-	case backendOpenCode:
+	switch definition.Adapter {
+	case "opencode":
 		return opencode.NewCLIRunnerAdapter(opencode.CommandRunner{}, nil, defaultConfigRoot(), defaultConfigDir()), nil
-	case backendCodex:
+	case "codex":
 		return codex.NewCLIRunnerAdapter("", nil), nil
-	case backendClaude:
+	case "claude":
 		return claude.NewCLIRunnerAdapter("", nil), nil
-	case backendKimi:
+	case "kimi":
 		return kimi.NewCLIRunnerAdapter("", nil), nil
+	case "command":
+		return codingagents.NewGenericCLIRunnerAdapter(definition.Name, definition.Binary, definition.Args, nil), nil
 	default:
-		return nil, fmt.Errorf("unsupported runner backend %q", cfg.backend)
+		return nil, fmt.Errorf("unsupported runner backend adapter %q", definition.Adapter)
 	}
 }
 
@@ -543,6 +564,9 @@ func toTaskStatusWriterMap(backends map[string]contracts.StorageBackend) map[str
 }
 
 func runDistributedExecutor(ctx context.Context, cfg runConfig) error {
+	if err := resolveRunConfigCodingAgents(&cfg); err != nil {
+		return err
+	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -950,6 +974,38 @@ func normalizeBackend(raw string) string {
 	return backend
 }
 
+func catalogBackendCapabilities(catalog codingagents.Catalog) map[string]backendCapabilities {
+	capabilities := map[string]backendCapabilities{}
+	for _, name := range catalog.Names() {
+		profile, ok := catalog.CapabilityProfile(name)
+		if !ok {
+			continue
+		}
+		capabilities[name] = backendCapabilities{
+			SupportsReview: profile.SupportsReview,
+			SupportsStream: profile.SupportsStream,
+		}
+	}
+	if len(capabilities) == 0 {
+		return defaultBackendCapabilityMatrix()
+	}
+	return capabilities
+}
+
+func distributedExecutorCapabilitiesForBackend(catalog codingagents.Catalog, backend string, explicitRaw string, explicit bool) ([]distributed.Capability, error) {
+	if explicit {
+		return parseDistributedExecutorCapabilities(explicitRaw)
+	}
+	caps, ok := catalog.DistributedCapabilities(backend)
+	if ok && len(caps) > 0 {
+		return caps, nil
+	}
+	return []distributed.Capability{
+		distributed.CapabilityImplement,
+		distributed.CapabilityReview,
+	}, nil
+}
+
 func normalizeDistributedRole(raw string) (string, error) {
 	role := strings.ToLower(strings.TrimSpace(raw))
 	if role == "" {
@@ -1077,4 +1133,19 @@ func defaultConfigDir() string {
 		return ""
 	}
 	return filepath.Join(root, "opencode")
+}
+
+func resolveRunConfigCodingAgents(cfg *runConfig) error {
+	if cfg == nil {
+		return nil
+	}
+	if len(cfg.codingAgents.Names()) > 0 {
+		return nil
+	}
+	catalog, err := loadCodingAgentsCatalog(cfg.repoRoot)
+	if err != nil {
+		return err
+	}
+	cfg.codingAgents = catalog
+	return nil
 }
