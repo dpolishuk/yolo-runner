@@ -70,6 +70,7 @@ func ParseEventJSONLLine(line []byte) (Event, error) {
 		WorkerID  string            `json:"worker_id"`
 		ClonePath string            `json:"clone_path"`
 		QueuePos  int               `json:"queue_pos"`
+		Priority  int               `json:"priority"`
 		Message   string            `json:"message"`
 		Metadata  map[string]string `json:"metadata"`
 		TS        string            `json:"ts"`
@@ -92,6 +93,7 @@ func ParseEventJSONLLine(line []byte) (Event, error) {
 		WorkerID:  payload.WorkerID,
 		ClonePath: payload.ClonePath,
 		QueuePos:  payload.QueuePos,
+		Priority:  payload.Priority,
 		Message:   payload.Message,
 		Metadata:  payload.Metadata,
 		Timestamp: timestamp,

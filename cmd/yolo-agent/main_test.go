@@ -16,8 +16,8 @@ import (
 
 	"github.com/egv/yolo-runner/v2/internal/contracts"
 	"github.com/egv/yolo-runner/v2/internal/distributed"
-	"github.com/egv/yolo-runner/v2/internal/linear"
 	"github.com/egv/yolo-runner/v2/internal/github"
+	"github.com/egv/yolo-runner/v2/internal/linear"
 )
 
 func TestRunMainParsesFlagsAndInvokesRun(t *testing.T) {
@@ -802,10 +802,13 @@ func TestMaybeWrapWithMastermindProvidesServiceHandlerToExecuteRequests(t *testi
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 
-	wrappedRunner, closeDistributed, err := maybeWrapWithMastermind(ctx, runConfig{
+	wrappedRunner, distributedBus, closeDistributed, err := maybeWrapWithMastermind(ctx, runConfig{
 		role:                 agentRoleMaster,
 		distributedBusPrefix: "unit",
 	}, serviceRunner, nil)
+	if distributedBus == nil {
+		t.Fatalf("expected distributed bus from mastermind wrapper")
+	}
 	if err != nil {
 		t.Fatalf("expected mastermind setup to succeed, got %v", err)
 	}
@@ -897,10 +900,13 @@ func TestMaybeWrapWithMastermindRejectsUnsupportedServiceNames(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 
-	wrappedRunner, closeDistributed, err := maybeWrapWithMastermind(ctx, runConfig{
+	wrappedRunner, distributedBus, closeDistributed, err := maybeWrapWithMastermind(ctx, runConfig{
 		role:                 agentRoleMaster,
 		distributedBusPrefix: "unit",
 	}, serviceRunner, nil)
+	if distributedBus == nil {
+		t.Fatalf("expected distributed bus from mastermind wrapper")
+	}
 	if err != nil {
 		t.Fatalf("expected mastermind setup to succeed, got %v", err)
 	}
@@ -1071,15 +1077,18 @@ profiles:
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 
-	wrappedRunner, closeDistributed, err := maybeWrapWithMastermind(ctx, runConfig{
+	wrappedRunner, distributedBus, closeDistributed, err := maybeWrapWithMastermind(ctx, runConfig{
 		role:                 agentRoleMaster,
 		repoRoot:             repoRoot,
 		rootID:               "root-1",
 		profile:              "default",
-		distributedBusPrefix:  "unit",
+		distributedBusPrefix: "unit",
 	}, serviceRunner, map[string]contracts.StorageBackend{
 		"tk": tkBackend,
 	})
+	if distributedBus == nil {
+		t.Fatalf("expected distributed bus from mastermind wrapper")
+	}
 	if err != nil {
 		t.Fatalf("expected mastermind setup to succeed, got %v", err)
 	}
