@@ -3,6 +3,7 @@ package distributed
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -26,6 +27,11 @@ const (
 	EventTypeTaskResult         EventType = "task_result"
 	EventTypeServiceRequest     EventType = "service_request"
 	EventTypeServiceResponse    EventType = "service_response"
+	EventTypeTaskGraphSnapshot  EventType = "task_graph_snapshot"
+	EventTypeTaskGraphDiff      EventType = "task_graph_diff"
+	EventTypeTaskStatusUpdate   EventType = "task_status_update"
+	EventTypeTaskStatusAck      EventType = "task_status_ack"
+	EventTypeTaskStatusReject   EventType = "task_status_reject"
 )
 
 type Capability string
@@ -100,6 +106,79 @@ type ServiceResponsePayload struct {
 	Service       string            `json:"service"`
 	Artifacts     map[string]string `json:"artifacts,omitempty"`
 	Error         string            `json:"error,omitempty"`
+}
+
+type TaskGraphSnapshotPayload struct {
+	Backend  string             `json:"backend"`
+	RootID   string             `json:"root_id"`
+	TaskTree contracts.TaskTree `json:"task_tree"`
+	Metadata map[string]string  `json:"metadata,omitempty"`
+}
+
+type TaskGraphDiffPayload struct {
+	Backend  string            `json:"backend"`
+	RootID   string            `json:"root_id"`
+	Changes  []string          `json:"changes"`
+	Metadata map[string]string `json:"metadata,omitempty"`
+}
+
+type TaskStatusUpdatePayload struct {
+	CommandID       string               `json:"command_id"`
+	Backends        []string             `json:"backends,omitempty"`
+	TaskID          string               `json:"task_id"`
+	Status          contracts.TaskStatus `json:"status"`
+	Comment         string               `json:"comment,omitempty"`
+	Metadata        map[string]string    `json:"metadata,omitempty"`
+	ExpectedVersion int64                `json:"expected_version,omitempty"`
+	AuthToken       string               `json:"auth_token,omitempty"`
+}
+
+type TaskStatusUpdateResultPayload struct {
+	CommandID string               `json:"command_id"`
+	TaskID    string               `json:"task_id"`
+	Status    contracts.TaskStatus `json:"status"`
+	Backends  []string             `json:"backends,omitempty"`
+	Versions  map[string]int64     `json:"versions"`
+	Result    string               `json:"result"`
+	Message   string               `json:"message,omitempty"`
+}
+
+type TaskStatusUpdateAckPayload struct {
+	TaskStatusUpdateResultPayload
+}
+
+type TaskStatusUpdateRejectPayload struct {
+	TaskStatusUpdateResultPayload
+	Reason string `json:"reason"`
+}
+
+type TaskGraphSubscriptionFilter struct {
+	Backends []string
+	RootIDs  []string
+}
+
+type TaskGraphEvent struct {
+	Type     EventType                 `json:"type"`
+	Snapshot *TaskGraphSnapshotPayload `json:"snapshot,omitempty"`
+	Diff     *TaskGraphDiffPayload     `json:"diff,omitempty"`
+}
+
+func canonicalTaskStatusUpdatesBackends(backends []string) []string {
+	out := make([]string, 0, len(backends))
+	seen := map[string]struct{}{}
+	for _, backend := range backends {
+		normalized := strings.ToLower(strings.TrimSpace(backend))
+		if normalized == "" {
+			continue
+		}
+		if _, exists := seen[normalized]; exists {
+			continue
+		}
+		seen[normalized] = struct{}{}
+		out = append(out, normalized)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func NewEventEnvelope(typ EventType, source string, correlationID string, payload any) (EventEnvelope, error) {

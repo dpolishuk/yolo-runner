@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -37,7 +38,10 @@ const (
 	agentRoleWorker     = "executor"
 	distributedBusRedis = "redis"
 	distributedBusNATS  = "nats"
+	inboxAuthTokenEnv   = "YOLO_INBOX_WRITE_TOKEN"
 )
+
+var taskGraphSyncInterval = 5 * time.Second
 
 type runConfig struct {
 	repoRoot                        string
@@ -393,12 +397,20 @@ func defaultRun(ctx context.Context, cfg runConfig) error {
 	}
 	cfg.profile = trackerProfile.Name
 	cfg.trackerType = trackerProfile.Tracker.Type
+	storageBackend, err := buildStorageBackendForTracker(cfg.repoRoot, trackerProfile)
+	if err != nil {
+		return err
+	}
+	taskStatusBackends := map[string]contracts.StorageBackend{}
+	if strings.TrimSpace(cfg.trackerType) != "" {
+		taskStatusBackends[strings.ToLower(strings.TrimSpace(cfg.trackerType))] = storageBackend
+	}
 	vcsAdapter := gitvcs.NewVCSAdapter(localGitRunner{dir: cfg.repoRoot})
 	runnerAdapter, err := buildRunnerAdapter(cfg)
 	if err != nil {
 		return err
 	}
-	runnerAdapter, closeDistributed, err := maybeWrapWithMastermind(ctx, cfg, runnerAdapter)
+	runnerAdapter, closeDistributed, err := maybeWrapWithMastermind(ctx, cfg, runnerAdapter, taskStatusBackends)
 	if err != nil {
 		return err
 	}
@@ -408,10 +420,6 @@ func defaultRun(ctx context.Context, cfg runConfig) error {
 		}()
 	}
 
-	storageBackend, err := buildStorageBackendForTracker(cfg.repoRoot, trackerProfile)
-	if err != nil {
-		return err
-	}
 	taskEngine := engine.NewTaskEngine()
 	return runWithStorageComponents(ctx, cfg, storageBackend, taskEngine, runnerAdapter, vcsAdapter)
 }
@@ -439,10 +447,11 @@ func buildRunnerAdapter(cfg runConfig) (contracts.AgentRunner, error) {
 	}
 }
 
-func maybeWrapWithMastermind(ctx context.Context, cfg runConfig, localRunner contracts.AgentRunner) (contracts.AgentRunner, func() error, error) {
+func maybeWrapWithMastermind(ctx context.Context, cfg runConfig, localRunner contracts.AgentRunner, taskStatusBackends map[string]contracts.StorageBackend) (contracts.AgentRunner, func() error, error) {
 	if cfg.role != agentRoleMaster {
 		return localRunner, nil, nil
 	}
+	taskStatusBackends = discoverTaskStatusBackendsForMastermind(cfg, taskStatusBackends)
 	bus, err := newDistributedBus(cfg.distributedBusBackend, cfg.distributedBusAddress)
 	if err != nil {
 		return nil, nil, err
@@ -453,18 +462,84 @@ func maybeWrapWithMastermind(ctx context.Context, cfg runConfig, localRunner con
 		id = "mastermind"
 	}
 	mastermind := distributed.NewMastermind(distributed.MastermindOptions{
-		ID:             id,
-		Bus:            bus,
-		Subjects:       subjects,
-		RegistryTTL:    cfg.distributedRegistryTTL,
-		RequestTimeout: cfg.distributedRequestTimeout,
-		ServiceHandler: defaultServiceHandler(localRunner),
+		ID:                    id,
+		Bus:                   bus,
+		Subjects:              subjects,
+		RegistryTTL:           cfg.distributedRegistryTTL,
+		RequestTimeout:        cfg.distributedRequestTimeout,
+		ServiceHandler:        defaultServiceHandler(localRunner),
+		StatusUpdateBackends:  toTaskStatusWriterMap(taskStatusBackends),
+		StatusUpdateAuthToken: strings.TrimSpace(os.Getenv(inboxAuthTokenEnv)),
+		TaskGraphSyncRoots:    []string{strings.TrimSpace(cfg.rootID)},
+		TaskGraphSyncInterval: taskGraphSyncInterval,
 	})
 	if err := mastermind.Start(ctx); err != nil {
 		_ = bus.Close()
 		return nil, nil, err
 	}
 	return distributedMastermindRunner{mastermind: mastermind}, bus.Close, nil
+}
+
+func discoverTaskStatusBackendsForMastermind(cfg runConfig, taskStatusBackends map[string]contracts.StorageBackend) map[string]contracts.StorageBackend {
+	if strings.TrimSpace(cfg.role) != agentRoleMaster || strings.TrimSpace(cfg.repoRoot) == "" {
+		return taskStatusBackends
+	}
+	if taskStatusBackends == nil {
+		taskStatusBackends = map[string]contracts.StorageBackend{}
+	}
+	model, err := newTrackerConfigService().LoadModel(cfg.repoRoot)
+	if err != nil {
+		return taskStatusBackends
+	}
+
+	profileNames := make([]string, 0, len(model.Profiles))
+	for name := range model.Profiles {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		profileNames = append(profileNames, name)
+	}
+	sort.Strings(profileNames)
+	for _, profileName := range profileNames {
+		profileDef, ok := model.Profiles[profileName]
+		if !ok {
+			continue
+		}
+		tracker, err := validateTrackerModel(profileName, profileDef.Tracker, cfg.rootID, os.Getenv)
+		if err != nil {
+			continue
+		}
+		backendID := strings.ToLower(strings.TrimSpace(tracker.Type))
+		if backendID == "" {
+			continue
+		}
+		if _, exists := taskStatusBackends[backendID]; exists {
+			continue
+		}
+
+		backend, err := buildStorageBackendForTracker(cfg.repoRoot, resolvedTrackerProfile{
+			Name:    profileName,
+			Tracker: tracker,
+		})
+		if err != nil {
+			continue
+		}
+		taskStatusBackends[backendID] = backend
+	}
+
+	return taskStatusBackends
+}
+
+func toTaskStatusWriterMap(backends map[string]contracts.StorageBackend) map[string]distributed.TaskStatusWriter {
+	if len(backends) == 0 {
+		return nil
+	}
+	out := make(map[string]distributed.TaskStatusWriter, len(backends))
+	for backendID, backend := range backends {
+		out[backendID] = backend
+	}
+	return out
 }
 
 func runDistributedExecutor(ctx context.Context, cfg runConfig) error {
