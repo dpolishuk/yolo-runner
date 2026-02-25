@@ -1028,6 +1028,144 @@ func TestLoopBlocksTaskBelowQualityThreshold(t *testing.T) {
 	}
 }
 
+func TestLoopQualityGateTaskValidatorAllowsGoodTask(t *testing.T) {
+	mgr := newFakeTaskManager(contracts.Task{
+		ID:    "t-1",
+		Title: "Implement quality gate validation for dependency graph",
+		Status: contracts.TaskStatusOpen,
+		Description: `# Description
+Task improves quality checks by making task validation deterministic and auditable before execution.
+
+## Acceptance Criteria
+- Given a task has clear requirements, when the validator runs, then quality score is at least 70.
+- Given a task references dependencies, when dependency IDs are provided, then dependency validation runs.
+
+## Deliverables
+- internal/agent/loop.go
+
+## Testing Plan
+- go test ./internal/task_quality -run TestAssessTaskQuality
+
+## Definition of Done
+- Tests validate quality-gate behavior.
+
+## Dependencies and Context
+- None.
+`,
+		Metadata: map[string]string{
+			"dependencies": "",
+		},
+	})
+	run := &fakeRunner{results: []contracts.RunnerResult{{Status: contracts.RunnerResultCompleted}}}
+	loop := NewLoop(mgr, run, nil, LoopOptions{
+		ParentID:          "root",
+		QualityGateTools:  []string{"task_validator"},
+		MaxRetries:        0,
+	})
+
+	summary, err := loop.Run(context.Background())
+	if err != nil {
+		t.Fatalf("loop failed: %v", err)
+	}
+	if summary.Completed != 1 {
+		t.Fatalf("expected completed summary, got %#v", summary)
+	}
+	if mgr.statusByID["t-1"] != contracts.TaskStatusClosed {
+		t.Fatalf("expected task to close, got %s", mgr.statusByID["t-1"])
+	}
+	if len(run.requests) != 1 {
+		t.Fatalf("expected implementation request after quality gate passes, got %d", len(run.requests))
+	}
+}
+
+func TestLoopQualityGateTaskValidatorBlocksVagueTask(t *testing.T) {
+	mgr := newFakeTaskManager(contracts.Task{
+		ID:          "t-1",
+		Title:       "Improve",
+		Status:      contracts.TaskStatusOpen,
+		Description: "Maybe we should make it better and consider some ideas. maybe consider.",
+	})
+	run := &fakeRunner{results: []contracts.RunnerResult{{Status: contracts.RunnerResultCompleted}}}
+	loop := NewLoop(mgr, run, nil, LoopOptions{
+		ParentID:         "root",
+		QualityGateTools: []string{"task_validator"},
+	})
+
+	summary, err := loop.Run(context.Background())
+	if err != nil {
+		t.Fatalf("loop failed: %v", err)
+	}
+	if summary.Blocked != 1 {
+		t.Fatalf("expected blocked summary, got %#v", summary)
+	}
+	if mgr.statusByID["t-1"] != contracts.TaskStatusBlocked {
+		t.Fatalf("expected task blocked, got %s", mgr.statusByID["t-1"])
+	}
+	if got := mgr.dataByID["t-1"]["triage_reason"]; !strings.Contains(got, "below threshold 70") {
+		t.Fatalf("expected triage_reason to mention below threshold, got %q", got)
+	}
+	if len(run.requests) != 0 {
+		t.Fatalf("expected no runner requests for blocked task, got %d", len(run.requests))
+	}
+}
+
+func TestLoopQualityGateDependencyCheckerRejectsUnresolvableDependencies(t *testing.T) {
+	mgr := newFakeTaskManager(contracts.Task{
+		ID:          "t-1",
+		Title:       "Task with unresolved dependencies",
+		Status:      contracts.TaskStatusOpen,
+		Description: "This task validates unresolved dependency reporting.",
+		Metadata: map[string]string{
+			"dependencies": "dep-available, missing-a, missing-b",
+		},
+	})
+	run := &fakeRunner{results: []contracts.RunnerResult{{Status: contracts.RunnerResultCompleted}}}
+	loop := NewLoop(mgr, run, nil, LoopOptions{
+		ParentID:         "root",
+		QualityGateTools: []string{"dependency_checker"},
+	})
+
+	summary, err := loop.Run(context.Background())
+	if err != nil {
+		t.Fatalf("loop failed: %v", err)
+	}
+	if summary.Blocked != 1 {
+		t.Fatalf("expected blocked summary, got %#v", summary)
+	}
+	if mgr.statusByID["t-1"] != contracts.TaskStatusBlocked {
+		t.Fatalf("expected task blocked, got %s", mgr.statusByID["t-1"])
+	}
+	if got := mgr.dataByID["t-1"]["triage_reason"]; !strings.Contains(got, "below threshold 70") {
+		t.Fatalf("expected triage_reason to mention quality threshold, got %q", got)
+	}
+	if !strings.Contains(mgr.dataByID["t-1"]["quality_issues"], "dependency not resolvable: missing-a") {
+		t.Fatalf("expected missing dependency issue, got %q", mgr.dataByID["t-1"]["quality_issues"])
+	}
+	if len(run.requests) != 0 {
+		t.Fatalf("expected no runner requests for dependency failure, got %d", len(run.requests))
+	}
+}
+
+func TestLoopQualityGateRejectsUnknownTool(t *testing.T) {
+	mgr := newFakeTaskManager(contracts.Task{
+		ID:    "t-1",
+		Title: "Unknown quality tool",
+		Status: contracts.TaskStatusOpen,
+	})
+	loop := NewLoop(mgr, &fakeRunner{}, nil, LoopOptions{
+		ParentID:         "root",
+		QualityGateTools: []string{"not-a-tool"},
+	})
+
+	_, err := loop.Run(context.Background())
+	if err == nil {
+		t.Fatalf("expected run error for unsupported quality gate tool")
+	}
+	if !strings.Contains(err.Error(), "unsupported quality gate tool") {
+		t.Fatalf("expected unsupported tool error, got %q", err)
+	}
+}
+
 func TestLoopBlocksTaskBelowCoverageThreshold(t *testing.T) {
 	mgr := newFakeTaskManager(contracts.Task{
 		ID: "t-1", Title: "Task 1", Status: contracts.TaskStatusOpen,

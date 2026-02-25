@@ -88,6 +88,34 @@ func TestRunMainParsesQualityGateFlagsAndOverride(t *testing.T) {
 	}
 }
 
+func TestRunMainParsesQualityGateTools(t *testing.T) {
+	called := false
+	var got runConfig
+	run := func(_ context.Context, cfg runConfig) error {
+		called = true
+		got = cfg
+		return nil
+	}
+
+	code := RunMain([]string{
+		"--repo", "/repo",
+		"--root", "root-1",
+		"--quality-gate-tools", "task_validator,dependency_checker",
+	}, run)
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d", code)
+	}
+	if !called {
+		t.Fatalf("expected run function to be called")
+	}
+	if len(got.qualityGateTools) != 2 {
+		t.Fatalf("expected two quality gate tools, got %#v", got.qualityGateTools)
+	}
+	if got.qualityGateTools[0] != "task_validator" || got.qualityGateTools[1] != "dependency_checker" {
+		t.Fatalf("unexpected quality gate tools ordering/values: %#v", got.qualityGateTools)
+	}
+}
+
 func TestRunMainRoutesConfigValidateSubcommand(t *testing.T) {
 	originalValidate := runConfigValidateCommand
 	t.Cleanup(func() {

@@ -2,6 +2,7 @@ package taskquality
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 )
 
@@ -19,6 +20,8 @@ type Assessment struct {
 	Score  int
 	Issues []string
 }
+
+var vagueLanguagePattern = regexp.MustCompile(`(?:^|[\s\W])(maybe|consider)(?:[\s\W]|$)`)
 
 type CoverageReport struct {
 	TotalCases    int
@@ -94,6 +97,16 @@ func clarityScore(task TaskInput, issues *[]string) int {
 		*issues = append(*issues, "clarity: avoid vague wording")
 	}
 
+	if len(strings.TrimSpace(task.Description)) > 50 {
+		passed++
+	} else {
+		*issues = append(*issues, "clarity: description should be at least 50 characters")
+	}
+
+	if hasVagueLanguage(task.Description) || hasVagueLanguage(task.Title) {
+		*issues = append(*issues, "clarity: avoid vague wording")
+	}
+
 	if hasGivenWhenThen(task.AcceptanceCriteria) {
 		passed++
 	} else {
@@ -130,6 +143,10 @@ func clarityScore(task TaskInput, issues *[]string) int {
 		score += 2
 	}
 	return score
+}
+
+func hasVagueLanguage(text string) bool {
+	return vagueLanguagePattern.MatchString(strings.ToLower(strings.TrimSpace(text)))
 }
 
 func acceptanceCoverageScore(task TaskInput, issues *[]string) int {

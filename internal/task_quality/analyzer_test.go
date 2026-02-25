@@ -153,6 +153,30 @@ func TestAssessTaskQuality_IncludesMissingCasesInQualityIssues(t *testing.T) {
 	}
 }
 
+func TestAssessTaskQuality_RejectsShortDescriptionsAndVagueLanguage(t *testing.T) {
+	task := TaskInput{
+		Title:               "Improve workflow",
+		Description:         "Maybe we should maybe consider this later.",
+		AcceptanceCriteria: "- Given a request, when handled, then output is returned.",
+		Deliverables:       "- Updated docs.",
+		TestingPlan:         "- go test ./internal/task_quality -run TestAssessTaskQuality",
+		DefinitionOfDone:    "- Evidence exists.",
+		DependenciesContext: "- Existing acceptance framework.",
+	}
+
+	result := AssessTaskQuality(task)
+	if result.Score >= 80 {
+		t.Fatalf("expected low quality score for short/vague task, got %d", result.Score)
+	}
+	issues := joinIssues(result.Issues)
+	if !contains(issues, "description should be at least 50 characters") {
+		t.Fatalf("expected short description issue, got %q", issues)
+	}
+	if !contains(issues, "clarity: avoid vague wording") {
+		t.Fatalf("expected vague language issue, got %q", issues)
+	}
+}
+
 func TestAssessTaskQuality_ScoreIsBoundedToHundred(t *testing.T) {
 	task := TaskInput{
 		Title:       "Implement deterministic task quality scoring in analyzer",
