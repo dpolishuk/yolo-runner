@@ -290,6 +290,100 @@ func TestRunMainUsesProfileDefaultBackendWhenBackendFlagsAreUnset(t *testing.T) 
 	}
 }
 
+func TestRunMainLoadsBackendDefinitionFromCustomCatalog(t *testing.T) {
+	repoRoot := t.TempDir()
+	catalogDir := filepath.Join(repoRoot, ".yolo-runner", "coding-agents")
+	if err := os.MkdirAll(catalogDir, 0o755); err != nil {
+		t.Fatalf("create custom catalog dir: %v", err)
+	}
+	customPath := filepath.Join(catalogDir, "custom-cli.yaml")
+	if err := os.WriteFile(customPath, []byte(`
+name: custom
+adapter: command
+binary: /usr/bin/custom-cli
+args:
+  - --prompt
+  - "{{prompt}}"
+supports_review: true
+supports_stream: true
+required_credentials:
+  - CUSTOM_AGENT_TOKEN
+supported_models:
+  - custom-*
+`), 0o644); err != nil {
+		t.Fatalf("write custom backend definition: %v", err)
+	}
+	t.Setenv("CUSTOM_AGENT_TOKEN", "custom-token")
+
+	called := false
+	var got runConfig
+	run := func(_ context.Context, cfg runConfig) error {
+		called = true
+		got = cfg
+		return nil
+	}
+
+	code := RunMain([]string{
+		"--repo", repoRoot,
+		"--root", "root-1",
+		"--agent-backend", "custom",
+		"--model", "custom-model",
+	}, run)
+	if code != 0 {
+		t.Fatalf("expected exit code 0 for catalog-defined backend, got %d", code)
+	}
+	if !called {
+		t.Fatalf("expected run function to be called")
+	}
+	if got.backend != "custom" {
+		t.Fatalf("expected backend=%q, got %q", "custom", got.backend)
+	}
+}
+
+func TestRunMainRejectsCatalogBackendWithMissingCredentials(t *testing.T) {
+	repoRoot := t.TempDir()
+	catalogDir := filepath.Join(repoRoot, ".yolo-runner", "coding-agents")
+	if err := os.MkdirAll(catalogDir, 0o755); err != nil {
+		t.Fatalf("create custom catalog dir: %v", err)
+	}
+	customPath := filepath.Join(catalogDir, "custom-cli.yaml")
+	if err := os.WriteFile(customPath, []byte(`
+name: custom
+adapter: command
+binary: /usr/bin/custom-cli
+args:
+  - --prompt
+  - "{{prompt}}"
+supports_review: true
+supports_stream: true
+required_credentials:
+  - CUSTOM_AGENT_TOKEN
+`), 0o644); err != nil {
+		t.Fatalf("write custom backend definition: %v", err)
+	}
+
+	called := false
+	stderrText := captureStderr(t, func() {
+		code := RunMain([]string{
+			"--repo", repoRoot,
+			"--root", "root-1",
+			"--agent-backend", "custom",
+		}, func(context.Context, runConfig) error {
+			called = true
+			return nil
+		})
+		if code != 1 {
+			t.Fatalf("expected exit code 1 for missing credential, got %d", code)
+		}
+	})
+	if called {
+		t.Fatalf("expected run function not to be called when backend validation fails")
+	}
+	if !strings.Contains(stderrText, "missing auth token from CUSTOM_AGENT_TOKEN") {
+		t.Fatalf("expected missing credential validation error, got %q", stderrText)
+	}
+}
+
 func TestRunMainUsesModeFromConfigWhenModeFlagUnset(t *testing.T) {
 	repoRoot := t.TempDir()
 	writeTrackerConfigYAML(t, repoRoot, `
@@ -550,6 +644,28 @@ func TestRunMainAcceptsKimiBackend(t *testing.T) {
 	}
 	if got.backend != backendKimi {
 		t.Fatalf("expected backend=%q, got %q", backendKimi, got.backend)
+	}
+}
+
+func TestRunMainAcceptsGeminiBackend(t *testing.T) {
+	t.Setenv("GEMINI_API_KEY", "token")
+	called := false
+	var got runConfig
+	run := func(_ context.Context, cfg runConfig) error {
+		called = true
+		got = cfg
+		return nil
+	}
+
+	code := RunMain([]string{"--repo", "/repo", "--root", "root-1", "--backend", "gemini", "--model", "gemini-flash"}, run)
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d", code)
+	}
+	if !called {
+		t.Fatalf("expected run function to be called")
+	}
+	if got.backend != backendGemini {
+		t.Fatalf("expected backend=%q, got %q", backendGemini, got.backend)
 	}
 }
 

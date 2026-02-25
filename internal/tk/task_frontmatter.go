@@ -18,7 +18,6 @@ type TicketFrontmatterConfig struct {
 	Timeout    time.Duration
 }
 
-var ticketFrontmatterSupportedBackends = []string{"opencode", "codex", "claude", "kimi"}
 var ticketFrontmatterSupportedModes = []string{"implement", "review"}
 
 func ParseTicketFrontmatterConfig(raw string) (TicketFrontmatterConfig, error) {
@@ -52,11 +51,10 @@ func ParseTicketFrontmatterConfig(raw string) (TicketFrontmatterConfig, error) {
 			issues = append(issues, "backend must be a string")
 		} else {
 			value = strings.ToLower(strings.TrimSpace(value))
-			if !contains(ticketFrontmatterSupportedBackends, value) {
-				issues = append(issues, "backend must be one of: "+strings.Join(ticketFrontmatterSupportedBackends, ", "))
-			} else {
-				config.Backend = value
+			if value == "" {
+				issues = append(issues, "backend must be a non-empty string")
 			}
+			config.Backend = value
 		}
 	}
 
