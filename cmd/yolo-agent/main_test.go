@@ -9,10 +9,12 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/egv/yolo-runner/v2/internal/contracts"
+	"github.com/egv/yolo-runner/v2/internal/distributed"
 	"github.com/egv/yolo-runner/v2/internal/linear"
 )
 
@@ -605,6 +607,230 @@ func TestRunMainParsesStreamFlag(t *testing.T) {
 	}
 }
 
+func TestRunMainParsesDistributedExecutorRoleAndConfig(t *testing.T) {
+	tempDir := t.TempDir()
+	called := false
+	var got runConfig
+	run := func(_ context.Context, cfg runConfig) error {
+		called = true
+		got = cfg
+		return nil
+	}
+
+	code := RunMain([]string{
+		"--repo", tempDir,
+		"--role", agentRoleWorker,
+		"--distributed-bus-backend", distributedBusNATS,
+		"--distributed-bus-address", "nats://localhost:4222",
+		"--distributed-bus-prefix", "team",
+		"--distributed-executor-id", "executor-42",
+		"--distributed-executor-capabilities", "implement,review,service_proxy",
+		"--distributed-heartbeat-interval", "7s",
+		"--distributed-request-timeout", "31s",
+		"--distributed-registry-ttl", "40s",
+	}, run)
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d", code)
+	}
+	if !called {
+		t.Fatalf("expected run function to be called")
+	}
+	if got.role != agentRoleWorker {
+		t.Fatalf("expected role=%q, got %q", agentRoleWorker, got.role)
+	}
+	if got.distributedBusBackend != distributedBusNATS {
+		t.Fatalf("expected distributed bus backend %q, got %q", distributedBusNATS, got.distributedBusBackend)
+	}
+	if got.distributedBusAddress != "nats://localhost:4222" {
+		t.Fatalf("unexpected distributed bus address %q", got.distributedBusAddress)
+	}
+	if got.distributedBusPrefix != "team" {
+		t.Fatalf("expected prefix team, got %q", got.distributedBusPrefix)
+	}
+	if got.distributedRoleID != "executor-42" {
+		t.Fatalf("unexpected executor id %q", got.distributedRoleID)
+	}
+	if got.distributedHeartbeatInterval != 7*time.Second {
+		t.Fatalf("expected heartbeat 7s, got %s", got.distributedHeartbeatInterval)
+	}
+	if got.distributedRequestTimeout != 31*time.Second {
+		t.Fatalf("expected request timeout 31s, got %s", got.distributedRequestTimeout)
+	}
+	if got.distributedRegistryTTL != 40*time.Second {
+		t.Fatalf("expected registry TTL 40s, got %s", got.distributedRegistryTTL)
+	}
+	if !reflect.DeepEqual(got.distributedExecutorCapabilities, []distributed.Capability{distributed.CapabilityImplement, distributed.CapabilityReview, distributed.CapabilityServiceProxy}) {
+		t.Fatalf("unexpected capabilities: %#v", got.distributedExecutorCapabilities)
+	}
+}
+
+func TestMaybeWrapWithMastermindProvidesServiceHandlerToExecuteRequests(t *testing.T) {
+	originalBusFactory := newDistributedBus
+	t.Cleanup(func() {
+		newDistributedBus = originalBusFactory
+	})
+
+	bus := distributed.NewMemoryBus()
+	newDistributedBus = func(_ string, _ string) (distributed.Bus, error) {
+		return bus, nil
+	}
+
+	serviceRunner := &serviceTrackingRunner{
+		result: contracts.RunnerResult{
+			Status:    contracts.RunnerResultCompleted,
+			Artifacts: map[string]string{"local": "service"},
+		},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	wrappedRunner, closeDistributed, err := maybeWrapWithMastermind(ctx, runConfig{
+		role:                 agentRoleMaster,
+		distributedBusPrefix: "unit",
+	}, serviceRunner)
+	if err != nil {
+		t.Fatalf("expected mastermind setup to succeed, got %v", err)
+	}
+	if closeDistributed == nil {
+		t.Fatalf("expected close callback for mastermind wrapper")
+	}
+	t.Cleanup(func() {
+		_ = closeDistributed()
+	})
+
+	mm, ok := wrappedRunner.(distributedMastermindRunner)
+	if !ok {
+		t.Fatalf("expected wrapped runner to be distributed mastermind runner, got %T", wrappedRunner)
+	}
+	if err := mm.mastermind.Start(ctx); err != nil {
+		t.Fatalf("start mastermind: %v", err)
+	}
+
+	executor := distributed.NewExecutorWorker(distributed.ExecutorWorkerOptions{
+		ID:           "executor",
+		Bus:          bus,
+		Runner:       serviceRunner,
+		Subjects:     distributed.DefaultEventSubjects("unit"),
+		Capabilities: []distributed.Capability{distributed.CapabilityReview},
+	})
+	go func() {
+		_ = executor.Start(ctx)
+	}()
+
+	time.Sleep(20 * time.Millisecond)
+
+	response, err := executor.RequestService(ctx, distributed.ServiceRequestPayload{
+		TaskID:  "task-1",
+		Service: "review-with-larger-model",
+		Metadata: map[string]string{
+			"prompt":    "Please review the change",
+			"parent_id": "parent-1",
+			"repo_root": "/workspace",
+			"timeout":   "500ms",
+			"model":     "larger",
+		},
+	})
+	if err != nil {
+		t.Fatalf("executor RequestService failed: %v", err)
+	}
+	if response.Artifacts["service"] != "review-with-larger-model" {
+		t.Fatalf("expected service artifact %q, got %q", "review-with-larger-model", response.Artifacts["service"])
+	}
+	if response.Artifacts["mode"] != string(contracts.RunnerModeReview) {
+		t.Fatalf("expected mode artifact %q, got %q", contracts.RunnerModeReview, response.Artifacts["mode"])
+	}
+
+	req, ok := serviceRunner.lastRequest()
+	if !ok {
+		t.Fatalf("expected local runner request")
+	}
+	if req.ParentID != "parent-1" {
+		t.Fatalf("expected parent_id %q, got %q", "parent-1", req.ParentID)
+	}
+	if req.TaskID != "task-1" {
+		t.Fatalf("expected task_id %q, got %q", "task-1", req.TaskID)
+	}
+	if req.Mode != contracts.RunnerModeReview {
+		t.Fatalf("expected runner mode %q, got %q", contracts.RunnerModeReview, req.Mode)
+	}
+	if req.Model != "larger" {
+		t.Fatalf("expected model %q, got %q", "larger", req.Model)
+	}
+	if req.RepoRoot != "/workspace" {
+		t.Fatalf("expected repo_root %q, got %q", "/workspace", req.RepoRoot)
+	}
+	if req.Timeout != 500*time.Millisecond {
+		t.Fatalf("expected timeout %s, got %s", 500*time.Millisecond, req.Timeout)
+	}
+}
+
+func TestMaybeWrapWithMastermindRejectsUnsupportedServiceNames(t *testing.T) {
+	originalBusFactory := newDistributedBus
+	t.Cleanup(func() {
+		newDistributedBus = originalBusFactory
+	})
+
+	bus := distributed.NewMemoryBus()
+	newDistributedBus = func(_ string, _ string) (distributed.Bus, error) {
+		return bus, nil
+	}
+
+	serviceRunner := &serviceTrackingRunner{result: contracts.RunnerResult{Status: contracts.RunnerResultCompleted}}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	wrappedRunner, closeDistributed, err := maybeWrapWithMastermind(ctx, runConfig{
+		role:                 agentRoleMaster,
+		distributedBusPrefix: "unit",
+	}, serviceRunner)
+	if err != nil {
+		t.Fatalf("expected mastermind setup to succeed, got %v", err)
+	}
+	t.Cleanup(func() {
+		_ = closeDistributed()
+	})
+
+	mm, ok := wrappedRunner.(distributedMastermindRunner)
+	if !ok {
+		t.Fatalf("expected wrapped runner to be distributed mastermind runner, got %T", wrappedRunner)
+	}
+	if err := mm.mastermind.Start(ctx); err != nil {
+		t.Fatalf("start mastermind: %v", err)
+	}
+
+	executor := distributed.NewExecutorWorker(distributed.ExecutorWorkerOptions{
+		ID:           "executor",
+		Bus:          bus,
+		Runner:       serviceRunner,
+		Subjects:     distributed.DefaultEventSubjects("unit"),
+		Capabilities: []distributed.Capability{distributed.CapabilityReview},
+	})
+	go func() {
+		_ = executor.Start(ctx)
+	}()
+
+	time.Sleep(20 * time.Millisecond)
+
+	_, err = executor.RequestService(ctx, distributed.ServiceRequestPayload{
+		TaskID:   "task-2",
+		Service:  "unsupported-service",
+		Metadata: map[string]string{"prompt": "noop"},
+	})
+	if err == nil {
+		t.Fatalf("expected unsupported service request to fail")
+	}
+}
+
+func TestRunMainRejectsInvalidDistributedRole(t *testing.T) {
+	code := RunMain([]string{"--repo", t.TempDir(), "--role", "unknown"}, func(context.Context, runConfig) error {
+		t.Fatalf("run function should not be called")
+		return nil
+	})
+	if code != 1 {
+		t.Fatalf("expected exit code 1, got %d", code)
+	}
+}
+
 func TestRunMainParsesModeFlag(t *testing.T) {
 	repoRoot := t.TempDir()
 	writeTrackerConfigYAML(t, repoRoot, `
@@ -1128,6 +1354,29 @@ type testRunner struct{}
 
 func (testRunner) Run(context.Context, contracts.RunnerRequest) (contracts.RunnerResult, error) {
 	return contracts.RunnerResult{Status: contracts.RunnerResultCompleted}, nil
+}
+
+type serviceTrackingRunner struct {
+	mu       sync.Mutex
+	result   contracts.RunnerResult
+	err      error
+	requests []contracts.RunnerRequest
+}
+
+func (r *serviceTrackingRunner) Run(_ context.Context, req contracts.RunnerRequest) (contracts.RunnerResult, error) {
+	r.mu.Lock()
+	r.requests = append(r.requests, req)
+	r.mu.Unlock()
+	return r.result, r.err
+}
+
+func (r *serviceTrackingRunner) lastRequest() (contracts.RunnerRequest, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.requests) == 0 {
+		return contracts.RunnerRequest{}, false
+	}
+	return r.requests[len(r.requests)-1], true
 }
 
 type progressRunner struct {
