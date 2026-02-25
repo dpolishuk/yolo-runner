@@ -3,6 +3,7 @@ package agent
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -1030,8 +1031,8 @@ func TestLoopBlocksTaskBelowQualityThreshold(t *testing.T) {
 
 func TestLoopQualityGateTaskValidatorAllowsGoodTask(t *testing.T) {
 	mgr := newFakeTaskManager(contracts.Task{
-		ID:    "t-1",
-		Title: "Implement quality gate validation for dependency graph",
+		ID:     "t-1",
+		Title:  "Implement quality gate validation for dependency graph",
 		Status: contracts.TaskStatusOpen,
 		Description: `# Description
 Task improves quality checks by making task validation deterministic and auditable before execution.
@@ -1058,9 +1059,9 @@ Task improves quality checks by making task validation deterministic and auditab
 	})
 	run := &fakeRunner{results: []contracts.RunnerResult{{Status: contracts.RunnerResultCompleted}}}
 	loop := NewLoop(mgr, run, nil, LoopOptions{
-		ParentID:          "root",
-		QualityGateTools:  []string{"task_validator"},
-		MaxRetries:        0,
+		ParentID:         "root",
+		QualityGateTools: []string{"task_validator"},
+		MaxRetries:       0,
 	})
 
 	summary, err := loop.Run(context.Background())
@@ -1148,8 +1149,8 @@ func TestLoopQualityGateDependencyCheckerRejectsUnresolvableDependencies(t *test
 
 func TestLoopQualityGateRejectsUnknownTool(t *testing.T) {
 	mgr := newFakeTaskManager(contracts.Task{
-		ID:    "t-1",
-		Title: "Unknown quality tool",
+		ID:     "t-1",
+		Title:  "Unknown quality tool",
 		Status: contracts.TaskStatusOpen,
 	})
 	loop := NewLoop(mgr, &fakeRunner{}, nil, LoopOptions{
@@ -1163,6 +1164,534 @@ func TestLoopQualityGateRejectsUnknownTool(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "unsupported quality gate tool") {
 		t.Fatalf("expected unsupported tool error, got %q", err)
+	}
+}
+
+func TestRunQCTestSuiteValidationPassesForPassingTests(t *testing.T) {
+	repoRoot := createQCGateTestRepo(t, map[string]string{
+		"go.mod": `module qc-gate-test
+
+go 1.22
+`,
+		"main.go": `package main
+
+func Sum(a, b int) int {
+\treturn a + b
+}
+`,
+		"main_test.go": `package main
+
+import "testing"
+
+func TestSum(t *testing.T) {
+\tif Sum(2, 3) != 5 {
+\t\tt.Fatalf("unexpected sum: %d", Sum(2, 3))
+\t}
+}
+`,
+	})
+	loop := NewLoop(newFakeTaskManager(contracts.Task{ID: "t-1", Status: contracts.TaskStatusOpen}), &fakeRunner{}, nil, LoopOptions{})
+
+	result := loop.runQCTestSuiteValidation(context.Background(), repoRoot)
+	if result.Tool != qcGateToolTestRunner {
+		t.Fatalf("expected tool=%q, got %q", qcGateToolTestRunner, result.Tool)
+	}
+	if result.Status != "passed" {
+		t.Fatalf("expected passed status, got %q (reason=%q)", result.Status, result.Reason)
+	}
+	if !result.Passed {
+		t.Fatalf("expected test suite validation to pass: %v", result)
+	}
+	if result.Critical {
+		t.Fatalf("did not expect critical error for passing test suite: %v", result)
+	}
+	if result.Value != "passed" {
+		t.Fatalf("expected value=passed, got %q", result.Value)
+	}
+}
+
+func TestRunQCTestSuiteValidationFailsForFailingTests(t *testing.T) {
+	repoRoot := createQCGateTestRepo(t, map[string]string{
+		"go.mod": `module qc-gate-test
+
+go 1.22
+`,
+		"main.go": `package main
+
+func IsValid(value int) bool {
+\treturn value > 0
+}
+`,
+		"main_test.go": `package main
+
+import "testing"
+
+func TestIsValid(t *testing.T) {
+\tif !IsValid(0) {
+\t\tt.Fatalf("expected passing when zero considered valid")
+\t}
+}
+`,
+	})
+	loop := NewLoop(newFakeTaskManager(contracts.Task{ID: "t-1", Status: contracts.TaskStatusOpen}), &fakeRunner{}, nil, LoopOptions{})
+
+	result := loop.runQCTestSuiteValidation(context.Background(), repoRoot)
+	if result.Tool != qcGateToolTestRunner {
+		t.Fatalf("expected tool=%q, got %q", qcGateToolTestRunner, result.Tool)
+	}
+	if result.Status != "failed" {
+		t.Fatalf("expected failed status for failing tests, got %q", result.Status)
+	}
+	if result.Passed {
+		t.Fatalf("expected failing test suite validation to not pass: %v", result)
+	}
+	if result.Critical {
+		t.Fatalf("did not expect critical error for failed tests: %v", result)
+	}
+	if strings.TrimSpace(result.Reason) == "" {
+		t.Fatalf("expected failure reason for failing test suite")
+	}
+}
+
+func TestRunQCLinterValidationPassesForLintCleanCode(t *testing.T) {
+	repoRoot := createQCGateTestRepo(t, map[string]string{
+		"go.mod": `module qc-gate-test
+
+go 1.22
+`,
+		"main.go": `package main
+
+import "fmt"
+
+func Format(value int) string {
+\treturn fmt.Sprintf("%d", value)
+}
+`,
+	})
+	loop := NewLoop(newFakeTaskManager(contracts.Task{ID: "t-1", Status: contracts.TaskStatusOpen}), &fakeRunner{}, nil, LoopOptions{})
+
+	result := loop.runQCLinterValidation(context.Background(), repoRoot)
+	if result.Tool != qcGateToolLinter {
+		t.Fatalf("expected tool=%q, got %q", qcGateToolLinter, result.Tool)
+	}
+	if result.Status != "passed" {
+		t.Fatalf("expected passed status, got %q (reason=%q)", result.Status, result.Reason)
+	}
+	if !result.Passed {
+		t.Fatalf("expected linter validation to pass: %v", result)
+	}
+	if result.Critical {
+		t.Fatalf("did not expect linter critical error on pass: %v", result)
+	}
+	if result.Value != "passed" {
+		t.Fatalf("expected value=passed, got %q", result.Value)
+	}
+}
+
+func TestRunQCLinterValidationFailsForVettingError(t *testing.T) {
+	repoRoot := createQCGateTestRepo(t, map[string]string{
+		"go.mod": `module qc-gate-test
+
+go 1.22
+`,
+		"main.go": `package main
+
+import "fmt"
+
+func Format(value int) string {
+\treturn fmt.Sprintf("%d", value)
+}
+`,
+		"bad.go": `package main
+
+import "fmt"
+
+func BadValue() string {
+\treturn fmt.Sprintf("%d", "bad")
+}
+`,
+	})
+	loop := NewLoop(newFakeTaskManager(contracts.Task{ID: "t-1", Status: contracts.TaskStatusOpen}), &fakeRunner{}, nil, LoopOptions{})
+
+	result := loop.runQCLinterValidation(context.Background(), repoRoot)
+	if result.Tool != qcGateToolLinter {
+		t.Fatalf("expected tool=%q, got %q", qcGateToolLinter, result.Tool)
+	}
+	if result.Status != "failed" {
+		t.Fatalf("expected failed status for linter warning, got %q", result.Status)
+	}
+	if result.Passed {
+		t.Fatalf("expected linter validation to fail: %v", result)
+	}
+	if result.Critical {
+		t.Fatalf("did not expect critical linter error for vet issue: %v", result)
+	}
+	if strings.TrimSpace(result.Reason) == "" {
+		t.Fatalf("expected failure reason for linter issue")
+	}
+}
+
+func TestRunQCCoverageValidationPassesWhenThresholdIsMet(t *testing.T) {
+	repoRoot := createQCGateTestRepo(t, map[string]string{
+		"go.mod": `module qc-gate-test
+
+go 1.22
+`,
+		"main.go": `package main
+
+func Covered() int {
+\treturn 1
+}
+
+func Uncovered() int {
+\treturn 2
+}
+`,
+		"main_test.go": `package main
+
+import "testing"
+
+func TestCovered(t *testing.T) {
+\tif Covered() != 1 {
+\t\tt.Fatalf("unexpected covered value: %d", Covered())
+\t}
+}
+`,
+	})
+	loop := NewLoop(newFakeTaskManager(contracts.Task{ID: "t-1", Status: contracts.TaskStatusOpen}), &fakeRunner{}, nil, LoopOptions{})
+
+	result := loop.runQCCoverageValidation(context.Background(), repoRoot, 40)
+	if result.Tool != qcGateToolCoverageChecker {
+		t.Fatalf("expected tool=%q, got %q", qcGateToolCoverageChecker, result.Tool)
+	}
+	if result.Status != "passed" {
+		t.Fatalf("expected passed status, got %q (reason=%q)", result.Status, result.Reason)
+	}
+	if !result.Passed {
+		t.Fatalf("expected coverage validation to pass at threshold: %v", result)
+	}
+	if result.Critical {
+		t.Fatalf("did not expect critical coverage check error on pass: %v", result)
+	}
+	if result.Value == "" || result.Threshold != 40 {
+		t.Fatalf("expected threshold and value to be populated: %#v", result)
+	}
+}
+
+func TestRunQCCoverageValidationFailsBelowThreshold(t *testing.T) {
+	repoRoot := createQCGateTestRepo(t, map[string]string{
+		"go.mod": `module qc-gate-test
+
+go 1.22
+`,
+		"main.go": `package main
+
+func Covered() int {
+\treturn 1
+}
+
+func Uncovered() int {
+\treturn 2
+}
+`,
+		"main_test.go": `package main
+
+import "testing"
+
+func TestCovered(t *testing.T) {
+\tif Covered() != 1 {
+\t\tt.Fatalf("unexpected covered value: %d", Covered())
+\t}
+}
+`,
+	})
+	loop := NewLoop(newFakeTaskManager(contracts.Task{ID: "t-1", Status: contracts.TaskStatusOpen}), &fakeRunner{}, nil, LoopOptions{})
+
+	result := loop.runQCCoverageValidation(context.Background(), repoRoot, 90)
+	if result.Tool != qcGateToolCoverageChecker {
+		t.Fatalf("expected tool=%q, got %q", qcGateToolCoverageChecker, result.Tool)
+	}
+	if result.Status != "failed" {
+		t.Fatalf("expected failed status below threshold, got %q", result.Status)
+	}
+	if result.Passed {
+		t.Fatalf("expected coverage validation to fail below threshold: %v", result)
+	}
+	if result.Critical {
+		t.Fatalf("did not expect critical coverage validation error: %v", result)
+	}
+	if !strings.Contains(result.Reason, "below threshold") {
+		t.Fatalf("expected below-threshold reason, got %q", result.Reason)
+	}
+}
+
+func TestRunQCGateReturnsInvalidToolError(t *testing.T) {
+	repoRoot := createQCGateTestRepo(t, map[string]string{
+		"go.mod": `module qc-gate-test
+
+go 1.22
+`,
+	})
+	mgr := newFakeTaskManager(contracts.Task{ID: "t-1", Status: contracts.TaskStatusOpen})
+	loop := NewLoop(mgr, &fakeRunner{}, nil, LoopOptions{
+		QCGateTools:   []string{"unknown-tool"},
+		RequireReview: true,
+		RepoRoot:      repoRoot,
+	})
+
+	_, err := loop.runQCGate(context.Background(), contracts.Task{ID: "t-1"}, contracts.RunnerResult{Status: contracts.RunnerResultCompleted}, "", 1, repoRoot)
+	if err == nil {
+		t.Fatalf("expected runQCGate to reject unknown QC tool")
+	}
+	if !strings.Contains(err.Error(), "unsupported quality control gate tool") {
+		t.Fatalf("expected unsupported tool error, got %q", err)
+	}
+}
+
+func TestRunQCGateBlocksTaskWhenReviewVerdictFails(t *testing.T) {
+	repoRoot := createQCGateTestRepo(t, map[string]string{
+		"go.mod": `module qc-gate-test
+
+go 1.22
+`,
+		"main.go": `package main
+
+func Value() int {
+\treturn 1
+}
+`,
+		"main_test.go": `package main
+
+import "testing"
+
+func TestValue(t *testing.T) {
+\tif Value() != 1 {
+\t\tt.Fatalf("unexpected value")
+\t}
+}
+`,
+	})
+	mgr := newFakeTaskManager(contracts.Task{
+		ID:     "t-1",
+		Status: contracts.TaskStatusOpen,
+		Title:  "QC Gate Review",
+	})
+	loop := NewLoop(mgr, &fakeRunner{}, nil, LoopOptions{
+		QCGateTools:   []string{qcGateToolTestRunner},
+		RequireReview: true,
+		RepoRoot:      repoRoot,
+	})
+	result := contracts.RunnerResult{
+		Status:      contracts.RunnerResultCompleted,
+		ReviewReady: true,
+		Artifacts: map[string]string{
+			"review_verdict":       "fail",
+			"review_fail_feedback": "review rejected by owner",
+		},
+	}
+
+	blocked, err := loop.runQCGate(context.Background(), contracts.Task{ID: "t-1", Title: "QC Gate Review"}, result, "worker", 1, repoRoot)
+	if err != nil {
+		t.Fatalf("expected runQCGate success with failure outcome, got %v", err)
+	}
+	if !blocked {
+		t.Fatalf("expected blocked status for failing review verdict")
+	}
+	reportJSON := mgr.dataByID["t-1"]["qc_gate_report"]
+	if strings.TrimSpace(reportJSON) == "" {
+		t.Fatalf("expected qc_gate_report to be written on block")
+	}
+	var report qcGateReport
+	if err := json.Unmarshal([]byte(reportJSON), &report); err != nil {
+		t.Fatalf("expected valid qc_gate_report json, got %q", reportJSON)
+	}
+	if report.Status != "failed" {
+		t.Fatalf("expected report status failed, got %q", report.Status)
+	}
+	if len(report.Tools) != 2 {
+		t.Fatalf("expected two validation outcomes including review, got %#v", report.Tools)
+	}
+	if got := mgr.dataByID["t-1"]["triage_reason"]; !strings.Contains(got, "review rejected") {
+		t.Fatalf("expected triage reason to include review feedback, got %q", got)
+	}
+}
+
+func TestRunQCGateChecksReviewWithoutQCTools(t *testing.T) {
+	repoRoot := createQCGateTestRepo(t, map[string]string{
+		"go.mod": `module qc-gate-test
+
+go 1.22
+`,
+		"main.go": `package main
+
+func Value() int {
+\treturn 1
+}
+`,
+		"main_test.go": `package main
+
+import "testing"
+
+func TestValue(t *testing.T) {
+\tif Value() != 1 {
+\t\tt.Fatalf("unexpected value")
+\t}
+}
+`,
+	})
+	mgr := newFakeTaskManager(contracts.Task{
+		ID:     "t-1",
+		Status: contracts.TaskStatusOpen,
+		Title:  "QC Review Gate",
+	})
+	loop := NewLoop(mgr, &fakeRunner{}, nil, LoopOptions{
+		RequireReview: true,
+		RepoRoot:      repoRoot,
+	})
+	result := contracts.RunnerResult{
+		Status:      contracts.RunnerResultCompleted,
+		ReviewReady: true,
+		Artifacts: map[string]string{
+			"review_verdict": "fail",
+		},
+	}
+
+	blocked, err := loop.runQCGate(context.Background(), contracts.Task{ID: "t-1", Title: "QC Review Gate"}, result, "worker", 1, repoRoot)
+	if err != nil {
+		t.Fatalf("expected runQCGate success with failure outcome, got %v", err)
+	}
+	if !blocked {
+		t.Fatalf("expected blocked status for failing review verdict without QC tools")
+	}
+	reportJSON := mgr.dataByID["t-1"]["qc_gate_report"]
+	if strings.TrimSpace(reportJSON) == "" {
+		t.Fatalf("expected qc_gate_report to be written on block")
+	}
+	var report qcGateReport
+	if err := json.Unmarshal([]byte(reportJSON), &report); err != nil {
+		t.Fatalf("expected valid qc_gate_report json, got %q", reportJSON)
+	}
+	if report.Status != "failed" {
+		t.Fatalf("expected report status failed, got %q", report.Status)
+	}
+	if len(report.Tools) != 1 {
+		t.Fatalf("expected one validation outcome for review approval, got %#v", report.Tools)
+	}
+	if got := mgr.dataByID["t-1"]["triage_reason"]; !strings.Contains(strings.ToLower(got), "review") {
+		t.Fatalf("expected triage reason to mention review verdict, got %q", got)
+	}
+}
+
+func TestRunQCReviewApprovalPassesForExplicitPassVerdict(t *testing.T) {
+	loop := NewLoop(newFakeTaskManager(contracts.Task{ID: "t-1", Status: contracts.TaskStatusOpen}), &fakeRunner{}, nil, LoopOptions{
+		RequireReview: true,
+	})
+	result := contracts.RunnerResult{
+		Status:      contracts.RunnerResultCompleted,
+		ReviewReady: true,
+		Artifacts: map[string]string{
+			"review_verdict": "pass",
+		},
+	}
+
+	outcome := loop.runQCReviewApproval(result)
+	if outcome.Tool != "review_approval" {
+		t.Fatalf("expected review_approval tool, got %q", outcome.Tool)
+	}
+	if outcome.Status != "passed" {
+		t.Fatalf("expected review approval status passed, got %q", outcome.Status)
+	}
+	if !outcome.Passed {
+		t.Fatalf("expected review approval outcome to pass")
+	}
+	if outcome.Critical {
+		t.Fatalf("did not expect critical error for review pass")
+	}
+	if outcome.Value != "pass" {
+		t.Fatalf("expected review approval value pass, got %q", outcome.Value)
+	}
+}
+
+func TestRunQCGateReturnsReportForPassingValidation(t *testing.T) {
+	repoRoot := createQCGateTestRepo(t, map[string]string{
+		"go.mod": `module qc-gate-test
+
+go 1.22
+`,
+		"main.go": `package main
+
+func Value() int {
+\treturn 1
+}
+`,
+		"main_test.go": `package main
+
+import "testing"
+
+func TestValue(t *testing.T) {
+\tif Value() != 1 {
+\t\tt.Fatalf("unexpected value")
+\t}
+}
+`,
+	})
+	mgr := newFakeTaskManager(contracts.Task{ID: "t-1", Status: contracts.TaskStatusOpen})
+	loop := NewLoop(mgr, &fakeRunner{}, nil, LoopOptions{
+		QCGateTools: []string{qcGateToolTestRunner},
+		RepoRoot:    repoRoot,
+	})
+	blocked, err := loop.runQCGate(context.Background(), contracts.Task{ID: "t-1"}, contracts.RunnerResult{Status: contracts.RunnerResultCompleted}, "", 1, repoRoot)
+	if err != nil {
+		t.Fatalf("runQCGate failed: %v", err)
+	}
+	if blocked {
+		t.Fatalf("expected passing qc gate to not block task")
+	}
+	reportJSON := mgr.dataByID["t-1"]["qc_gate_report"]
+	if strings.TrimSpace(reportJSON) == "" {
+		t.Fatalf("expected qc_gate_report to be set on passing qc gate")
+	}
+	var report qcGateReport
+	if err := json.Unmarshal([]byte(reportJSON), &report); err != nil {
+		t.Fatalf("expected valid qc gate report json, got %q", reportJSON)
+	}
+	if report.Status != "passed" {
+		t.Fatalf("expected report status passed, got %q", report.Status)
+	}
+	if len(report.Tools) == 0 || report.Tools[0].Tool != qcGateToolTestRunner {
+		t.Fatalf("expected test_runner entry in report tools, got %#v", report.Tools)
+	}
+}
+
+func TestRunQCGateFailsFastOnCriticalToolError(t *testing.T) {
+	repoRoot := createQCGateTestRepo(t, map[string]string{
+		"go.mod": `module qc-gate-test
+
+go 1.22
+`,
+		"main.go": `package main
+
+func Value() int {
+\treturn 1
+}
+`,
+	})
+	mgr := newFakeTaskManager(contracts.Task{ID: "t-1", Status: contracts.TaskStatusOpen})
+	loop := NewLoop(mgr, &fakeRunner{}, nil, LoopOptions{
+		QCGateTools: []string{qcGateToolTestRunner},
+		RepoRoot:    repoRoot,
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	blocked, err := loop.runQCGate(ctx, contracts.Task{ID: "t-1"}, contracts.RunnerResult{Status: contracts.RunnerResultCompleted}, "", 1, repoRoot)
+	if err == nil {
+		t.Fatalf("expected runQCGate to fail fast on critical validation error")
+	}
+	if blocked {
+		t.Fatalf("did not expect blocked=true when critical validation occurs")
+	}
+	if _, ok := mgr.dataByID["t-1"]["qc_gate_status"]; ok {
+		t.Fatalf("expected no qc_gate_status metadata when fail fast")
 	}
 }
 
@@ -1516,6 +2045,22 @@ func TestLoopReturnsErrorWhenCompletionCheckerReportsIncomplete(t *testing.T) {
 	if mgr.isCompleteCalls == 0 {
 		t.Fatalf("expected completion checker to be called")
 	}
+}
+
+func createQCGateTestRepo(t *testing.T, files map[string]string) string {
+	t.Helper()
+	repoRoot := t.TempDir()
+	for path, content := range files {
+		fullPath := filepath.Join(repoRoot, path)
+		if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
+			t.Fatalf("failed to create repository directory: %v", err)
+		}
+		normalizedContent := strings.ReplaceAll(content, "\\t", "\t")
+		if err := os.WriteFile(fullPath, []byte(normalizedContent), 0o644); err != nil {
+			t.Fatalf("failed to write test repo file %s: %v", path, err)
+		}
+	}
+	return repoRoot
 }
 
 type fakeTaskManager struct {

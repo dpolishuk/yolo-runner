@@ -15,9 +15,9 @@ import (
 	"time"
 
 	"github.com/egv/yolo-runner/v2/internal/agent"
-	"github.com/egv/yolo-runner/v2/internal/codingagents"
 	"github.com/egv/yolo-runner/v2/internal/claude"
 	"github.com/egv/yolo-runner/v2/internal/codex"
+	"github.com/egv/yolo-runner/v2/internal/codingagents"
 	"github.com/egv/yolo-runner/v2/internal/contracts"
 	"github.com/egv/yolo-runner/v2/internal/distributed"
 	"github.com/egv/yolo-runner/v2/internal/engine"
@@ -32,7 +32,7 @@ const (
 	backendCodex        = "codex"
 	backendClaude       = "claude"
 	backendKimi         = "kimi"
-	backendGemini        = "gemini"
+	backendGemini       = "gemini"
 	agentModeStream     = "stream"
 	agentModeUI         = "ui"
 	agentRoleLocal      = "local"
@@ -52,10 +52,11 @@ type runConfig struct {
 	backend                         string
 	profile                         string
 	trackerType                     string
-	model             string
-	qualityThreshold  int
-	qualityGateTools  []string
-	allowLowQuality   bool
+	model                           string
+	qualityThreshold                int
+	qualityGateTools                []string
+	qcGateTools                     []string
+	allowLowQuality                 bool
 	maxTasks                        int
 	retryBudget                     int
 	concurrency                     int
@@ -136,6 +137,7 @@ func RunMain(args []string, run func(context.Context, runConfig) error) int {
 	profile := fs.String("profile", "", "Tracker profile name from .yolo-runner/config.yaml")
 	qualityThreshold := fs.Int("quality-threshold", 0, "Minimum quality score required to run a task")
 	qualityGateTools := fs.String("quality-gate-tools", "", "Comma-separated quality tools to run in quality gate")
+	qcGateTools := fs.String("qc-gate-tools", "", "Comma-separated quality tools to run in quality-control gate")
 	allowLowQuality := fs.Bool("allow-low-quality", false, "Proceed with warning when quality score is below threshold")
 	max := fs.Int("max", 0, "Maximum tasks to execute")
 	concurrency := fs.Int("concurrency", 1, "Maximum number of active task workers")
@@ -275,6 +277,7 @@ func RunMain(args []string, run func(context.Context, runConfig) error) int {
 		return 1
 	}
 	selectedQualityGateTools := parseQualityGateTools(*qualityGateTools)
+	selectedQCGateTools := parseQualityGateTools(*qcGateTools)
 	if selectedWatchdogTimeout <= 0 {
 		fmt.Fprintln(os.Stderr, "--watchdog-timeout must be greater than 0")
 		return 1
@@ -353,6 +356,7 @@ func RunMain(args []string, run func(context.Context, runConfig) error) int {
 		streamOutputBuffer:              *streamOutputBuffer,
 		qualityThreshold:                *qualityThreshold,
 		qualityGateTools:                selectedQualityGateTools,
+		qcGateTools:                     selectedQCGateTools,
 		allowLowQuality:                 *allowLowQuality,
 		runnerTimeout:                   selectedRunnerTimeout,
 		watchdogTimeout:                 selectedWatchdogTimeout,
@@ -807,27 +811,28 @@ func runWithComponents(ctx context.Context, cfg runConfig, taskManager contracts
 	}
 	vcsFactory := cloneScopedVCSFactory(cfg, vcs)
 	loop := agent.NewLoop(taskManager, runner, eventSink, agent.LoopOptions{
-		ParentID:          cfg.rootID,
-		MaxRetries:        cfg.retryBudget,
-		MaxTasks:          cfg.maxTasks,
-		Concurrency:       cfg.concurrency,
+		ParentID:             cfg.rootID,
+		MaxRetries:           cfg.retryBudget,
+		MaxTasks:             cfg.maxTasks,
+		Concurrency:          cfg.concurrency,
 		QualityGateThreshold: cfg.qualityThreshold,
 		QualityGateTools:     cfg.qualityGateTools,
-		AllowLowQuality:   cfg.allowLowQuality,
-		SchedulerStatePath: filepath.Join(cfg.repoRoot, ".yolo-runner", "scheduler-state.json"),
-		DryRun:            cfg.dryRun,
-		RepoRoot:          cfg.repoRoot,
-		Backend:           cfg.backend,
-		Model:             cfg.model,
-		RunnerTimeout:     cfg.runnerTimeout,
-		WatchdogTimeout:   cfg.watchdogTimeout,
-		WatchdogInterval:  cfg.watchdogInterval,
-		TDDMode:           cfg.tddMode,
-		VCS:               vcs,
-		RequireReview:     true,
-		MergeOnSuccess:    true,
-		CloneManager:      agent.NewGitCloneManager(filepath.Join(cfg.repoRoot, ".yolo-runner", "clones")),
-		VCSFactory:        vcsFactory,
+		QCGateTools:          cfg.qcGateTools,
+		AllowLowQuality:      cfg.allowLowQuality,
+		SchedulerStatePath:   filepath.Join(cfg.repoRoot, ".yolo-runner", "scheduler-state.json"),
+		DryRun:               cfg.dryRun,
+		RepoRoot:             cfg.repoRoot,
+		Backend:              cfg.backend,
+		Model:                cfg.model,
+		RunnerTimeout:        cfg.runnerTimeout,
+		WatchdogTimeout:      cfg.watchdogTimeout,
+		WatchdogInterval:     cfg.watchdogInterval,
+		TDDMode:              cfg.tddMode,
+		VCS:                  vcs,
+		RequireReview:        true,
+		MergeOnSuccess:       true,
+		CloneManager:         agent.NewGitCloneManager(filepath.Join(cfg.repoRoot, ".yolo-runner", "clones")),
+		VCSFactory:           vcsFactory,
 	})
 	if eventSink != nil {
 		_ = eventSink.Emit(ctx, contracts.Event{
@@ -899,27 +904,28 @@ func runWithStorageComponents(ctx context.Context, cfg runConfig, storage contra
 	}
 	vcsFactory := cloneScopedVCSFactory(cfg, vcs)
 	loop := agent.NewLoopWithTaskEngine(storage, taskEngine, runner, eventSink, agent.LoopOptions{
-		ParentID:          cfg.rootID,
-		MaxRetries:        cfg.retryBudget,
-		MaxTasks:          cfg.maxTasks,
-		Concurrency:       cfg.concurrency,
+		ParentID:             cfg.rootID,
+		MaxRetries:           cfg.retryBudget,
+		MaxTasks:             cfg.maxTasks,
+		Concurrency:          cfg.concurrency,
 		QualityGateThreshold: cfg.qualityThreshold,
 		QualityGateTools:     cfg.qualityGateTools,
-		AllowLowQuality:   cfg.allowLowQuality,
-		SchedulerStatePath: filepath.Join(cfg.repoRoot, ".yolo-runner", "scheduler-state.json"),
-		DryRun:            cfg.dryRun,
-		RepoRoot:          cfg.repoRoot,
-		Backend:           cfg.backend,
-		Model:             cfg.model,
-		RunnerTimeout:     cfg.runnerTimeout,
-		WatchdogTimeout:   cfg.watchdogTimeout,
-		WatchdogInterval:  cfg.watchdogInterval,
-		TDDMode:           cfg.tddMode,
-		VCS:               vcs,
-		RequireReview:     true,
-		MergeOnSuccess:    true,
-		CloneManager:      agent.NewGitCloneManager(filepath.Join(cfg.repoRoot, ".yolo-runner", "clones")),
-		VCSFactory:        vcsFactory,
+		QCGateTools:          cfg.qcGateTools,
+		AllowLowQuality:      cfg.allowLowQuality,
+		SchedulerStatePath:   filepath.Join(cfg.repoRoot, ".yolo-runner", "scheduler-state.json"),
+		DryRun:               cfg.dryRun,
+		RepoRoot:             cfg.repoRoot,
+		Backend:              cfg.backend,
+		Model:                cfg.model,
+		RunnerTimeout:        cfg.runnerTimeout,
+		WatchdogTimeout:      cfg.watchdogTimeout,
+		WatchdogInterval:     cfg.watchdogInterval,
+		TDDMode:              cfg.tddMode,
+		VCS:                  vcs,
+		RequireReview:        true,
+		MergeOnSuccess:       true,
+		CloneManager:         agent.NewGitCloneManager(filepath.Join(cfg.repoRoot, ".yolo-runner", "clones")),
+		VCSFactory:           vcsFactory,
 	})
 	if eventSink != nil {
 		_ = eventSink.Emit(ctx, contracts.Event{
