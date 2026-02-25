@@ -26,7 +26,12 @@ func defaultRunConfigInitCommand(args []string) int {
 		fmt.Fprintf(os.Stderr, "unexpected arguments for config init: %s\n", strings.Join(fs.Args(), " "))
 		return 1
 	}
-	if err := writeStarterTrackerConfig(*repoRoot, *force); err != nil {
+	resolvedRepo, err := filepath.Abs(*repoRoot)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "cannot resolve --repo path %q: %v\n", *repoRoot, err)
+		return 1
+	}
+	if err := writeStarterTrackerConfig(resolvedRepo, *force); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}

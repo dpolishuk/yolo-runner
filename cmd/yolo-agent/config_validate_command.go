@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 )
@@ -55,13 +56,18 @@ func defaultRunConfigValidateCommand(args []string) int {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
+	resolvedRepo, err := filepath.Abs(*repo)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "cannot resolve --repo path %q: %v\n", *repo, err)
+		return 1
+	}
 
 	service := newTrackerConfigService()
-	model, err := service.LoadModel(*repo)
+	model, err := service.LoadModel(resolvedRepo)
 	if err != nil {
 		return reportInvalidConfig(err, format)
 	}
-	catalog, err := loadCodingAgentsCatalog(*repo)
+	catalog, err := loadCodingAgentsCatalog(resolvedRepo)
 	if err != nil {
 		return reportInvalidConfig(err, format)
 	}

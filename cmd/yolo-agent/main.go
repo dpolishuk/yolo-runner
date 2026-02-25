@@ -205,12 +205,17 @@ func RunMain(args []string, run func(context.Context, runConfig) error) int {
 		fmt.Fprintln(os.Stderr, "--root is required")
 		return 1
 	}
-	codingAgents, err := loadCodingAgentsCatalog(*repo)
+	resolvedRepo, err := filepath.Abs(*repo)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "cannot resolve --repo path %q: %v\n", *repo, err)
+		return 1
+	}
+	codingAgents, err := loadCodingAgentsCatalog(resolvedRepo)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
-	configDefaults, err := loadYoloAgentConfigDefaults(*repo)
+	configDefaults, err := loadYoloAgentConfigDefaults(resolvedRepo)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
@@ -356,7 +361,7 @@ func RunMain(args []string, run func(context.Context, runConfig) error) int {
 	}
 
 	if err := run(context.Background(), runConfig{
-		repoRoot:                        *repo,
+		repoRoot:                        resolvedRepo,
 		rootID:                          *root,
 		backend:                         selectedBackend,
 		profile:                         selectedProfile,
