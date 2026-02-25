@@ -653,6 +653,7 @@ After finishing a batch of tasks:
 
 ```bash
 # Close completed epics
+bd epic close-eligible
 tk epic close-eligible
 
 # Or for GitHub
