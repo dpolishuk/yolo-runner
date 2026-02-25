@@ -1,4 +1,25 @@
 name: codex
+type: codex
+backend: codex
+model: gpt-5.3-codex
+capabilities:
+  languages:
+    - go
+    - python
+    - typescript
+  features:
+    - implement
+    - review
+    - stream
+    - larger_model
+    - service_proxy
+config:
+  timeout: 45s
+health:
+  enabled: true
+  endpoint: http://localhost:0/healthz
+  interval: 5s
+  timeout: 2s
 adapter: codex
 supports_review: true
 supports_stream: true

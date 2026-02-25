@@ -1,4 +1,28 @@
 name: gemini
+type: command
+backend: gemini
+model: gemini-2.5-flash
+capabilities:
+  languages:
+    - go
+    - python
+    - nodejs
+  features:
+    - implement
+    - review
+    - larger_model
+config:
+  binary: gemini
+  args:
+    - exec
+    - --prompt
+    - "{{prompt}}"
+  timeout: 30s
+health:
+  enabled: true
+  command: "gemini --health"
+  interval: 5s
+  timeout: 2s
 adapter: command
 binary: gemini
 args:

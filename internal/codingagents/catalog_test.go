@@ -3,7 +3,10 @@ package codingagents
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/egv/yolo-runner/v2/internal/distributed"
 )
 
 func TestLoadCatalogIncludesBuiltinAndCustomBackendDefinitions(t *testing.T) {
@@ -82,5 +85,97 @@ supports_stream: true
 		return ""
 	}); err != nil {
 		t.Fatalf("expected backend usage validation to succeed with valid model and credential, got %v", err)
+	}
+}
+
+func containsStringSlice(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}
+
+func hasDistributedCapability(values []distributed.Capability, target distributed.Capability) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}
+
+func TestCatalogLoadsUnifiedBackendFieldsFromConfig(t *testing.T) {
+	repoRoot := t.TempDir()
+	customDir := filepath.Join(repoRoot, ".yolo-runner", "coding-agents")
+	if err := os.MkdirAll(customDir, 0o755); err != nil {
+		t.Fatalf("create custom backend directory: %v", err)
+	}
+
+	customPath := filepath.Join(customDir, "unified.yaml")
+	if err := os.WriteFile(customPath, []byte(`
+name: unified
+type: command
+backend: unified
+model: unified-v1
+capabilities:
+  languages:
+    - go
+  features:
+    - implement
+    - review
+    - service_proxy
+    - stream
+config:
+  binary: /usr/bin/unified
+  api_key_env: UNIFIED_API_TOKEN
+  args: ["--backend=unified"]
+  timeout: 10s
+`), 0o644); err != nil {
+		t.Fatalf("write unified backend definition: %v", err)
+	}
+
+	catalog, err := LoadCatalog(repoRoot)
+	if err != nil {
+		t.Fatalf("load catalog: %v", err)
+	}
+
+	definition, ok := catalog.Backend("unified")
+	if !ok {
+		t.Fatalf("expected unified backend to be discovered")
+	}
+	if definition.Adapter != "command" {
+		t.Fatalf("expected adapter to normalize from type=command, got %q", definition.Adapter)
+	}
+	if definition.Binary != "/usr/bin/unified" {
+		t.Fatalf("expected binary from config to normalize, got %q", definition.Binary)
+	}
+	if !definition.SupportsReview {
+		t.Fatalf("expected review feature to map to SupportsReview")
+	}
+	if !definition.SupportsStream {
+		t.Fatalf("expected stream feature to map to SupportsStream")
+	}
+	if !strings.Contains(strings.Join(definition.RequiredCredentials, ","), "UNIFIED_API_TOKEN") {
+		t.Fatalf("expected api_key_env to map to required credentials, got %#v", definition.RequiredCredentials)
+	}
+	if !strings.Contains(definition.Model, "unified-v1") {
+		t.Fatalf("expected model field to retain unified model, got %#v", definition.Model)
+	}
+	if !hasDistributedCapability(definition.DistributedCaps, distributed.CapabilityImplement) {
+		t.Fatalf("expected implement feature to map to distributed capability, got %#v", definition.DistributedCaps)
+	}
+	if !hasDistributedCapability(definition.DistributedCaps, distributed.CapabilityReview) {
+		t.Fatalf("expected review feature to map to distributed capability, got %#v", definition.DistributedCaps)
+	}
+	if !hasDistributedCapability(definition.DistributedCaps, distributed.CapabilityServiceProxy) {
+		t.Fatalf("expected service_proxy feature to map to distributed capability, got %#v", definition.DistributedCaps)
+	}
+	if !containsStringSlice(definition.RequiredCredentials, "UNIFIED_API_TOKEN") {
+		t.Fatalf("expected api_key_env to map to required credentials, got %#v", definition.RequiredCredentials)
+	}
+	if !strings.Contains(definition.Model, "unified-v1") {
+		t.Fatalf("expected configured model to be retained, got %q", definition.Model)
 	}
 }
