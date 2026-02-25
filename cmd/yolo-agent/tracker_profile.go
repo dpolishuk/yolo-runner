@@ -283,6 +283,12 @@ func buildStorageBackendForTracker(repoRoot string, profile resolvedTrackerProfi
 			return nil, fmt.Errorf("linear auth validation failed for profile %q using %s: %w", profile.Name, tokenEnv, err)
 		}
 		return backend, nil
+	case trackerTypeBeads:
+		manager, err := newBeadsTaskManager(localRunner{dir: repoRoot})
+		if err != nil {
+			return nil, fmt.Errorf("beads capability probe failed for profile %q: %w", profile.Name, err)
+		}
+		return taskManagerStorageBackend{taskManager: manager}, nil
 	default:
 		return nil, fmt.Errorf("tracker type %q is not supported yet", profile.Tracker.Type)
 	}
