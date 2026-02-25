@@ -1,0 +1,50 @@
+name: ""
+type: task
+backend: codex
+pipeline:
+  quality_gate:
+    tools: []
+    retry:
+      max_attempts: 0
+    transitions:
+      on_success:
+        action: next
+        condition: true
+      on_failure:
+        action: retry
+        condition: unknown_condition
+  execute:
+    tools: ["shell"]
+    retry:
+      max_attempts: 1
+    transitions:
+      on_success:
+        action: next
+        next_stage: qc_gate
+        condition: quality_score > threshold
+      on_failure:
+        action: complete
+        condition: tests_failed
+  qc_gate:
+    tools: ["checker"]
+    retry:
+      max_attempts: 2
+    transitions:
+      on_success:
+        action: next
+        next_stage: complete
+        condition: quality_score >= 80
+      on_failure:
+        action: fail
+        condition: quality_score <= threshold
+  complete:
+    tools: ["git"]
+    retry:
+      max_attempts: 1
+    transitions:
+      on_success:
+        action: complete
+        condition: true
+      on_failure:
+        action: fail
+        condition: true
