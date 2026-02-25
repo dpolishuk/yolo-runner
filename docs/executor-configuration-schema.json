@@ -1,0 +1,162 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://yolo-runner.github.io/schemas/executor-configuration.schema.json",
+  "$defs": {
+    "condition_expression": {
+      "type": "string",
+      "description": "Deterministic boolean expression used to evaluate transition behavior.",
+      "examples": [
+        "quality_score < threshold",
+        "tests_failed",
+        "review_failed"
+      ],
+      "pattern": "^\\s*(?:true|false|tests_failed|review_failed|quality_score\\s*(?:==|!=|>=|<=|>|<)\\s*(?:[0-9]+(?:\\.[0-9]+)?|threshold))\\s*$"
+    },
+    "transition": {
+      "type": "object",
+      "required": [
+        "action",
+        "condition"
+      ],
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": ["next", "retry", "fail", "complete"]
+        },
+        "next_stage": {
+          "type": "string",
+          "enum": ["quality_gate", "execute", "qc_gate", "complete", "fail"]
+        },
+        "condition": { "$ref": "#/$defs/condition_expression" }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "action": { "const": "next" }
+            }
+          },
+          "then": {
+            "required": ["next_stage"],
+            "properties": {
+              "next_stage": {
+                "enum": ["quality_gate", "execute", "qc_gate", "complete"]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "not": { "const": "next" }
+              }
+            }
+          },
+          "then": {
+            "not": {
+              "required": ["next_stage"]
+            }
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "transitions": {
+      "type": "object",
+      "required": ["on_success", "on_failure"],
+      "properties": {
+        "on_success": {
+          "$ref": "#/$defs/transition"
+        },
+        "on_failure": {
+          "$ref": "#/$defs/transition"
+        }
+      },
+      "additionalProperties": false
+    },
+    "retry": {
+      "type": "object",
+      "required": ["max_attempts"],
+      "properties": {
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "initial_delay_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "backoff_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_delay_ms": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "stage": {
+      "type": "object",
+      "required": ["tools", "retry", "transitions"],
+      "properties": {
+        "tools": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1
+        },
+        "retry": {
+          "$ref": "#/$defs/retry"
+        },
+        "transitions": {
+          "$ref": "#/$defs/transitions"
+        }
+      },
+      "additionalProperties": false
+    },
+    "pipeline_stages": {
+      "type": "object",
+      "required": ["quality_gate", "execute", "qc_gate", "complete"],
+      "properties": {
+        "quality_gate": {
+          "$ref": "#/$defs/stage"
+        },
+        "execute": {
+          "$ref": "#/$defs/stage"
+        },
+        "qc_gate": {
+          "$ref": "#/$defs/stage"
+        },
+        "complete": {
+          "$ref": "#/$defs/stage"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "type": "object",
+  "required": ["name", "type", "backend", "pipeline"],
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "type": {
+      "type": "string",
+      "minLength": 1
+    },
+    "backend": {
+      "type": "string",
+      "minLength": 1
+    },
+    "pipeline": {
+      "$ref": "#/$defs/pipeline_stages"
+    }
+  },
+  "additionalProperties": false
+}
