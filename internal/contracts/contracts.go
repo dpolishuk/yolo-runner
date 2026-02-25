@@ -135,6 +135,7 @@ type RunnerRequest struct {
 	Model      string
 	RepoRoot   string
 	Timeout    time.Duration
+	MaxRetries int           `json:"max_retries"`
 	Metadata   map[string]string
 	OnProgress func(RunnerProgress)
 }
