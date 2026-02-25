@@ -24,16 +24,19 @@ func TestMakefileHasInstallTargetThatInstallsYoloAgent(t *testing.T) {
 	required := []string{
 		"install:",
 		"PREFIX ?=",
-		"mkdir -p",
-		"chmod 755",
-	}
-	for _, binary := range binaries {
-		required = append(required, "bin/"+binary)
+		"install -d",
+		"install -m 755",
 	}
 
 	for _, needle := range required {
 		if !strings.Contains(makefile, needle) {
 			t.Fatalf("Makefile is missing %q required for install target contract", needle)
+		}
+	}
+
+	for _, binary := range binaries {
+		if !strings.Contains(makefile, binary) {
+			t.Fatalf("Makefile does not reference binary %q", binary)
 		}
 	}
 }
