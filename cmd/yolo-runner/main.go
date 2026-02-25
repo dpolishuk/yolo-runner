@@ -19,6 +19,7 @@ import (
 	"github.com/egv/yolo-runner/v2/internal/contracts"
 	"github.com/egv/yolo-runner/v2/internal/exec"
 	"github.com/egv/yolo-runner/v2/internal/logging"
+	"github.com/egv/yolo-runner/v2/internal/distributed"
 	"github.com/egv/yolo-runner/v2/internal/opencode"
 	"github.com/egv/yolo-runner/v2/internal/prompt"
 	"github.com/egv/yolo-runner/v2/internal/runner"
@@ -96,9 +97,13 @@ type runnerConfigAgent struct {
 }
 
 const (
+	runnerRoleLocal  = "local"
+	runnerRoleWorker = "executor"
 	runnerModeUI       = "ui"
 	runnerModeHeadless = "headless"
 	runnerConfigPath   = ".yolo-runner/config.yaml"
+	runnerDistributedBusRedis = "redis"
+	runnerDistributedBusNATS  = "nats"
 )
 
 func (b bubbleTUIProgram) Start() error {
@@ -145,6 +150,17 @@ var launchYoloTUI = func() (io.WriteCloser, func() error, error) {
 		_ = stdin.Close()
 		return cmd.Wait()
 	}, nil
+}
+
+var newDistributedBus = func(backend string, address string) (distributed.Bus, error) {
+	switch backend {
+	case runnerDistributedBusRedis:
+		return distributed.NewRedisBus(address)
+	case runnerDistributedBusNATS:
+		return distributed.NewNATSBus(address)
+	default:
+		return nil, fmt.Errorf("unsupported distributed bus backend %q", backend)
+	}
 }
 
 var isTerminal = func(writer io.Writer) bool {
@@ -381,6 +397,14 @@ func RunOnceMain(args []string, runOnce runOnceFunc, exit exitFunc, stdout io.Wr
 	mode := fs.String("mode", "", "Output mode for runner events (ui, headless)")
 	configRoot := fs.String("config-root", "", "OpenCode config root")
 	configDir := fs.String("config-dir", "", "OpenCode config dir")
+	role := fs.String("role", "", "Distributed execution role: local, executor")
+	distributedBusBackend := fs.String("distributed-bus-backend", "", "Distributed bus backend (redis, nats)")
+	distributedBusAddress := fs.String("distributed-bus-address", "", "Distributed bus address")
+	distributedBusPrefix := fs.String("distributed-bus-prefix", "", "Distributed bus subject prefix")
+	distributedExecutorID := fs.String("distributed-executor-id", "", "Distributed executor id (executor role)")
+	distributedExecutorCapabilities := fs.String("distributed-executor-capabilities", "implement,review", "Comma-separated capabilities to advertise in executor role")
+	distributedHeartbeatInterval := fs.Duration("distributed-heartbeat-interval", 5*time.Second, "Heartbeat interval in executor role")
+	distributedRequestTimeout := fs.Duration("distributed-request-timeout", 30*time.Second, "Request timeout for task dispatch in distributed roles")
 
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintln(stderr, err)
@@ -392,6 +416,89 @@ func RunOnceMain(args []string, runOnce runOnceFunc, exit exitFunc, stdout io.Wr
 
 	if runOnce == nil {
 		runOnce = runner.RunOnce
+	}
+
+	selectedRole, err := normalizeDistributedRoleForRunner(*role, os.Getenv("YOLO_DISTRIBUTED_ROLE"))
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		if exit != nil {
+			exit(1)
+		}
+		return 1
+	}
+	selectedDistributedBusBackend := strings.TrimSpace(*distributedBusBackend)
+	if selectedDistributedBusBackend == "" {
+		selectedDistributedBusBackend = strings.TrimSpace(os.Getenv("YOLO_DISTRIBUTED_BUS_BACKEND"))
+	}
+	if selectedDistributedBusBackend == "" {
+		selectedDistributedBusBackend = runnerDistributedBusRedis
+	}
+	selectedDistributedBusBackend, err = normalizeDistributedBusBackendForRunner(selectedDistributedBusBackend)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		if exit != nil {
+			exit(1)
+		}
+		return 1
+	}
+	selectedDistributedBusAddress := strings.TrimSpace(*distributedBusAddress)
+	if selectedDistributedBusAddress == "" {
+		selectedDistributedBusAddress = strings.TrimSpace(os.Getenv("YOLO_DISTRIBUTED_BUS_ADDRESS"))
+	}
+	selectedDistributedBusPrefix := strings.TrimSpace(*distributedBusPrefix)
+	if selectedDistributedBusPrefix == "" {
+		selectedDistributedBusPrefix = strings.TrimSpace(os.Getenv("YOLO_DISTRIBUTED_BUS_PREFIX"))
+	}
+	if selectedDistributedBusPrefix == "" {
+		selectedDistributedBusPrefix = "yolo"
+	}
+	selectedDistributedExecutorCapabilities, err := parseDistributedExecutorCapabilities(*distributedExecutorCapabilities)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		if exit != nil {
+			exit(1)
+		}
+		return 1
+	}
+	if *distributedHeartbeatInterval <= 0 {
+		fmt.Fprintln(stderr, "--distributed-heartbeat-interval must be greater than 0")
+		if exit != nil {
+			exit(1)
+		}
+		return 1
+	}
+	if *distributedRequestTimeout <= 0 {
+		fmt.Fprintln(stderr, "--distributed-request-timeout must be greater than 0")
+		if exit != nil {
+			exit(1)
+		}
+		return 1
+	}
+
+	if selectedRole == runnerRoleWorker {
+		if err := runDistributedExecutor(context.Background(), distributedRunnerConfig{
+			repoRoot:             *repoRoot,
+			model:                *model,
+			busBackend:           selectedDistributedBusBackend,
+			busAddress:           selectedDistributedBusAddress,
+			busPrefix:            selectedDistributedBusPrefix,
+			executorID:           strings.TrimSpace(*distributedExecutorID),
+			capabilities:         selectedDistributedExecutorCapabilities,
+			heartbeatInterval:    *distributedHeartbeatInterval,
+			requestTimeout:       *distributedRequestTimeout,
+			configRoot:           strings.TrimSpace(*configRoot),
+			configDir:            strings.TrimSpace(*configDir),
+		}); err != nil {
+			fmt.Fprintln(stderr, err)
+			if exit != nil {
+				exit(1)
+			}
+			return 1
+		}
+		if exit != nil {
+			exit(0)
+		}
+		return 0
 	}
 
 	resolvedMode, err := resolveRunnerMode(*repoRoot, *mode, *headless)
@@ -578,6 +685,112 @@ func RunOnceMain(args []string, runOnce runOnceFunc, exit exitFunc, stdout io.Wr
 		exit(0)
 	}
 	return 0
+}
+
+type distributedRunnerConfig struct {
+	repoRoot         string
+	model            string
+	busBackend       string
+	busAddress       string
+	busPrefix        string
+	executorID       string
+	capabilities     []distributed.Capability
+	heartbeatInterval time.Duration
+	requestTimeout    time.Duration
+	configRoot       string
+	configDir        string
+}
+
+func runDistributedExecutor(ctx context.Context, cfg distributedRunnerConfig) error {
+	bus, err := newDistributedBus(cfg.busBackend, cfg.busAddress)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = bus.Close()
+	}()
+
+	if cfg.configRoot == "" {
+		homeDir := os.Getenv("HOME")
+		if homeDir != "" {
+			cfg.configRoot = filepath.Join(homeDir, ".config", "opencode-runner")
+		}
+	}
+	if cfg.configDir == "" && cfg.configRoot != "" {
+		cfg.configDir = filepath.Join(cfg.configRoot, "opencode")
+	}
+
+	adapter := opencode.NewCLIRunnerAdapter(defaultOpenCodeRunner{}, nil, cfg.configRoot, cfg.configDir)
+	executorID := cfg.executorID
+	if executorID == "" {
+		executorID = "executor"
+	}
+	worker := distributed.NewExecutorWorker(distributed.ExecutorWorkerOptions{
+		ID:                executorID,
+		Bus:               bus,
+		Runner:            adapter,
+		Subjects:          distributed.DefaultEventSubjects(cfg.busPrefix),
+		Capabilities:      cfg.capabilities,
+		HeartbeatInterval: cfg.heartbeatInterval,
+		RequestTimeout:    cfg.requestTimeout,
+	})
+	return worker.Start(ctx)
+}
+
+func normalizeDistributedRoleForRunner(raw string, env string) (string, error) {
+	role := strings.ToLower(strings.TrimSpace(raw))
+	if role == "" {
+		role = strings.TrimSpace(env)
+	}
+	if role == "" {
+		return runnerRoleLocal, nil
+	}
+	switch role {
+	case runnerRoleLocal, runnerRoleWorker:
+		return role, nil
+	default:
+		return "", fmt.Errorf("invalid distributed role %q (supported: %s, %s)", role, runnerRoleLocal, runnerRoleWorker)
+	}
+}
+
+func normalizeDistributedBusBackendForRunner(raw string) (string, error) {
+	backend := strings.ToLower(strings.TrimSpace(raw))
+	switch backend {
+	case "", runnerDistributedBusRedis:
+		return runnerDistributedBusRedis, nil
+	case runnerDistributedBusNATS:
+		return runnerDistributedBusNATS, nil
+	default:
+		return "", fmt.Errorf("invalid distributed bus backend %q (supported: %s, %s)", backend, runnerDistributedBusRedis, runnerDistributedBusNATS)
+	}
+}
+
+func parseDistributedExecutorCapabilities(raw string) ([]distributed.Capability, error) {
+	capabilityRaw := strings.TrimSpace(raw)
+	if capabilityRaw == "" {
+		capabilityRaw = "implement,review"
+	}
+	values := strings.Split(capabilityRaw, ",")
+	seen := map[distributed.Capability]struct{}{}
+	capabilities := make([]distributed.Capability, 0, len(values))
+	for _, value := range values {
+		capability := strings.ToLower(strings.TrimSpace(value))
+		switch distributed.Capability(capability) {
+		case distributed.CapabilityImplement, distributed.CapabilityReview, distributed.CapabilityRewriteTask, distributed.CapabilityLargerModel, distributed.CapabilityServiceProxy:
+			c := distributed.Capability(capability)
+			if _, ok := seen[c]; ok {
+				continue
+			}
+			seen[c] = struct{}{}
+			capabilities = append(capabilities, c)
+		default:
+			return nil, fmt.Errorf("invalid distributed capability %q", value)
+		}
+	}
+	if len(capabilities) == 0 {
+		return nil, fmt.Errorf("at least one distributed capability is required")
+	}
+	return capabilities, nil
 }
 
 func compatibilityNotice() string {

@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -13,7 +14,18 @@ import (
 
 	"github.com/egv/yolo-runner/v2/internal/contracts"
 	"github.com/egv/yolo-runner/v2/internal/scheduler"
+	taskquality "github.com/egv/yolo-runner/v2/internal/task_quality"
 	"github.com/egv/yolo-runner/v2/internal/tk"
+)
+
+const defaultQualityGateThreshold = 70
+
+const (
+	qualityGateToolTaskValidator     = "task_validator"
+	qualityGateToolDependencyChecker = "dependency_checker"
+	qcGateToolTestRunner             = "test_runner"
+	qcGateToolLinter                 = "linter"
+	qcGateToolCoverageChecker        = "coverage_checker"
 )
 
 type taskRuntimeConfig struct {
@@ -62,6 +74,8 @@ type LoopOptions struct {
 	NoOutputWarningAfter time.Duration
 	TDDMode              bool
 	QualityGateThreshold int
+	QualityGateTools     []string
+	QCGateTools          []string
 	AllowLowQuality      bool
 	VCS                  contracts.VCS
 	RequireReview        bool
@@ -158,12 +172,14 @@ func (l *Loop) Run(ctx context.Context) (contracts.LoopSummary, error) {
 		taskID   string
 		workerID int
 		queuePos int
+		priority int
 		summary  contracts.LoopSummary
 		err      error
 	}
 	type taskJob struct {
 		taskID   string
 		queuePos int
+		priority int
 	}
 
 	results := make(chan taskResult, l.options.Concurrency)
@@ -178,15 +194,15 @@ func (l *Loop) Run(ctx context.Context) (contracts.LoopSummary, error) {
 				l.workerStartHook(id)
 			}
 			for job := range tasksCh {
-				func(taskID string, queuePos int) {
+				func(taskID string, queuePos int, priority int) {
 					defer func() {
 						if l.taskLock != nil {
 							l.taskLock.Unlock(taskID)
 						}
 					}()
-					resultSummary, taskErr := l.runTask(ctx, taskID, id, queuePos)
-					results <- taskResult{taskID: taskID, workerID: id, queuePos: queuePos, summary: resultSummary, err: taskErr}
-				}(job.taskID, job.queuePos)
+					resultSummary, taskErr := l.runTask(ctx, taskID, id, queuePos, priority)
+					results <- taskResult{taskID: taskID, workerID: id, queuePos: queuePos, priority: priority, summary: resultSummary, err: taskErr}
+				}(job.taskID, job.queuePos, job.priority)
 			}
 		}()
 	}
@@ -214,12 +230,16 @@ func (l *Loop) Run(ctx context.Context) (contracts.LoopSummary, error) {
 			}
 
 			taskID := ""
+			taskPriority := 0
 			for _, candidate := range next {
 				if _, running := inFlight[candidate.ID]; !running {
 					if l.taskLock != nil && !l.taskLock.TryLock(candidate.ID) {
 						continue
 					}
 					taskID = candidate.ID
+					if candidate.Priority != nil {
+						taskPriority = *candidate.Priority
+					}
 					break
 				}
 			}
@@ -233,7 +253,7 @@ func (l *Loop) Run(ctx context.Context) (contracts.LoopSummary, error) {
 
 			queueCounter++
 			inFlight[taskID] = struct{}{}
-			tasksCh <- taskJob{taskID: taskID, queuePos: queueCounter}
+			tasksCh <- taskJob{taskID: taskID, queuePos: queueCounter, priority: taskPriority}
 		}
 
 		if len(inFlight) == 0 {
@@ -261,7 +281,7 @@ func (l *Loop) Run(ctx context.Context) (contracts.LoopSummary, error) {
 	}
 }
 
-func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePos int) (summary contracts.LoopSummary, err error) {
+func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePos int, taskPriority int) (summary contracts.LoopSummary, err error) {
 	summary = contracts.LoopSummary{}
 	worker := fmt.Sprintf("worker-%d", workerID)
 
@@ -269,7 +289,18 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 	if err != nil {
 		return summary, err
 	}
-	_ = l.emit(ctx, contracts.Event{Type: contracts.EventTypeTaskStarted, TaskID: task.ID, TaskTitle: task.Title, WorkerID: worker, QueuePos: queuePos, Message: task.Title, Timestamp: time.Now().UTC()})
+	metadata := taskMonitoringMetadata(task)
+	_ = l.emit(ctx, contracts.Event{
+		Type:      contracts.EventTypeTaskStarted,
+		TaskID:    task.ID,
+		TaskTitle: task.Title,
+		WorkerID:  worker,
+		QueuePos:  queuePos,
+		Priority:  taskPriority,
+		Message:   task.Title,
+		Metadata:  metadata,
+		Timestamp: time.Now().UTC(),
+	})
 
 	taskRuntime, err := resolveTaskRuntimeConfig(task, l.options)
 	if err != nil {
@@ -281,89 +312,11 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 		epicID = strings.TrimSpace(l.options.ParentID)
 	}
 
-	if qualityScore, ok := taskExecutionThresholdScore(task.Metadata); ok && l.options.QualityGateThreshold > 0 && qualityScore < l.options.QualityGateThreshold {
-		qualityGateReason := fmt.Sprintf("quality score %d is below threshold %d", qualityScore, l.options.QualityGateThreshold)
-		qualityComment := qualityGateComment(task.Metadata, qualityScore, l.options.QualityGateThreshold)
-		qualityMetadata := map[string]string{
-			"quality_score":        strconv.Itoa(qualityScore),
-			"quality_threshold":    strconv.Itoa(l.options.QualityGateThreshold),
-			"quality_gate":         "true",
-			"quality_gate_comment": qualityComment,
-		}
-		if l.options.AllowLowQuality {
-			warningMetadata := map[string]string{
-				"quality_threshold": strconv.Itoa(l.options.QualityGateThreshold),
-				"quality_score":     strconv.Itoa(qualityScore),
-				"reason":            qualityGateReason,
-			}
-			for key, value := range qualityMetadata {
-				warningMetadata[key] = value
-			}
-			_ = l.emit(ctx, contracts.Event{
-				Type:      contracts.EventTypeRunnerWarning,
-				TaskID:    task.ID,
-				TaskTitle: task.Title,
-				WorkerID:  worker,
-				ClonePath: l.options.RepoRoot,
-				QueuePos:  queuePos,
-				Message:   "quality gate threshold overridden by --allow-low-quality",
-				Metadata:  warningMetadata,
-				Timestamp: time.Now().UTC(),
-			})
-		} else {
-			blockedData := map[string]string{
-				"triage_status":        "blocked",
-				"triage_reason":        qualityGateReason,
-				"quality_score":        strconv.Itoa(qualityScore),
-				"quality_threshold":    strconv.Itoa(l.options.QualityGateThreshold),
-				"quality_gate":         "true",
-				"quality_gate_comment": qualityComment,
-			}
-			blockedData = appendDecisionMetadata(blockedData, "blocked", qualityGateReason)
-			if err := l.markTaskBlockedWithData(task.ID, blockedData); err != nil {
-				return summary, err
-			}
-			if err := l.tasks.SetTaskStatus(ctx, task.ID, contracts.TaskStatusBlocked); err != nil {
-				return summary, err
-			}
-			finishedMetadata := map[string]string{
-				"triage_status":     "blocked",
-				"triage_reason":     qualityGateReason,
-				"quality_score":     strconv.Itoa(qualityScore),
-				"quality_threshold": strconv.Itoa(l.options.QualityGateThreshold),
-				"quality_gate":      "true",
-			}
-			finishedMetadata = appendDecisionMetadata(finishedMetadata, "blocked", qualityGateReason)
-			_ = l.emit(ctx, contracts.Event{
-				Type:      contracts.EventTypeTaskFinished,
-				TaskID:    task.ID,
-				TaskTitle: task.Title,
-				WorkerID:  worker,
-				ClonePath: l.options.RepoRoot,
-				QueuePos:  queuePos,
-				Message:   string(contracts.TaskStatusBlocked),
-				Metadata:  finishedMetadata,
-				Timestamp: time.Now().UTC(),
-			})
-			if err := l.tasks.SetTaskData(ctx, task.ID, blockedData); err != nil {
-				return summary, err
-			}
-			_ = l.emit(ctx, contracts.Event{
-				Type:      contracts.EventTypeTaskDataUpdated,
-				TaskID:    task.ID,
-				TaskTitle: task.Title,
-				WorkerID:  worker,
-				ClonePath: l.options.RepoRoot,
-				QueuePos:  queuePos,
-				Metadata:  blockedData,
-				Timestamp: time.Now().UTC(),
-			})
-			if err := l.clearTaskTerminalState(task.ID); err != nil {
-				return summary, err
-			}
-			summary.Blocked++
-			return summary, nil
-		}
+	if blocked, err := l.runQualityGate(ctx, task, worker, queuePos); err != nil {
+		return summary, err
+	} else if blocked {
+		summary.Blocked++
+		return summary, nil
 	}
 
 	taskRepoRoot := l.options.RepoRoot
@@ -625,6 +578,13 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 
 		switch result.Status {
 		case contracts.RunnerResultCompleted:
+			if blocked, err := l.runQCGate(ctx, task, result, worker, queuePos, taskRepoRoot); err != nil {
+				return summary, err
+			} else if blocked {
+				summary.Blocked++
+				return summary, nil
+			}
+
 			if err := l.markTaskCompleted(task.ID); err != nil {
 				return summary, err
 			}
@@ -961,6 +921,32 @@ func eventTypeForRunnerProgress(progressType string) contracts.EventType {
 	default:
 		return contracts.EventTypeRunnerProgress
 	}
+}
+
+func taskMonitoringMetadata(task contracts.Task) map[string]string {
+	metadata := cloneStringMap(task.Metadata)
+	if metadata == nil {
+		metadata = map[string]string{}
+	}
+	parentID := strings.TrimSpace(task.ParentID)
+	if parentID != "" {
+		metadata["parent_id"] = parentID
+	}
+	if dependencies := strings.TrimSpace(metadata["dependencies"]); dependencies != "" {
+		metadata["dependencies"] = dependencies
+	}
+	return metadata
+}
+
+func cloneStringMap(input map[string]string) map[string]string {
+	if len(input) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(input))
+	for key, value := range input {
+		out[key] = value
+	}
+	return out
 }
 
 func (l *Loop) emit(ctx context.Context, event contracts.Event) error {
@@ -1339,6 +1325,876 @@ func taskExecutionThresholdScore(metadata map[string]string) (int, bool) {
 		return score, true
 	}
 	return 0, false
+}
+
+func (l *Loop) runQualityGate(ctx context.Context, task contracts.Task, worker string, queuePos int) (bool, error) {
+	tools, err := resolveQualityGateTools(l.options.QualityGateTools)
+	if err != nil {
+		return false, err
+	}
+
+	if len(tools) > 0 {
+		qualityThreshold := l.options.QualityGateThreshold
+		if qualityThreshold <= 0 {
+			qualityThreshold = defaultQualityGateThreshold
+		}
+
+		qualityScore, qualityIssues, ok, err := l.evaluateTaskQuality(ctx, task, tools)
+		if err != nil {
+			return false, err
+		}
+		if !ok {
+			return false, nil
+		}
+
+		qualityMetadata := map[string]string{
+			"quality_score":     strconv.Itoa(qualityScore),
+			"quality_threshold": strconv.Itoa(qualityThreshold),
+			"quality_gate":      "true",
+			"quality_issues":    strings.Join(qualityIssues, "\n"),
+		}
+		qualityMetadata["quality_gate_comment"] = qualityGateComment(qualityMetadata, qualityScore, qualityThreshold)
+
+		if qualityScore >= qualityThreshold {
+			return false, nil
+		}
+
+		qualityGateReason := fmt.Sprintf("quality score %d is below threshold %d", qualityScore, qualityThreshold)
+		if l.options.AllowLowQuality {
+			warningMetadata := map[string]string{
+				"quality_threshold": strconv.Itoa(qualityThreshold),
+				"quality_score":     strconv.Itoa(qualityScore),
+				"reason":            qualityGateReason,
+			}
+			for key, value := range qualityMetadata {
+				warningMetadata[key] = value
+			}
+			_ = l.emit(ctx, contracts.Event{
+				Type:      contracts.EventTypeRunnerWarning,
+				TaskID:    task.ID,
+				TaskTitle: task.Title,
+				WorkerID:  worker,
+				ClonePath: l.options.RepoRoot,
+				QueuePos:  queuePos,
+				Message:   "quality gate threshold overridden by --allow-low-quality",
+				Metadata:  warningMetadata,
+				Timestamp: time.Now().UTC(),
+			})
+			return false, nil
+		}
+
+		blockedData := map[string]string{
+			"triage_status":        "blocked",
+			"triage_reason":        qualityGateReason,
+			"quality_score":        strconv.Itoa(qualityScore),
+			"quality_threshold":    strconv.Itoa(qualityThreshold),
+			"quality_gate":         "true",
+			"quality_gate_comment": qualityMetadata["quality_gate_comment"],
+		}
+		for key, value := range qualityMetadata {
+			blockedData[key] = value
+		}
+		blockedData = appendDecisionMetadata(blockedData, "blocked", qualityGateReason)
+		if err := l.markTaskBlockedWithData(task.ID, blockedData); err != nil {
+			return false, err
+		}
+		if err := l.tasks.SetTaskStatus(ctx, task.ID, contracts.TaskStatusBlocked); err != nil {
+			return false, err
+		}
+
+		finishedMetadata := map[string]string{
+			"triage_status":     "blocked",
+			"triage_reason":     qualityGateReason,
+			"quality_score":     strconv.Itoa(qualityScore),
+			"quality_threshold": strconv.Itoa(qualityThreshold),
+			"quality_gate":      "true",
+		}
+		finishedMetadata = appendDecisionMetadata(finishedMetadata, "blocked", qualityGateReason)
+		_ = l.emit(ctx, contracts.Event{
+			Type:      contracts.EventTypeTaskFinished,
+			TaskID:    task.ID,
+			TaskTitle: task.Title,
+			WorkerID:  worker,
+			ClonePath: l.options.RepoRoot,
+			QueuePos:  queuePos,
+			Message:   string(contracts.TaskStatusBlocked),
+			Metadata:  finishedMetadata,
+			Timestamp: time.Now().UTC(),
+		})
+		if err := l.tasks.SetTaskData(ctx, task.ID, blockedData); err != nil {
+			return false, err
+		}
+		_ = l.emit(ctx, contracts.Event{
+			Type:      contracts.EventTypeTaskDataUpdated,
+			TaskID:    task.ID,
+			TaskTitle: task.Title,
+			WorkerID:  worker,
+			ClonePath: l.options.RepoRoot,
+			QueuePos:  queuePos,
+			Metadata:  blockedData,
+			Timestamp: time.Now().UTC(),
+		})
+		if err := l.clearTaskTerminalState(task.ID); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+
+	qualityThreshold := l.options.QualityGateThreshold
+	if qualityThreshold <= 0 {
+		qualityThreshold = defaultQualityGateThreshold
+	}
+
+	qualityScore, ok := taskExecutionThresholdScore(task.Metadata)
+	if !ok || qualityScore >= qualityThreshold {
+		return false, nil
+	}
+
+	qualityGateReason := fmt.Sprintf("quality score %d is below threshold %d", qualityScore, qualityThreshold)
+	qualityComment := qualityGateComment(task.Metadata, qualityScore, qualityThreshold)
+	qualityMetadata := map[string]string{
+		"quality_score":        strconv.Itoa(qualityScore),
+		"quality_threshold":    strconv.Itoa(qualityThreshold),
+		"quality_gate":         "true",
+		"quality_gate_comment": qualityComment,
+	}
+	if l.options.AllowLowQuality {
+		warningMetadata := map[string]string{
+			"quality_threshold": strconv.Itoa(qualityThreshold),
+			"quality_score":     strconv.Itoa(qualityScore),
+			"reason":            qualityGateReason,
+		}
+		for key, value := range qualityMetadata {
+			warningMetadata[key] = value
+		}
+		_ = l.emit(ctx, contracts.Event{
+			Type:      contracts.EventTypeRunnerWarning,
+			TaskID:    task.ID,
+			TaskTitle: task.Title,
+			WorkerID:  worker,
+			ClonePath: l.options.RepoRoot,
+			QueuePos:  queuePos,
+			Message:   "quality gate threshold overridden by --allow-low-quality",
+			Metadata:  warningMetadata,
+			Timestamp: time.Now().UTC(),
+		})
+		return false, nil
+	}
+
+	blockedData := map[string]string{
+		"triage_status":        "blocked",
+		"triage_reason":        qualityGateReason,
+		"quality_score":        strconv.Itoa(qualityScore),
+		"quality_threshold":    strconv.Itoa(qualityThreshold),
+		"quality_gate":         "true",
+		"quality_gate_comment": qualityComment,
+	}
+	blockedData = appendDecisionMetadata(blockedData, "blocked", qualityGateReason)
+	if err := l.markTaskBlockedWithData(task.ID, blockedData); err != nil {
+		return false, err
+	}
+	if err := l.tasks.SetTaskStatus(ctx, task.ID, contracts.TaskStatusBlocked); err != nil {
+		return false, err
+	}
+	finishedMetadata := map[string]string{
+		"triage_status":     "blocked",
+		"triage_reason":     qualityGateReason,
+		"quality_score":     strconv.Itoa(qualityScore),
+		"quality_threshold": strconv.Itoa(qualityThreshold),
+		"quality_gate":      "true",
+	}
+	finishedMetadata = appendDecisionMetadata(finishedMetadata, "blocked", qualityGateReason)
+	_ = l.emit(ctx, contracts.Event{
+		Type:      contracts.EventTypeTaskFinished,
+		TaskID:    task.ID,
+		TaskTitle: task.Title,
+		WorkerID:  worker,
+		ClonePath: l.options.RepoRoot,
+		QueuePos:  queuePos,
+		Message:   string(contracts.TaskStatusBlocked),
+		Metadata:  finishedMetadata,
+		Timestamp: time.Now().UTC(),
+	})
+	if err := l.tasks.SetTaskData(ctx, task.ID, blockedData); err != nil {
+		return false, err
+	}
+	_ = l.emit(ctx, contracts.Event{
+		Type:      contracts.EventTypeTaskDataUpdated,
+		TaskID:    task.ID,
+		TaskTitle: task.Title,
+		WorkerID:  worker,
+		ClonePath: l.options.RepoRoot,
+		QueuePos:  queuePos,
+		Metadata:  blockedData,
+		Timestamp: time.Now().UTC(),
+	})
+	if err := l.clearTaskTerminalState(task.ID); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+type qcGateToolResult struct {
+	Tool      string `json:"tool"`
+	Status    string `json:"status"`
+	Passed    bool   `json:"passed"`
+	Reason    string `json:"reason,omitempty"`
+	Value     string `json:"value,omitempty"`
+	Threshold int    `json:"threshold,omitempty"`
+	Command   string `json:"command,omitempty"`
+	Critical  bool   `json:"critical,omitempty"`
+}
+
+type qcGateReport struct {
+	Status    string             `json:"status"`
+	Tools     []qcGateToolResult `json:"tools"`
+	Review    string             `json:"review_verdict,omitempty"`
+	Threshold int                `json:"threshold"`
+}
+
+func (l *Loop) runQCGate(ctx context.Context, task contracts.Task, result contracts.RunnerResult, worker string, queuePos int, taskRepoRoot string) (bool, error) {
+	tools, err := resolveQCGateTools(l.options.QCGateTools)
+	if err != nil {
+		return false, err
+	}
+	if len(tools) == 0 && !(l.options.RequireReview && result.ReviewReady) {
+		return false, nil
+	}
+
+	repoRoot := strings.TrimSpace(taskRepoRoot)
+	if repoRoot == "" {
+		repoRoot = strings.TrimSpace(l.options.RepoRoot)
+	}
+
+	qcThreshold := l.options.QualityGateThreshold
+	if qcThreshold <= 0 {
+		qcThreshold = defaultQualityGateThreshold
+	}
+
+	outcomes := make([]qcGateToolResult, 0, len(tools)+1)
+	failed := []string{}
+	for _, tool := range tools {
+		var outcome qcGateToolResult
+		switch tool {
+		case qcGateToolTestRunner:
+			outcome = l.runQCTestSuiteValidation(ctx, repoRoot)
+		case qcGateToolLinter:
+			outcome = l.runQCLinterValidation(ctx, repoRoot)
+		case qcGateToolCoverageChecker:
+			outcome = l.runQCCoverageValidation(ctx, repoRoot, qcThreshold)
+		default:
+			return false, fmt.Errorf("unsupported quality control gate tool %q", tool)
+		}
+		outcomes = append(outcomes, outcome)
+		if outcome.Critical {
+			return false, fmt.Errorf("quality control gate tool %q failed critically: %s", tool, outcome.Reason)
+		}
+		if !outcome.Passed {
+			failed = append(failed, outcome.Reason)
+		}
+	}
+
+	reviewApproval := qcGateToolResult{}
+	if l.options.RequireReview && result.ReviewReady {
+		reviewApproval = l.runQCReviewApproval(result)
+		outcomes = append(outcomes, reviewApproval)
+		if !reviewApproval.Passed {
+			failed = append(failed, reviewApproval.Reason)
+		}
+	}
+
+	report := qcGateReport{
+		Status:    "passed",
+		Threshold: qcThreshold,
+		Tools:     outcomes,
+	}
+	if reviewApproval.Tool != "" {
+		report.Review = reviewApproval.Value
+	}
+	if len(failed) > 0 {
+		report.Status = "failed"
+	}
+
+	reportJSON, err := json.Marshal(report)
+	if err != nil {
+		return false, fmt.Errorf("marshal quality control gate report: %w", err)
+	}
+
+	qcMetadata := map[string]string{
+		"qc_gate":           "true",
+		"qc_gate_status":    report.Status,
+		"qc_gate_threshold": strconv.Itoa(qcThreshold),
+		"qc_gate_tools":     strings.Join(tools, ","),
+		"qc_gate_report":    string(reportJSON),
+	}
+	for _, outcome := range outcomes {
+		keyPrefix := "qc_" + strings.ReplaceAll(strings.ReplaceAll(outcome.Tool, "-", "_"), " ", "_")
+		qcMetadata[keyPrefix+"_status"] = outcome.Status
+		if strings.TrimSpace(outcome.Value) != "" {
+			qcMetadata[keyPrefix+"_value"] = outcome.Value
+		}
+		if strings.TrimSpace(outcome.Reason) != "" {
+			qcMetadata[keyPrefix+"_reason"] = outcome.Reason
+		}
+	}
+
+	if len(failed) == 0 {
+		if err := l.tasks.SetTaskData(ctx, task.ID, qcMetadata); err != nil {
+			return false, err
+		}
+		_ = l.emit(ctx, contracts.Event{
+			Type:      contracts.EventTypeTaskDataUpdated,
+			TaskID:    task.ID,
+			TaskTitle: task.Title,
+			WorkerID:  worker,
+			ClonePath: taskRepoRoot,
+			QueuePos:  queuePos,
+			Metadata:  qcMetadata,
+			Timestamp: time.Now().UTC(),
+		})
+		return false, nil
+	}
+
+	blockedReason := "quality control gate failed: " + strings.Join(failed, "; ")
+	blockedData := map[string]string{
+		"triage_status":     "blocked",
+		"triage_reason":     blockedReason,
+		"qc_gate":           "true",
+		"qc_gate_status":    report.Status,
+		"qc_gate_threshold": strconv.Itoa(qcThreshold),
+		"qc_gate_tools":     strings.Join(tools, ","),
+		"qc_gate_report":    string(reportJSON),
+	}
+	blockedData = appendDecisionMetadata(blockedData, "blocked", blockedReason)
+	for key, value := range qcMetadata {
+		blockedData[key] = value
+	}
+	if err := l.markTaskBlockedWithData(task.ID, blockedData); err != nil {
+		return false, err
+	}
+	if err := l.tasks.SetTaskStatus(ctx, task.ID, contracts.TaskStatusBlocked); err != nil {
+		return false, err
+	}
+	finishedMetadata := map[string]string{
+		"triage_status":     "blocked",
+		"triage_reason":     blockedReason,
+		"qc_gate":           "true",
+		"qc_gate_status":    report.Status,
+		"qc_gate_threshold": strconv.Itoa(qcThreshold),
+		"qc_gate_tools":     strings.Join(tools, ","),
+	}
+	finishedMetadata = appendDecisionMetadata(finishedMetadata, "blocked", blockedReason)
+	for key, value := range qcMetadata {
+		finishedMetadata[key] = value
+	}
+	_ = l.emit(ctx, contracts.Event{
+		Type:      contracts.EventTypeTaskFinished,
+		TaskID:    task.ID,
+		TaskTitle: task.Title,
+		WorkerID:  worker,
+		ClonePath: taskRepoRoot,
+		QueuePos:  queuePos,
+		Message:   string(contracts.TaskStatusBlocked),
+		Metadata:  finishedMetadata,
+		Timestamp: time.Now().UTC(),
+	})
+	if err := l.tasks.SetTaskData(ctx, task.ID, blockedData); err != nil {
+		return false, err
+	}
+	_ = l.emit(ctx, contracts.Event{
+		Type:      contracts.EventTypeTaskDataUpdated,
+		TaskID:    task.ID,
+		TaskTitle: task.Title,
+		WorkerID:  worker,
+		ClonePath: taskRepoRoot,
+		QueuePos:  queuePos,
+		Metadata:  blockedData,
+		Timestamp: time.Now().UTC(),
+	})
+	if err := l.clearTaskTerminalState(task.ID); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (l *Loop) runQCTestSuiteValidation(ctx context.Context, repoRoot string) qcGateToolResult {
+	output, err := runQCGateCommand(ctx, repoRoot, "go", "test", "./...")
+	result := qcGateToolResult{
+		Tool:    qcGateToolTestRunner,
+		Command: "go test ./...",
+	}
+	if err == nil {
+		result.Passed = true
+		result.Status = "passed"
+		result.Value = "passed"
+		return result
+	}
+	if _, ok := err.(*exec.ExitError); ok {
+		result.Passed = false
+		result.Status = "failed"
+		result.Reason = strings.TrimSpace(firstNonEmptyLine(output))
+		if result.Reason == "" {
+			result.Reason = "test suite returned non-zero status"
+		}
+		return result
+	}
+	result.Critical = true
+	result.Status = "critical_error"
+	result.Reason = strings.TrimSpace(err.Error())
+	if result.Reason == "" {
+		result.Reason = "unable to execute test suite command"
+	}
+	return result
+}
+
+func (l *Loop) runQCLinterValidation(ctx context.Context, repoRoot string) qcGateToolResult {
+	output, err := runQCGateCommand(ctx, repoRoot, "go", "vet", "./...")
+	result := qcGateToolResult{
+		Tool:    qcGateToolLinter,
+		Command: "go vet ./...",
+	}
+	if err == nil {
+		result.Passed = true
+		result.Status = "passed"
+		result.Value = "passed"
+		return result
+	}
+	if _, ok := err.(*exec.ExitError); ok {
+		result.Passed = false
+		result.Status = "failed"
+		result.Reason = strings.TrimSpace(firstNonEmptyLine(output))
+		if result.Reason == "" {
+			result.Reason = "linter returned non-zero status"
+		}
+		return result
+	}
+	result.Critical = true
+	result.Status = "critical_error"
+	result.Reason = strings.TrimSpace(err.Error())
+	if result.Reason == "" {
+		result.Reason = "unable to execute linter command"
+	}
+	return result
+}
+
+func (l *Loop) runQCCoverageValidation(ctx context.Context, repoRoot string, threshold int) qcGateToolResult {
+	profileFile, err := os.CreateTemp("", "yolo-runner-qc-coverage-*.out")
+	if err != nil {
+		return qcGateToolResult{
+			Tool:     qcGateToolCoverageChecker,
+			Status:   "critical_error",
+			Critical: true,
+			Reason:   "failed to create coverage profile temp file",
+		}
+	}
+	profilePath := profileFile.Name()
+	_ = profileFile.Close()
+	defer func() {
+		_ = os.Remove(profilePath)
+	}()
+
+	_, runErr := runQCGateCommand(ctx, repoRoot, "go", "test", "./...", "-coverprofile="+profilePath)
+	result := qcGateToolResult{
+		Tool:      qcGateToolCoverageChecker,
+		Command:   "go test ./... -coverprofile=<tmp>",
+		Threshold: threshold,
+	}
+	if runErr != nil {
+		if _, ok := runErr.(*exec.ExitError); ok {
+			result.Passed = false
+			result.Status = "failed"
+			result.Reason = "coverage test execution failed"
+			return result
+		}
+		result.Critical = true
+		result.Status = "critical_error"
+		result.Reason = strings.TrimSpace(runErr.Error())
+		if result.Reason == "" {
+			result.Reason = "unable to execute coverage test command"
+		}
+		return result
+	}
+
+	coverageOutput, err := runQCGateCommand(ctx, repoRoot, "go", "tool", "cover", "-func="+profilePath)
+	if err != nil {
+		result.Critical = true
+		result.Status = "critical_error"
+		result.Reason = "failed to collect coverage report"
+		return result
+	}
+
+	coverage, parseErr := parseCoveragePercentFromReport(coverageOutput)
+	if parseErr != nil {
+		result.Critical = true
+		result.Status = "critical_error"
+		result.Reason = parseErr.Error()
+		return result
+	}
+	result.Value = strconv.FormatFloat(coverage, 'f', 1, 64)
+	if coverage < float64(threshold) {
+		result.Passed = false
+		result.Status = "failed"
+		result.Reason = fmt.Sprintf("coverage %.1f is below threshold %d", coverage, threshold)
+		return result
+	}
+	result.Passed = true
+	result.Status = "passed"
+	result.Value = fmt.Sprintf("%.1f", coverage)
+	return result
+}
+
+func (l *Loop) runQCReviewApproval(result contracts.RunnerResult) qcGateToolResult {
+	outcome := qcGateToolResult{
+		Tool:    "review_approval",
+		Command: "review approval check",
+	}
+	if !l.options.RequireReview {
+		outcome.Status = "not_required"
+		outcome.Passed = true
+		outcome.Reason = "not_required"
+		outcome.Value = "skipped"
+		return outcome
+	}
+
+	if result.Status != contracts.RunnerResultCompleted {
+		outcome.Status = "failed"
+		outcome.Passed = false
+		outcome.Value = "not_approved"
+		outcome.Reason = "review result was not completed"
+		return outcome
+	}
+	if !result.ReviewReady {
+		outcome.Status = "failed"
+		outcome.Passed = false
+		outcome.Value = "not_approved"
+		outcome.Reason = "review not ready"
+		return outcome
+	}
+
+	verdict := reviewVerdictFromArtifacts(result)
+	if verdict == "pass" {
+		outcome.Status = "passed"
+		outcome.Passed = true
+		outcome.Value = "pass"
+		return outcome
+	}
+	if verdict == "fail" {
+		outcome.Status = "failed"
+		outcome.Passed = false
+		outcome.Value = "fail"
+		if feedback := strings.TrimSpace(reviewFailFeedbackFromArtifacts(result)); feedback != "" {
+			outcome.Reason = feedback
+		} else {
+			outcome.Reason = "review verdict returned fail"
+		}
+		return outcome
+	}
+	outcome.Status = "failed"
+	outcome.Passed = false
+	outcome.Value = "not_approved"
+	if feedback := strings.TrimSpace(reviewFailFeedbackFromArtifacts(result)); feedback != "" {
+		outcome.Reason = feedback
+		return outcome
+	}
+	outcome.Reason = "review verdict missing"
+	return outcome
+}
+
+func runQCGateCommand(ctx context.Context, repoRoot string, command string, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, command, args...)
+	if strings.TrimSpace(repoRoot) != "" {
+		cmd.Dir = strings.TrimSpace(repoRoot)
+	}
+	output, err := cmd.CombinedOutput()
+	return string(output), err
+}
+
+func parseCoveragePercentFromReport(rawReport string) (float64, error) {
+	for _, line := range strings.Split(rawReport, "\n") {
+		if !strings.HasPrefix(strings.TrimSpace(line), "total:") {
+			continue
+		}
+		for _, field := range strings.Fields(line) {
+			if !strings.HasSuffix(field, "%") {
+				continue
+			}
+			value := strings.TrimSuffix(strings.TrimSpace(field), "%")
+			if value == "" {
+				continue
+			}
+			score, err := strconv.ParseFloat(value, 64)
+			if err != nil {
+				continue
+			}
+			return score, nil
+		}
+	}
+	return 0, fmt.Errorf("coverage report is missing total percentage line")
+}
+
+func firstNonEmptyLine(raw string) string {
+	for _, line := range strings.Split(raw, "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			return line
+		}
+	}
+	return ""
+}
+
+func resolveQCGateTools(rawTools []string) ([]string, error) {
+	if len(rawTools) == 0 {
+		return nil, nil
+	}
+
+	tools := make([]string, 0, len(rawTools))
+	seen := map[string]struct{}{}
+	for _, tool := range rawTools {
+		tool = strings.ToLower(strings.TrimSpace(tool))
+		if tool == "" {
+			continue
+		}
+		switch tool {
+		case qcGateToolTestRunner, qcGateToolLinter, qcGateToolCoverageChecker:
+		default:
+			return nil, fmt.Errorf("unsupported quality control gate tool %q", tool)
+		}
+		if _, exists := seen[tool]; exists {
+			continue
+		}
+		seen[tool] = struct{}{}
+		tools = append(tools, tool)
+	}
+	return tools, nil
+}
+
+func (l *Loop) evaluateTaskQuality(ctx context.Context, task contracts.Task, tools []string) (int, []string, bool, error) {
+	qualityScore, hasScore := 0, false
+	issues := []string{}
+
+	if score, ok := taskQualityScore(task.Metadata); ok {
+		qualityScore = score
+		hasScore = true
+		issues = append(issues, qualityGateIssues(task.Metadata)...)
+	}
+
+	if hasQualityTool(tools, qualityGateToolTaskValidator) {
+		qualityInput := parseTaskQualityInput(task)
+		qualityAssessment := taskquality.AssessTaskQuality(qualityInput)
+		qualityScore = qualityAssessment.Score
+		hasScore = true
+		issues = append(issues, qualityAssessment.Issues...)
+	}
+
+	if hasQualityTool(tools, qualityGateToolDependencyChecker) {
+		missingDependencies, dependencyIssues, err := l.evaluateTaskDependencies(ctx, task.Metadata["dependencies"], task.ID)
+		if err != nil {
+			return 0, nil, false, err
+		}
+		issues = append(issues, dependencyIssues...)
+		if !hasScore {
+			qualityScore = 100
+			hasScore = true
+		}
+		qualityScore -= missingDependencies * 20
+	}
+
+	if !hasScore {
+		return 0, nil, false, nil
+	}
+	if qualityScore < 0 {
+		qualityScore = 0
+	}
+	issues = dedupeQualityIssues(issues)
+	return qualityScore, issues, true, nil
+}
+
+func (l *Loop) evaluateTaskDependencies(ctx context.Context, rawDependencies string, taskID string) (int, []string, error) {
+	dependencies := parseTaskDependencies(rawDependencies)
+	if len(dependencies) == 0 {
+		return 0, nil, nil
+	}
+
+	missingDependencies := 0
+	issues := []string{}
+	for _, dependencyID := range dependencies {
+		if strings.TrimSpace(dependencyID) == "" || dependencyID == strings.TrimSpace(taskID) {
+			continue
+		}
+		dependency, err := l.tasks.GetTask(ctx, dependencyID)
+		if err != nil || strings.TrimSpace(dependency.ID) == "" {
+			missingDependencies++
+			issues = append(issues, "dependency not resolvable: "+dependencyID)
+		}
+	}
+	return missingDependencies, issues, nil
+}
+
+func parseTaskDependencies(raw string) []string {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+
+	parts := strings.FieldsFunc(raw, func(r rune) bool {
+		return r == ',' || r == ';' || r == '\n' || r == '\t' || r == ' '
+	})
+	seen := map[string]struct{}{}
+	dependencies := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		if _, ok := seen[part]; ok {
+			continue
+		}
+		seen[part] = struct{}{}
+		dependencies = append(dependencies, part)
+	}
+	return dependencies
+}
+
+func resolveQualityGateTools(rawTools []string) ([]string, error) {
+	if len(rawTools) == 0 {
+		return nil, nil
+	}
+
+	tools := make([]string, 0, len(rawTools))
+	seen := map[string]struct{}{}
+	for _, tool := range rawTools {
+		tool = strings.ToLower(strings.TrimSpace(tool))
+		if tool == "" {
+			continue
+		}
+		switch tool {
+		case qualityGateToolTaskValidator, qualityGateToolDependencyChecker:
+		default:
+			return nil, fmt.Errorf("unsupported quality gate tool %q", tool)
+		}
+		if _, exists := seen[tool]; exists {
+			continue
+		}
+		seen[tool] = struct{}{}
+		tools = append(tools, tool)
+	}
+	return tools, nil
+}
+
+func hasQualityTool(tools []string, expected string) bool {
+	for _, tool := range tools {
+		if strings.EqualFold(strings.TrimSpace(tool), expected) {
+			return true
+		}
+	}
+	return false
+}
+
+func parseTaskQualityInput(task contracts.Task) taskquality.TaskInput {
+	body := stripTaskFrontmatter(task.Description)
+	sections := parseQualitySections(body)
+	description := strings.TrimSpace(sections["description"])
+	if description == "" {
+		description = strings.TrimSpace(body)
+	}
+
+	dependenciesContext := strings.TrimSpace(sections["dependencies_context"])
+	if dependenciesContext == "" {
+		dependenciesContext = strings.TrimSpace(task.Metadata["dependencies"])
+		if dependenciesContext != "" {
+			dependenciesContext = "Dependencies: " + dependenciesContext
+		}
+	}
+
+	return taskquality.TaskInput{
+		Title:               strings.TrimSpace(task.Title),
+		Description:         description,
+		AcceptanceCriteria:  strings.TrimSpace(sections["acceptance_criteria"]),
+		Deliverables:        strings.TrimSpace(sections["deliverables"]),
+		TestingPlan:         strings.TrimSpace(sections["testing_plan"]),
+		DefinitionOfDone:    strings.TrimSpace(sections["definition_of_done"]),
+		DependenciesContext: dependenciesContext,
+	}
+}
+
+func parseQualitySections(raw string) map[string]string {
+	sections := map[string]string{
+		"description":          "",
+		"acceptance_criteria":  "",
+		"deliverables":         "",
+		"testing_plan":         "",
+		"definition_of_done":   "",
+		"dependencies_context": "",
+	}
+	current := "description"
+	for _, line := range strings.Split(raw, "\n") {
+		if section, ok := parseQualitySectionHeader(line); ok {
+			current = section
+			continue
+		}
+
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		sections[current] = strings.TrimSpace(sections[current] + "\n" + line)
+	}
+	for key, value := range sections {
+		sections[key] = strings.TrimSpace(value)
+	}
+	return sections
+}
+
+func parseQualitySectionHeader(line string) (string, bool) {
+	candidate := strings.TrimSpace(strings.TrimPrefix(strings.TrimLeft(line, "#"), " "))
+	candidate = strings.TrimSpace(strings.TrimSuffix(candidate, ":"))
+	candidate = strings.TrimSpace(candidate)
+	switch strings.ToLower(candidate) {
+	case "description":
+		return "description", true
+	case "acceptance criteria", "acceptance":
+		return "acceptance_criteria", true
+	case "deliverables":
+		return "deliverables", true
+	case "testing plan", "testing":
+		return "testing_plan", true
+	case "definition of done", "definition":
+		return "definition_of_done", true
+	case "dependencies", "dependencies/context", "dependencies and context":
+		return "dependencies_context", true
+	default:
+		return "", false
+	}
+}
+
+func stripTaskFrontmatter(raw string) string {
+	raw = strings.TrimLeft(raw, "\r\n\t ")
+	lines := strings.Split(raw, "\n")
+	if len(lines) == 0 || strings.TrimSpace(lines[0]) != "---" {
+		return strings.TrimSpace(raw)
+	}
+	for i := 1; i < len(lines); i++ {
+		if strings.TrimSpace(lines[i]) == "---" {
+			return strings.TrimSpace(strings.Join(lines[i+1:], "\n"))
+		}
+	}
+	return strings.TrimSpace(raw)
+}
+
+func dedupeQualityIssues(issues []string) []string {
+	seen := map[string]struct{}{}
+	unique := make([]string, 0, len(issues))
+	for _, issue := range issues {
+		issue = strings.TrimSpace(issue)
+		if issue == "" {
+			continue
+		}
+		if _, ok := seen[issue]; ok {
+			continue
+		}
+		seen[issue] = struct{}{}
+		unique = append(unique, issue)
+	}
+	return unique
 }
 
 func taskCoverageScore(metadata map[string]string) (int, bool) {

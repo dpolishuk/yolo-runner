@@ -135,6 +135,139 @@ func TestModelBuildsDerivedRunWorkerTaskState(t *testing.T) {
 	}
 }
 
+func TestModelRendersTaskPriorityQueueWithSortedOrdering(t *testing.T) {
+	now := time.Date(2026, 2, 10, 12, 19, 0, 0, time.UTC)
+	model := NewModel(func() time.Time { return now })
+
+	model.Apply(contracts.Event{Type: contracts.EventTypeTaskStarted, TaskID: "task-a", TaskTitle: "Alpha", WorkerID: "worker-0", QueuePos: 2, Priority: 10, Timestamp: now.Add(-5 * time.Second)})
+	model.Apply(contracts.Event{Type: contracts.EventTypeTaskStarted, TaskID: "task-b", TaskTitle: "Beta", WorkerID: "worker-1", QueuePos: 1, Priority: 3, Timestamp: now.Add(-4 * time.Second)})
+	model.Apply(contracts.Event{Type: contracts.EventTypeTaskStarted, TaskID: "task-c", TaskTitle: "Charlie", WorkerID: "worker-2", QueuePos: 3, Priority: 8, Timestamp: now.Add(-3 * time.Second)})
+	model.Apply(contracts.Event{Type: contracts.EventTypeTaskStarted, TaskID: "task-d", TaskTitle: "Delta", WorkerID: "worker-3", QueuePos: 2, Priority: 7, Timestamp: now.Add(-2 * time.Second)})
+
+	state := model.UIState()
+	if len(state.Queue) < 4 {
+		t.Fatalf("expected 4 queue rows, got %#v", state.Queue)
+	}
+	if !strings.Contains(state.Queue[0], "task-b") || !strings.Contains(state.Queue[0], "q=1") || !strings.Contains(state.Queue[0], "p=3") {
+		t.Fatalf("expected highest queue priority ordering in first row, got %#v", state.Queue[0])
+	}
+	if !strings.Contains(state.Queue[1], "task-a") || !strings.Contains(state.Queue[1], "q=2") || !strings.Contains(state.Queue[1], "p=10") {
+		t.Fatalf("expected queue position ordering in second row, got %#v", state.Queue[1])
+	}
+	if !strings.Contains(state.Queue[2], "task-d") || !strings.Contains(state.Queue[2], "q=2") || !strings.Contains(state.Queue[2], "p=7") {
+		t.Fatalf("expected queue position then priority ordering in third row, got %#v", state.Queue[2])
+	}
+	if !strings.Contains(state.Queue[3], "task-c") || !strings.Contains(state.Queue[3], "q=3") || !strings.Contains(state.Queue[3], "p=8") {
+		t.Fatalf("expected queue tail row to be task-c, got %#v", state.Queue[3])
+	}
+}
+
+func TestModelTaskDetailsPanelTracksSelectedTaskOnPanelNavigation(t *testing.T) {
+	now := time.Date(2026, 2, 10, 12, 20, 0, 0, time.UTC)
+	model := NewModel(func() time.Time { return now })
+	model.panelExpand["tasks"] = true
+
+	model.Apply(contracts.Event{Type: contracts.EventTypeTaskStarted, TaskID: "task-a", TaskTitle: "Root", Message: "root", Timestamp: now.Add(-8 * time.Second)})
+	model.Apply(contracts.Event{Type: contracts.EventTypeTaskStarted, TaskID: "task-b", TaskTitle: "Child", QueuePos: 1, Priority: 4, Metadata: map[string]string{"parent_id": "task-a", "dependencies": "task-a, task-c"}, Timestamp: now.Add(-6 * time.Second)})
+	model.Apply(contracts.Event{Type: contracts.EventTypeTaskStarted, TaskID: "task-c", TaskTitle: "Sibling", QueuePos: 2, Timestamp: now.Add(-4 * time.Second)})
+
+	rows := model.panelRows()
+	selected := -1
+	for i, row := range rows {
+		if row.id == "task:task-b" {
+			selected = i
+			break
+		}
+	}
+	if selected < 0 {
+		t.Fatalf("expected task row for task-b, got %#v", rows)
+	}
+	model.panelCursor = selected
+
+	state := model.UIState()
+	if !strings.Contains(strings.Join(state.TaskDetails, "\n"), "task=task-b - Child") {
+		t.Fatalf("expected task detail view to include selected task, got %#v", state.TaskDetails)
+	}
+	if !strings.Contains(strings.Join(state.TaskDetails, "\n"), "parent=task-a") {
+		t.Fatalf("expected task details to include parent id, got %#v", state.TaskDetails)
+	}
+	if !strings.Contains(strings.Join(state.TaskDetails, "\n"), "dependencies=task-a, task-c") {
+		t.Fatalf("expected task details to include normalized dependencies, got %#v", state.TaskDetails)
+	}
+}
+
+func TestModelRendersTaskGraphHierarchyFromParentMetadata(t *testing.T) {
+	now := time.Date(2026, 2, 10, 12, 21, 0, 0, time.UTC)
+	model := NewModel(func() time.Time { return now })
+
+	model.Apply(contracts.Event{Type: contracts.EventTypeTaskStarted, TaskID: "task-a", TaskTitle: "Root", Timestamp: now.Add(-9 * time.Second)})
+	model.Apply(contracts.Event{Type: contracts.EventTypeTaskStarted, TaskID: "task-b", TaskTitle: "Child", Metadata: map[string]string{"parent_id": "task-a"}, Timestamp: now.Add(-8 * time.Second)})
+	model.Apply(contracts.Event{Type: contracts.EventTypeTaskStarted, TaskID: "task-c", TaskTitle: "Grandchild", Metadata: map[string]string{"parent_id": "task-b"}, Timestamp: now.Add(-7 * time.Second)})
+	model.Apply(contracts.Event{Type: contracts.EventTypeTaskStarted, TaskID: "task-d", TaskTitle: "Sibling", Metadata: map[string]string{"parent_id": "task-a"}, Timestamp: now.Add(-6 * time.Second)})
+
+	lines := model.UIState().TaskGraph
+	if len(lines) < 4 {
+		t.Fatalf("expected task graph rows for hierarchy, got %#v", lines)
+	}
+	if !strings.HasSuffix(lines[0], "task-a - Root") {
+		t.Fatalf("expected graph root row for task-a, got %#v", lines)
+	}
+	if !strings.HasPrefix(lines[1], "  task-b - Child") {
+		t.Fatalf("expected indented child row for task-b, got %#v", lines)
+	}
+	if !strings.HasPrefix(lines[2], "    task-c - Grandchild") {
+		t.Fatalf("expected deeper indented child row for task-c, got %#v", lines)
+	}
+	if !strings.HasPrefix(lines[3], "  task-d - Sibling") {
+		t.Fatalf("expected sibling row for task-d, got %#v", lines)
+	}
+}
+
+func TestModelRendersTaskGraphFromDependenciesMetadata(t *testing.T) {
+	now := time.Date(2026, 2, 10, 12, 22, 0, 0, time.UTC)
+	model := NewModel(func() time.Time { return now })
+
+	model.Apply(contracts.Event{Type: contracts.EventTypeTaskStarted, TaskID: "task-a", TaskTitle: "Alpha", Timestamp: now.Add(-9 * time.Second)})
+	model.Apply(contracts.Event{Type: contracts.EventTypeTaskStarted, TaskID: "task-b", TaskTitle: "Beta", Metadata: map[string]string{"dependencies": "task-a, task-a, task-a"}, Timestamp: now.Add(-8 * time.Second)})
+	model.Apply(contracts.Event{Type: contracts.EventTypeTaskStarted, TaskID: "task-c", TaskTitle: "Gamma", Metadata: map[string]string{"dependencies": "task-b"}, Timestamp: now.Add(-7 * time.Second)})
+	model.Apply(contracts.Event{Type: contracts.EventTypeTaskStarted, TaskID: "task-d", TaskTitle: "Delta", Metadata: map[string]string{"dependencies": " task-a , task-b "}, Timestamp: now.Add(-6 * time.Second)})
+
+	lines := model.UIState().TaskGraph
+	if len(lines) < 4 {
+		t.Fatalf("expected at least four graph rows, got %#v", lines)
+	}
+	if !strings.HasSuffix(lines[0], "task-a - Alpha") {
+		t.Fatalf("expected dependency graph root row for task-a, got %#v", lines)
+	}
+	if !strings.HasPrefix(lines[1], "  task-b - Beta") {
+		t.Fatalf("expected dependency child row for task-b, got %#v", lines)
+	}
+	if !strings.HasPrefix(lines[2], "    task-c - Gamma") {
+		t.Fatalf("expected transitive dependency row for task-c, got %#v", lines)
+	}
+	if !strings.HasPrefix(lines[3], "  task-d - Delta") {
+		t.Fatalf("expected second dependency branch row for task-d, got %#v", lines)
+	}
+}
+
+func TestParseTaskDependenciesNormalizesWhitespaceAndSorting(t *testing.T) {
+	parsed := parseTaskDependencies("  task-2, task-1 ,,task-1 , task-3")
+	if len(parsed) != 3 {
+		t.Fatalf("expected dedupe/split results, got %#v", parsed)
+	}
+	if parsed[0] != "task-2" || parsed[1] != "task-1" || parsed[2] != "task-3" {
+		t.Fatalf("unexpected parse result %#v", parsed)
+	}
+
+	merged := dedupeSortedDependencies(parsed, []string{"task-5", "task-4", "task-2"})
+	if len(merged) != 5 {
+		t.Fatalf("expected merged dependency list, got %#v", merged)
+	}
+	if merged[0] != "task-1" || merged[4] != "task-5" {
+		t.Fatalf("expected sorted merge output, got %#v", merged)
+	}
+}
+
 func TestModelDerivesRunnerCommandAndOutputSummaries(t *testing.T) {
 	now := time.Date(2026, 2, 10, 12, 6, 0, 0, time.UTC)
 	model := NewModel(func() time.Time { return now })

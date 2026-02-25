@@ -56,7 +56,6 @@ mode: bad-mode
 	message := err.Error()
 	required := []string{
 		"model must be a string",
-		"backend must be one of: opencode, codex, claude, kimi",
 		"skillset must be a string",
 		"tools must be an array",
 		"timeout must be a valid duration (for example 30s, 5m)",

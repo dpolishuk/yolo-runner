@@ -40,6 +40,10 @@ func defaultBackendCapabilityMatrix() map[string]backendCapabilities {
 			SupportsReview: true,
 			SupportsStream: true,
 		},
+		backendGemini: {
+			SupportsReview: true,
+			SupportsStream: true,
+		},
 	}
 }
 
