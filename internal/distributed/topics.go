@@ -12,6 +12,7 @@ type EventSubjects struct {
 	TaskStatusUpdate       string
 	TaskStatusUpdateAck    string
 	TaskStatusUpdateReject string
+	MonitorEvent           string
 }
 
 func DefaultEventSubjects(prefix string) EventSubjects {
@@ -30,5 +31,6 @@ func DefaultEventSubjects(prefix string) EventSubjects {
 		TaskStatusUpdate:       prefix + ".task_status.update",
 		TaskStatusUpdateAck:    prefix + ".task_status.ack",
 		TaskStatusUpdateReject: prefix + ".task_status.reject",
+		MonitorEvent:           prefix + ".monitor.event",
 	}
 }

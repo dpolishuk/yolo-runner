@@ -158,12 +158,14 @@ func (l *Loop) Run(ctx context.Context) (contracts.LoopSummary, error) {
 		taskID   string
 		workerID int
 		queuePos int
+		priority int
 		summary  contracts.LoopSummary
 		err      error
 	}
 	type taskJob struct {
 		taskID   string
 		queuePos int
+		priority int
 	}
 
 	results := make(chan taskResult, l.options.Concurrency)
@@ -178,15 +180,15 @@ func (l *Loop) Run(ctx context.Context) (contracts.LoopSummary, error) {
 				l.workerStartHook(id)
 			}
 			for job := range tasksCh {
-				func(taskID string, queuePos int) {
+				func(taskID string, queuePos int, priority int) {
 					defer func() {
 						if l.taskLock != nil {
 							l.taskLock.Unlock(taskID)
 						}
 					}()
-					resultSummary, taskErr := l.runTask(ctx, taskID, id, queuePos)
-					results <- taskResult{taskID: taskID, workerID: id, queuePos: queuePos, summary: resultSummary, err: taskErr}
-				}(job.taskID, job.queuePos)
+					resultSummary, taskErr := l.runTask(ctx, taskID, id, queuePos, priority)
+					results <- taskResult{taskID: taskID, workerID: id, queuePos: queuePos, priority: priority, summary: resultSummary, err: taskErr}
+				}(job.taskID, job.queuePos, job.priority)
 			}
 		}()
 	}
@@ -214,12 +216,16 @@ func (l *Loop) Run(ctx context.Context) (contracts.LoopSummary, error) {
 			}
 
 			taskID := ""
+			taskPriority := 0
 			for _, candidate := range next {
 				if _, running := inFlight[candidate.ID]; !running {
 					if l.taskLock != nil && !l.taskLock.TryLock(candidate.ID) {
 						continue
 					}
 					taskID = candidate.ID
+					if candidate.Priority != nil {
+						taskPriority = *candidate.Priority
+					}
 					break
 				}
 			}
@@ -233,7 +239,7 @@ func (l *Loop) Run(ctx context.Context) (contracts.LoopSummary, error) {
 
 			queueCounter++
 			inFlight[taskID] = struct{}{}
-			tasksCh <- taskJob{taskID: taskID, queuePos: queueCounter}
+			tasksCh <- taskJob{taskID: taskID, queuePos: queueCounter, priority: taskPriority}
 		}
 
 		if len(inFlight) == 0 {
@@ -261,7 +267,7 @@ func (l *Loop) Run(ctx context.Context) (contracts.LoopSummary, error) {
 	}
 }
 
-func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePos int) (summary contracts.LoopSummary, err error) {
+func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePos int, taskPriority int) (summary contracts.LoopSummary, err error) {
 	summary = contracts.LoopSummary{}
 	worker := fmt.Sprintf("worker-%d", workerID)
 
@@ -269,7 +275,18 @@ func (l *Loop) runTask(ctx context.Context, taskID string, workerID int, queuePo
 	if err != nil {
 		return summary, err
 	}
-	_ = l.emit(ctx, contracts.Event{Type: contracts.EventTypeTaskStarted, TaskID: task.ID, TaskTitle: task.Title, WorkerID: worker, QueuePos: queuePos, Message: task.Title, Timestamp: time.Now().UTC()})
+	metadata := taskMonitoringMetadata(task)
+	_ = l.emit(ctx, contracts.Event{
+		Type:      contracts.EventTypeTaskStarted,
+		TaskID:    task.ID,
+		TaskTitle: task.Title,
+		WorkerID:  worker,
+		QueuePos:  queuePos,
+		Priority:  taskPriority,
+		Message:   task.Title,
+		Metadata:  metadata,
+		Timestamp: time.Now().UTC(),
+	})
 
 	taskRuntime, err := resolveTaskRuntimeConfig(task, l.options)
 	if err != nil {
@@ -961,6 +978,32 @@ func eventTypeForRunnerProgress(progressType string) contracts.EventType {
 	default:
 		return contracts.EventTypeRunnerProgress
 	}
+}
+
+func taskMonitoringMetadata(task contracts.Task) map[string]string {
+	metadata := cloneStringMap(task.Metadata)
+	if metadata == nil {
+		metadata = map[string]string{}
+	}
+	parentID := strings.TrimSpace(task.ParentID)
+	if parentID != "" {
+		metadata["parent_id"] = parentID
+	}
+	if dependencies := strings.TrimSpace(metadata["dependencies"]); dependencies != "" {
+		metadata["dependencies"] = dependencies
+	}
+	return metadata
+}
+
+func cloneStringMap(input map[string]string) map[string]string {
+	if len(input) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(input))
+	for key, value := range input {
+		out[key] = value
+	}
+	return out
 }
 
 func (l *Loop) emit(ctx context.Context, event contracts.Event) error {

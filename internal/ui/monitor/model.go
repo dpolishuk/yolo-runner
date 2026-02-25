@@ -56,6 +56,9 @@ type UIState struct {
 	PanelLines      []UIPanelLine
 	RunParams       []string
 	WorkerSummaries []UIWorkerSummary
+	Queue           []string
+	TaskGraph       []string
+	TaskDetails     []string
 	Landing         []string
 	Triage          []string
 	History         []string
@@ -77,6 +80,7 @@ type UIWorkerSummary struct {
 	Task             string
 	Phase            string
 	QueuePos         int
+	TaskPriority     int
 	LastEvent        string
 	LastActivityAge  string
 	Severity         string
@@ -101,6 +105,9 @@ type TaskState struct {
 	TaskID               string
 	Title                string
 	WorkerID             string
+	Priority             int
+	ParentID             string
+	Dependencies         []string
 	QueuePos             int
 	RunnerPhase          string
 	LastMessage          string
@@ -147,6 +154,8 @@ func NewModel(now func() time.Time) *Model {
 			"run":     true,
 			"workers": true,
 			"tasks":   false,
+			"queue":   false,
+			"graph":   false,
 		},
 		historyLimit:   256,
 		panelRowLimit:  512,
@@ -275,6 +284,15 @@ func (m *Model) Apply(event contracts.Event) {
 		task.TaskID = event.TaskID
 		if title := strings.TrimSpace(event.TaskTitle); title != "" {
 			task.Title = title
+		}
+		if event.Priority != 0 {
+			task.Priority = event.Priority
+		}
+		if metadataParent := normalizeTaskMetadataString(event.Metadata["parent_id"]); metadataParent != "" {
+			task.ParentID = metadataParent
+		}
+		if parsedDependencies := parseTaskDependencies(event.Metadata["dependencies"]); len(parsedDependencies) > 0 {
+			task.Dependencies = mergeTaskDependencies(task.Dependencies, parsedDependencies)
 		}
 		if workerID := strings.TrimSpace(event.WorkerID); workerID != "" {
 			task.WorkerID = workerID
@@ -421,6 +439,11 @@ func (m *Model) Snapshot() Snapshot {
 
 func (m *Model) UIState() UIState {
 	metrics := m.deriveStatusMetrics()
+	selectedTaskID := m.currentPanelTaskID()
+	if selectedTaskID == "" && strings.TrimSpace(m.currentTask) != "" {
+		selectedTaskID = m.currentTask
+	}
+	taskDetails := renderTaskDetails(m.root.Tasks[selectedTaskID])
 	return UIState{
 		CurrentTask:     renderCurrentTask(m.currentTask, m.currentTitle),
 		Phase:           emptyAsNA(m.phase),
@@ -432,6 +455,9 @@ func (m *Model) UIState() UIState {
 		PanelLines:      m.uiPanelLines(),
 		RunParams:       renderRunParameters(m.runParams),
 		WorkerSummaries: m.uiWorkerSummaries(),
+		Queue:           renderQueueRows(m.root.Tasks),
+		TaskGraph:       renderTaskGraphRows(m.root.Tasks),
+		TaskDetails:     taskDetails,
 		Landing:         renderLandingQueue(m.landing),
 		Triage:          renderTriage(m.triage),
 		History:         append([]string{}, m.history...),
@@ -499,6 +525,7 @@ func (m *Model) uiWorkerSummaries() []UIWorkerSummary {
 			Task:             renderCurrentTask(task.TaskID, task.Title),
 			Phase:            emptyAsNA(worker.CurrentPhase),
 			QueuePos:         worker.CurrentQueuePos,
+			TaskPriority:     task.Priority,
 			LastEvent:        lastEvent,
 			LastActivityAge:  ageSince(m.now(), task.LastUpdateAt),
 			Severity:         deriveTaskSeverity(task),
@@ -543,6 +570,10 @@ func (m *Model) View() string {
 	lines = append(lines, renderPerformance(perf)...)
 	lines = append(lines, renderPanels(m.panelRows(), m.panelCursor, m.viewportHeight)...)
 	lines = append(lines, renderRunParameters(m.runParams)...)
+	lines = append(lines, "Queue:")
+	lines = append(lines, renderQueueRows(m.root.Tasks)...)
+	lines = append(lines, "Task Graph:")
+	lines = append(lines, renderTaskGraphRows(m.root.Tasks)...)
 	lines = append(lines, renderWorkers(m.workers)...)
 	lines = append(lines, "Landing Queue:")
 	lines = append(lines, renderLandingQueue(m.landing)...)
@@ -577,6 +608,8 @@ func (m *Model) panelRows() []panelRow {
 
 	workersRow := panelRow{id: "workers", indent: 1, label: "Workers", severity: metrics.workerSeverity, hasChildren: true, expanded: m.isPanelExpanded("workers")}
 	tasksRow := panelRow{id: "tasks", indent: 1, label: "Tasks", severity: metrics.taskSeverity, hasChildren: true, expanded: m.isPanelExpanded("tasks")}
+	queueRow := panelRow{id: "queue", indent: 1, label: "Queue", severity: metrics.taskSeverity, hasChildren: true, expanded: m.isPanelExpanded("queue")}
+	graphRow := panelRow{id: "graph", indent: 1, label: "Task Graph", severity: metrics.taskSeverity, hasChildren: true, expanded: m.isPanelExpanded("graph")}
 	rows = append(rows, workersRow)
 
 	if workersRow.expanded {
@@ -618,6 +651,29 @@ func (m *Model) panelRows() []panelRow {
 			})
 		}
 	}
+
+	rows = append(rows, queueRow)
+	if queueRow.expanded {
+		for _, taskID := range sortedQueueTaskIDs(m.root.Tasks) {
+			task := m.root.Tasks[taskID]
+			rows = append(rows, panelRow{
+				id:          "queue:task:" + task.TaskID,
+				indent:      2,
+				label:       renderQueueRowLabel(task),
+				completed:   isTaskCompleted(task),
+				severity:    deriveTaskSeverity(task),
+				hasChildren: false,
+			})
+		}
+	}
+
+	rows = append(rows, graphRow)
+	if graphRow.expanded {
+		for _, row := range renderGraphPanelRows(m.root.Tasks) {
+			rows = append(rows, row)
+		}
+	}
+
 	m.panelRowsTruncated = false
 	if len(rows) > m.panelRowLimit {
 		rows = append([]panelRow{}, rows[:m.panelRowLimit]...)
@@ -912,6 +968,321 @@ func renderRunParameters(params map[string]string) []string {
 		lines = append(lines, "- "+key+"="+params[key])
 	}
 	return lines
+}
+
+func renderQueueRows(tasks map[string]TaskState) []string {
+	if len(tasks) == 0 {
+		return []string{"- n/a"}
+	}
+	ids := sortedQueueTaskIDs(tasks)
+	lines := make([]string, 0, len(ids))
+	for _, taskID := range ids {
+		lines = append(lines, "- "+renderQueueRowLabel(tasks[taskID]))
+	}
+	return lines
+}
+
+func renderTaskGraphRows(tasks map[string]TaskState) []string {
+	lines := renderGraphRows(tasks)
+	if len(lines) == 0 {
+		return []string{"- n/a"}
+	}
+	return lines
+}
+
+func renderQueueRowLabel(task TaskState) string {
+	line := renderCurrentTask(task.TaskID, task.Title)
+	parts := []string{}
+	if task.QueuePos > 0 {
+		parts = append(parts, fmt.Sprintf("q=%d", task.QueuePos))
+	}
+	if task.Priority != 0 {
+		parts = append(parts, fmt.Sprintf("p=%d", task.Priority))
+	}
+	if len(parts) == 0 {
+		return line
+	}
+	return line + " [" + strings.Join(parts, ", ") + "]"
+}
+
+func sortedQueueTaskIDs(tasks map[string]TaskState) []string {
+	ids := make([]string, 0, len(tasks))
+	for id, task := range tasks {
+		if task.QueuePos > 0 || task.Priority != 0 {
+			ids = append(ids, id)
+		}
+	}
+	if len(ids) == 0 {
+		for id := range tasks {
+			ids = append(ids, id)
+		}
+	}
+	sort.Slice(ids, func(i int, j int) bool {
+		left := tasks[ids[i]]
+		right := tasks[ids[j]]
+		if left.QueuePos != right.QueuePos {
+			return left.QueuePos < right.QueuePos
+		}
+		if left.Priority != right.Priority {
+			return left.Priority > right.Priority
+		}
+		return left.TaskID < right.TaskID
+	})
+	return ids
+}
+
+func renderGraphRows(tasks map[string]TaskState) []string {
+	children, roots := buildTaskDependencyGraph(tasks)
+	out := make([]string, 0, len(tasks))
+	visited := map[string]struct{}{}
+	for _, taskID := range roots {
+		emitGraphLines(tasks, children, taskID, 0, visited, &out)
+	}
+	for _, taskID := range sortedTaskIDs(tasks) {
+		if _, seen := visited[taskID]; seen {
+			continue
+		}
+		emitGraphLines(tasks, children, taskID, 0, visited, &out)
+	}
+	return out
+}
+
+func emitGraphLines(tasks map[string]TaskState, children map[string][]string, taskID string, depth int, visited map[string]struct{}, out *[]string) {
+	if _, seen := visited[taskID]; seen {
+		return
+	}
+	task, ok := tasks[taskID]
+	if !ok {
+		return
+	}
+	visited[taskID] = struct{}{}
+	line := strings.Repeat("  ", depth) + renderCurrentTask(task.TaskID, task.Title)
+	*out = append(*out, line)
+	for _, childID := range children[taskID] {
+		emitGraphLines(tasks, children, childID, depth+1, visited, out)
+	}
+}
+
+func renderGraphPanelRows(tasks map[string]TaskState) []panelRow {
+	out := make([]panelRow, 0, len(tasks))
+	children, roots := buildTaskDependencyGraph(tasks)
+	visited := map[string]struct{}{}
+	for _, rootID := range roots {
+		emitGraphPanelRows(tasks, children, rootID, 2, visited, &out)
+	}
+	for _, taskID := range sortedTaskIDs(tasks) {
+		if _, seen := visited[taskID]; seen {
+			continue
+		}
+		emitGraphPanelRows(tasks, children, taskID, 2, visited, &out)
+	}
+	return out
+}
+
+func buildTaskDependencyGraph(tasks map[string]TaskState) (map[string][]string, []string) {
+	children := map[string][]string{}
+	roots := make([]string, 0, len(tasks))
+	for _, task := range tasks {
+		taskID := strings.TrimSpace(task.TaskID)
+		if taskID == "" {
+			continue
+		}
+
+		parents := taskDependencyParents(task)
+		if len(parents) == 0 {
+			roots = append(roots, taskID)
+			continue
+		}
+
+		hasKnownParent := false
+		primaryParent := ""
+		for _, parentID := range parents {
+			parentID = strings.TrimSpace(parentID)
+			if parentID == "" {
+				continue
+			}
+			if parentID == taskID {
+				continue
+			}
+			if _, exists := tasks[parentID]; !exists {
+				continue
+			}
+			if primaryParent == "" {
+				primaryParent = parentID
+			}
+			hasKnownParent = true
+		}
+		if !hasKnownParent {
+			roots = append(roots, taskID)
+			continue
+		}
+		children[primaryParent] = append(children[primaryParent], taskID)
+	}
+	for parentID := range children {
+		sort.Strings(children[parentID])
+	}
+	sort.Strings(roots)
+	return children, roots
+}
+
+func taskDependencyParents(task TaskState) []string {
+	dependencies := dedupeTaskDependencies(task.Dependencies)
+	if len(dependencies) > 0 {
+		return dependencies
+	}
+	parentID := strings.TrimSpace(task.ParentID)
+	if parentID == "" {
+		return nil
+	}
+	return []string{parentID}
+}
+
+func emitGraphPanelRows(tasks map[string]TaskState, children map[string][]string, taskID string, depth int, visited map[string]struct{}, out *[]panelRow) {
+	if _, seen := visited[taskID]; seen {
+		return
+	}
+	task, ok := tasks[taskID]
+	if !ok {
+		return
+	}
+	visited[taskID] = struct{}{}
+	*out = append(*out, panelRow{
+		id:          "graph:" + taskID,
+		indent:      depth,
+		label:       renderCurrentTask(task.TaskID, task.Title),
+		completed:   isTaskCompleted(task),
+		severity:    deriveTaskSeverity(task),
+		hasChildren: len(children[taskID]) > 0,
+	})
+	for _, childID := range children[taskID] {
+		emitGraphPanelRows(tasks, children, childID, depth+1, visited, out)
+	}
+}
+
+func renderTaskDetails(task TaskState) []string {
+	if task.TaskID == "" {
+		return []string{"- no task selected"}
+	}
+	lines := []string{
+		"- task=" + renderCurrentTask(task.TaskID, task.Title),
+	}
+	if workerID := strings.TrimSpace(task.WorkerID); workerID != "" {
+		lines = append(lines, "  worker="+workerID)
+	}
+	lines = append(lines, fmt.Sprintf("  queue_pos=%d priority=%d", task.QueuePos, task.Priority))
+	if task.ParentID != "" {
+		lines = append(lines, "  parent="+task.ParentID)
+	}
+	if len(task.Dependencies) > 0 {
+		lines = append(lines, "  dependencies="+strings.Join(task.Dependencies, ", "))
+	} else {
+		lines = append(lines, "  dependencies=n/a")
+	}
+	if task.CommandStartedCount > 0 {
+		lines = append(lines, fmt.Sprintf("  cmd_started=%d cmd_finished=%d outputs=%d warnings=%d", task.CommandStartedCount, task.CommandFinishedCount, task.OutputCount, task.WarningCount))
+	}
+	if task.LastCommandSummary != "" {
+		lines = append(lines, "  last_cmd="+task.LastCommandSummary)
+	}
+	if task.LastMessage != "" {
+		lines = append(lines, "  last_message="+task.LastMessage)
+	}
+	if task.TerminalStatus != "" {
+		lines = append(lines, "  terminal="+task.TerminalStatus)
+	}
+	return lines
+}
+
+func (m *Model) currentPanelTaskID() string {
+	if m == nil {
+		return ""
+	}
+	if len(m.panelRows()) == 0 {
+		return ""
+	}
+	cursor := m.panelCursor
+	if cursor < 0 || cursor >= len(m.panelRows()) {
+		return ""
+	}
+	selectedID := m.panelRows()[cursor].id
+	return panelTaskIDFromRow(selectedID)
+}
+
+func panelTaskIDFromRow(rowID string) string {
+	if strings.HasPrefix(rowID, "task:") {
+		return strings.TrimPrefix(rowID, "task:")
+	}
+	if strings.HasPrefix(rowID, "worker:") && strings.Contains(rowID, ":task:") {
+		return strings.TrimPrefix(rowID[strings.Index(rowID, ":task:"):], ":task:")
+	}
+	if strings.HasPrefix(rowID, "queue:task:") {
+		return strings.TrimPrefix(rowID, "queue:task:")
+	}
+	if strings.HasPrefix(rowID, "graph:") {
+		return strings.TrimPrefix(rowID, "graph:")
+	}
+	return ""
+}
+
+func normalizeTaskMetadataString(raw string) string {
+	return strings.TrimSpace(raw)
+}
+
+func parseTaskDependencies(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		dep := strings.TrimSpace(part)
+		if dep == "" {
+			continue
+		}
+		out = append(out, dep)
+	}
+	return dedupeTaskDependencies(out)
+}
+
+func mergeTaskDependencies(existing []string, incoming []string) []string {
+	all := append(append(make([]string, 0, len(existing)+len(incoming)), existing...), incoming...)
+	return dedupeTaskDependencies(all)
+}
+
+func dedupeTaskDependencies(raw []string) []string {
+	out := make([]string, 0, len(raw))
+	seen := map[string]struct{}{}
+	for _, dep := range raw {
+		dep = strings.TrimSpace(dep)
+		if dep == "" {
+			continue
+		}
+		if _, exists := seen[dep]; exists {
+			continue
+		}
+		seen[dep] = struct{}{}
+		out = append(out, dep)
+	}
+	return out
+}
+
+func dedupeSortedDependencies(left []string, right []string) []string {
+	merged := make([]string, 0, len(left)+len(right))
+	seen := map[string]struct{}{}
+	for _, dep := range append(left, right...) {
+		dep = strings.TrimSpace(dep)
+		if dep == "" {
+			continue
+		}
+		if _, ok := seen[dep]; ok {
+			continue
+		}
+		seen[dep] = struct{}{}
+		merged = append(merged, dep)
+	}
+	sort.Strings(merged)
+	return merged
 }
 
 func normalizeTriageStatus(value string) string {

@@ -17,6 +17,7 @@ func TestEventStreamRoundTripNDJSON(t *testing.T) {
 		TaskTitle: "Streaming",
 		WorkerID:  "worker-1",
 		QueuePos:  1,
+		Priority:  7,
 		Timestamp: time.Date(2026, 2, 10, 2, 0, 0, 0, time.UTC),
 	}
 	if err := stream.Write(event); err != nil {
@@ -28,7 +29,7 @@ func TestEventStreamRoundTripNDJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decode event: %v", err)
 	}
-	if decoded.TaskID != event.TaskID || decoded.WorkerID != event.WorkerID || decoded.QueuePos != event.QueuePos {
+	if decoded.TaskID != event.TaskID || decoded.WorkerID != event.WorkerID || decoded.QueuePos != event.QueuePos || decoded.Priority != event.Priority {
 		t.Fatalf("unexpected decoded event: %#v", decoded)
 	}
 	if _, err := decoder.Next(); err != io.EOF {

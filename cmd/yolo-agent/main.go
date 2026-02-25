@@ -39,6 +39,7 @@ const (
 	distributedBusRedis = "redis"
 	distributedBusNATS  = "nats"
 	inboxAuthTokenEnv   = "YOLO_INBOX_WRITE_TOKEN"
+	monitorSourceIDEnv  = "YOLO_MONITOR_SOURCE_ID"
 )
 
 var taskGraphSyncInterval = 5 * time.Second
@@ -75,6 +76,7 @@ type runConfig struct {
 	distributedHeartbeatInterval    time.Duration
 	distributedRequestTimeout       time.Duration
 	distributedRegistryTTL          time.Duration
+	distributedEventBus             distributed.Bus
 }
 
 var newDistributedBus = func(backend string, address string) (distributed.Bus, error) {
@@ -410,10 +412,11 @@ func defaultRun(ctx context.Context, cfg runConfig) error {
 	if err != nil {
 		return err
 	}
-	runnerAdapter, closeDistributed, err := maybeWrapWithMastermind(ctx, cfg, runnerAdapter, taskStatusBackends)
+	runnerAdapter, distributedBus, closeDistributed, err := maybeWrapWithMastermind(ctx, cfg, runnerAdapter, taskStatusBackends)
 	if err != nil {
 		return err
 	}
+	cfg.distributedEventBus = distributedBus
 	if closeDistributed != nil {
 		defer func() {
 			_ = closeDistributed()
@@ -447,14 +450,14 @@ func buildRunnerAdapter(cfg runConfig) (contracts.AgentRunner, error) {
 	}
 }
 
-func maybeWrapWithMastermind(ctx context.Context, cfg runConfig, localRunner contracts.AgentRunner, taskStatusBackends map[string]contracts.StorageBackend) (contracts.AgentRunner, func() error, error) {
+func maybeWrapWithMastermind(ctx context.Context, cfg runConfig, localRunner contracts.AgentRunner, taskStatusBackends map[string]contracts.StorageBackend) (contracts.AgentRunner, distributed.Bus, func() error, error) {
 	if cfg.role != agentRoleMaster {
-		return localRunner, nil, nil
+		return localRunner, nil, nil, nil
 	}
 	taskStatusBackends = discoverTaskStatusBackendsForMastermind(cfg, taskStatusBackends)
 	bus, err := newDistributedBus(cfg.distributedBusBackend, cfg.distributedBusAddress)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	subjects := distributed.DefaultEventSubjects(cfg.distributedBusPrefix)
 	id := strings.TrimSpace(cfg.distributedRoleID)
@@ -475,9 +478,9 @@ func maybeWrapWithMastermind(ctx context.Context, cfg runConfig, localRunner con
 	})
 	if err := mastermind.Start(ctx); err != nil {
 		_ = bus.Close()
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	return distributedMastermindRunner{mastermind: mastermind}, bus.Close, nil
+	return distributedMastermindRunner{mastermind: mastermind}, bus, bus.Close, nil
 }
 
 func discoverTaskStatusBackendsForMastermind(cfg runConfig, taskStatusBackends map[string]contracts.StorageBackend) map[string]contracts.StorageBackend {
@@ -717,6 +720,9 @@ func resolveEventsPath(cfg runConfig) string {
 func runWithComponents(ctx context.Context, cfg runConfig, taskManager contracts.TaskManager, runner contracts.AgentRunner, vcs contracts.VCS) error {
 	sinks := []contracts.EventSink{}
 	closers := []func(){}
+	if sink := monitorEventSink(cfg); sink != nil {
+		sinks = append(sinks, sink)
+	}
 	if cfg.stream {
 		streamWriter := io.Writer(os.Stdout)
 		if cfg.mode == agentModeUI {
@@ -805,6 +811,9 @@ func runWithComponents(ctx context.Context, cfg runConfig, taskManager contracts
 func runWithStorageComponents(ctx context.Context, cfg runConfig, storage contracts.StorageBackend, taskEngine contracts.TaskEngine, runner contracts.AgentRunner, vcs contracts.VCS) error {
 	sinks := []contracts.EventSink{}
 	closers := []func(){}
+	if sink := monitorEventSink(cfg); sink != nil {
+		sinks = append(sinks, sink)
+	}
 	if cfg.stream {
 		streamWriter := io.Writer(os.Stdout)
 		if cfg.mode == agentModeUI {
@@ -888,6 +897,60 @@ func runWithStorageComponents(ctx context.Context, cfg runConfig, storage contra
 		})
 	}
 	return err
+}
+
+func monitorEventSink(cfg runConfig) contracts.EventSink {
+	if cfg.distributedEventBus == nil {
+		return nil
+	}
+	busSource := strings.TrimSpace(cfg.distributedRoleID)
+	if busSource == "" {
+		busSource = defaultMonitorEventSource(cfg.role)
+	}
+	subjects := distributed.DefaultEventSubjects(cfg.distributedBusPrefix)
+	return newDistributedMonitorEventSink(cfg.distributedEventBus, subjects.MonitorEvent, busSource)
+}
+
+func defaultMonitorEventSource(role string) string {
+	switch strings.TrimSpace(role) {
+	case agentRoleMaster:
+		return "mastermind"
+	case agentRoleWorker:
+		return "worker"
+	default:
+		return "agent"
+	}
+}
+
+type distributedMonitorEventSink struct {
+	bus     distributed.Bus
+	subject string
+	source  string
+}
+
+func newDistributedMonitorEventSink(bus distributed.Bus, subject string, source string) contracts.EventSink {
+	if bus == nil {
+		return nil
+	}
+	subject = strings.TrimSpace(subject)
+	if subject == "" {
+		subject = distributed.DefaultEventSubjects("yolo").MonitorEvent
+	}
+	if strings.TrimSpace(source) == "" {
+		source = "agent"
+	}
+	return &distributedMonitorEventSink{bus: bus, subject: subject, source: source}
+}
+
+func (sink *distributedMonitorEventSink) Emit(ctx context.Context, event contracts.Event) error {
+	if sink == nil || sink.bus == nil {
+		return nil
+	}
+	envelope, err := distributed.NewEventEnvelope(distributed.EventTypeMonitorEvent, sink.source, "", distributed.MonitorEventPayload{Event: event})
+	if err != nil {
+		return err
+	}
+	return sink.bus.Publish(ctx, sink.subject, envelope)
 }
 
 func cloneScopedVCSFactory(cfg runConfig, vcs contracts.VCS) agent.VCSFactory {

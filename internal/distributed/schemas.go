@@ -32,6 +32,7 @@ const (
 	EventTypeTaskStatusUpdate   EventType = "task_status_update"
 	EventTypeTaskStatusAck      EventType = "task_status_ack"
 	EventTypeTaskStatusReject   EventType = "task_status_reject"
+	EventTypeMonitorEvent       EventType = "monitor_event"
 )
 
 type Capability string
@@ -150,6 +151,10 @@ type TaskStatusUpdateAckPayload struct {
 type TaskStatusUpdateRejectPayload struct {
 	TaskStatusUpdateResultPayload
 	Reason string `json:"reason"`
+}
+
+type MonitorEventPayload struct {
+	Event contracts.Event `json:"event"`
 }
 
 type TaskGraphSubscriptionFilter struct {
