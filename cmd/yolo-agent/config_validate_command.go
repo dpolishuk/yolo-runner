@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 )
@@ -55,13 +56,18 @@ func defaultRunConfigValidateCommand(args []string) int {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
+	resolvedRepo, err := filepath.Abs(*repo)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "cannot resolve --repo path %q: %v\n", *repo, err)
+		return 1
+	}
 
 	service := newTrackerConfigService()
-	model, err := service.LoadModel(*repo)
+	model, err := service.LoadModel(resolvedRepo)
 	if err != nil {
 		return reportInvalidConfig(err, format)
 	}
-	catalog, err := loadCodingAgentsCatalog(*repo)
+	catalog, err := loadCodingAgentsCatalog(resolvedRepo)
 	if err != nil {
 		return reportInvalidConfig(err, format)
 	}
@@ -89,6 +95,12 @@ func defaultRunConfigValidateCommand(args []string) int {
 	rootID := strings.TrimSpace(*root)
 	if rootID == "" && profileDef.Tracker.TK != nil {
 		scopeRoot := strings.TrimSpace(profileDef.Tracker.TK.Scope.Root)
+		if scopeRoot != "" {
+			rootID = scopeRoot
+		}
+	}
+	if rootID == "" && profileDef.Tracker.Beads != nil {
+		scopeRoot := strings.TrimSpace(profileDef.Tracker.Beads.Scope.Root)
 		if scopeRoot != "" {
 			rootID = scopeRoot
 		}
@@ -172,6 +184,7 @@ func inferConfigField(message string) string {
 		"github.scope.owner",
 		"github.scope.repo",
 		githubTokenEnvVarLabel,
+		"beads.scope.root",
 	}
 	for _, field := range knownFields {
 		if strings.Contains(message, field) {
@@ -253,7 +266,7 @@ func inferConfigRemediation(field string, message string) string {
 	case "agent.watchdog_interval":
 		return "Set agent.watchdog_interval to a valid duration greater than 0 in .yolo-runner/config.yaml."
 	case "tracker.type":
-		return "Set tracker.type to a supported tracker (tk, linear, github) in .yolo-runner/config.yaml."
+		return "Set tracker.type to a supported tracker (tk, beads, linear, github) in .yolo-runner/config.yaml."
 	case "linear.scope.workspace":
 		return "Set linear.scope.workspace to exactly one workspace slug in .yolo-runner/config.yaml."
 	case linearTokenEnvVarLabel:
@@ -264,6 +277,8 @@ func inferConfigRemediation(field string, message string) string {
 		return "Set github.scope.repo to a single repository name (without owner) in .yolo-runner/config.yaml."
 	case githubTokenEnvVarLabel:
 		return "Set github.auth.token_env to an env var name and export that variable with your GitHub personal access token."
+	case "beads.scope.root":
+		return "Set beads.scope.root to the root task ID for beads tracker scope validation in .yolo-runner/config.yaml."
 	case "default_profile":
 		return "Set default_profile to an existing entry under profiles, or pass --profile with a valid profile name."
 	case "config.file":

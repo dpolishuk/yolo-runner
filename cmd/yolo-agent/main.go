@@ -134,12 +134,29 @@ func RunMain(args []string, run func(context.Context, runConfig) error) int {
 	}
 
 	fs := flag.NewFlagSet("yolo-agent", flag.ContinueOnError)
+	fs.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage: yolo-agent [options]\n\n")
+		fmt.Fprintf(os.Stderr, "Options:\n")
+		fs.PrintDefaults()
+		fmt.Fprintf(os.Stderr, "\nTracker Selection (in order of precedence):\n")
+		fmt.Fprintf(os.Stderr, "  1. --tracker flag (highest priority)\n")
+		fmt.Fprintf(os.Stderr, "  2. tracker.type in .yolo-runner/config.yaml\n")
+		fmt.Fprintf(os.Stderr, "  3. Auto-detection from directory structure:\n")
+		fmt.Fprintf(os.Stderr, "     - .beads/ exists  -> use 'beads' tracker\n")
+		fmt.Fprintf(os.Stderr, "     - .tickets/ exists -> use 'tk' tracker\n")
+		fmt.Fprintf(os.Stderr, "     - both exist     -> prefer 'beads'\n")
+		fmt.Fprintf(os.Stderr, "     - neither exists -> default to 'tk'\n")
+		fmt.Fprintf(os.Stderr, "\nExamples:\n")
+		fmt.Fprintf(os.Stderr, "  yolo-agent --root task-123 --tracker beads\n")
+		fmt.Fprintf(os.Stderr, "  yolo-agent --root task-456 --backend codex --stream\n")
+	}
 	repo := fs.String("repo", ".", "Repository root")
 	root := fs.String("root", "", "Root task ID")
 	backend := fs.String("backend", "", "DEPRECATED: use --agent-backend (opencode, codex, claude, kimi, gemini)")
 	agentBackend := fs.String("agent-backend", "", "Runner backend (opencode, codex, claude, kimi, gemini)")
 	model := fs.String("model", "", "Model for CLI agent")
 	profile := fs.String("profile", "", "Tracker profile name from .yolo-runner/config.yaml")
+	tracker := fs.String("tracker", "", "Task tracker type: beads|tk|linear|github. Auto-detected from .beads/ or .tickets/ directory if not specified")
 	qualityThreshold := fs.Int("quality-threshold", 0, "Minimum quality score required to run a task")
 	qualityGateTools := fs.String("quality-gate-tools", "", "Comma-separated quality tools to run in quality gate")
 	qcGateTools := fs.String("qc-gate-tools", "", "Comma-separated quality tools to run in quality-control gate")
@@ -197,12 +214,17 @@ func RunMain(args []string, run func(context.Context, runConfig) error) int {
 		fmt.Fprintln(os.Stderr, "--root is required")
 		return 1
 	}
-	codingAgents, err := loadCodingAgentsCatalog(*repo)
+	resolvedRepo, err := filepath.Abs(*repo)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "cannot resolve --repo path %q: %v\n", *repo, err)
+		return 1
+	}
+	codingAgents, err := loadCodingAgentsCatalog(resolvedRepo)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
-	configDefaults, err := loadYoloAgentConfigDefaults(*repo)
+	configDefaults, err := loadYoloAgentConfigDefaults(resolvedRepo)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
@@ -355,10 +377,11 @@ func RunMain(args []string, run func(context.Context, runConfig) error) int {
 	}
 
 	if err := run(context.Background(), runConfig{
-		repoRoot:                        *repo,
+		repoRoot:                        resolvedRepo,
 		rootID:                          *root,
 		backend:                         selectedBackend,
 		profile:                         selectedProfile,
+		trackerType:                     strings.TrimSpace(*tracker),
 		model:                           selectedModel,
 		maxTasks:                        *max,
 		retryBudget:                     selectedRetryBudget,
@@ -455,7 +478,7 @@ func defaultRun(ctx context.Context, cfg runConfig) error {
 	}
 	cfg.eventsPath = resolveEventsPath(cfg)
 
-	trackerProfile, err := resolveTrackerProfile(cfg.repoRoot, cfg.profile, cfg.rootID, os.Getenv)
+	trackerProfile, err := resolveTrackerProfile(cfg.repoRoot, cfg.profile, cfg.trackerType, cfg.rootID, os.Getenv)
 	if err != nil {
 		return err
 	}

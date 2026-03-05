@@ -29,7 +29,7 @@ func TestRunMainConfigInitCreatesStarterConfig(t *testing.T) {
 	}
 
 	svc := newTrackerConfigService()
-	resolved, err := svc.ResolveTrackerProfile(repoRoot, "", "root-1", nil)
+	resolved, err := svc.ResolveTrackerProfile(repoRoot, "", "", "root-1", nil)
 	if err != nil {
 		t.Fatalf("expected generated config to resolve tracker profile, got %v", err)
 	}
@@ -115,7 +115,7 @@ profiles:
 	}
 
 	svc := newTrackerConfigService()
-	if _, err := svc.ResolveTrackerProfile(repoRoot, "", "root-1", nil); err != nil {
+	if _, err := svc.ResolveTrackerProfile(repoRoot, "", "", "root-1", nil); err != nil {
 		t.Fatalf("expected generated config to pass tracker profile validation, got %v", err)
 	}
 	if _, err := svc.ResolveAgentDefaults(repoRoot); err != nil {

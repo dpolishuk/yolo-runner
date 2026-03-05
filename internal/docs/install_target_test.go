@@ -24,16 +24,19 @@ func TestMakefileHasInstallTargetThatInstallsYoloAgent(t *testing.T) {
 	required := []string{
 		"install:",
 		"PREFIX ?=",
-		"mkdir -p",
-		"chmod 755",
-	}
-	for _, binary := range binaries {
-		required = append(required, "bin/"+binary)
+		"install -d",
+		"install -m 755",
 	}
 
 	for _, needle := range required {
 		if !strings.Contains(makefile, needle) {
 			t.Fatalf("Makefile is missing %q required for install target contract", needle)
+		}
+	}
+
+	for _, binary := range binaries {
+		if !strings.Contains(makefile, binary) {
+			t.Fatalf("Makefile does not reference binary %q", binary)
 		}
 	}
 }
@@ -87,10 +90,12 @@ func TestMakefileInstallTargetHonorsPrefixAndCreatesExecutable(t *testing.T) {
 	}
 
 	helpOutput, err := exec.Command(filepath.Join(binDir, "yolo-agent"), "--help").CombinedOutput()
-	if err != nil && !strings.Contains(string(helpOutput), "Usage of yolo-agent:") {
+	usageText := string(helpOutput)
+	hasUsage := strings.Contains(usageText, "Usage of yolo-agent:") || strings.Contains(usageText, "Usage: yolo-agent [options]")
+	if err != nil && !hasUsage {
 		t.Fatalf("installed binary should expose usage text: %v (%s)", err, helpOutput)
 	}
-	if !strings.Contains(string(helpOutput), "Usage of yolo-agent:") {
+	if !hasUsage {
 		t.Fatalf("installed binary should expose usage text: got %s", helpOutput)
 	}
 

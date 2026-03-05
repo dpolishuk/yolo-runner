@@ -8,8 +8,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/egv/yolo-runner/v2/internal/contracts"
 	"github.com/egv/yolo-runner/v2/internal/beads"
+	"github.com/egv/yolo-runner/v2/internal/contracts"
 	githubtracker "github.com/egv/yolo-runner/v2/internal/github"
 	"github.com/egv/yolo-runner/v2/internal/linear"
 	"github.com/egv/yolo-runner/v2/internal/tk"
@@ -48,7 +48,7 @@ type trackerModel struct {
 	TK     *tkTrackerModel     `yaml:"tk,omitempty"`
 	Linear *linearTrackerModel `yaml:"linear,omitempty"`
 	GitHub *githubTrackerModel `yaml:"github,omitempty"`
-	Beads  *beadsTrackerModel `yaml:"beads,omitempty"`
+	Beads  *beadsTrackerModel  `yaml:"beads,omitempty"`
 }
 
 type tkTrackerModel struct {
@@ -130,16 +130,12 @@ var newGitHubTaskManager = func(cfg githubtracker.Config) (contracts.TaskManager
 	return githubtracker.NewTaskManager(cfg)
 }
 
+var newBeadsTaskManager = func(runner beads.Runner) (contracts.TaskManager, error) {
+	return beads.NewTaskManagerWithCapabilityProbe(runner)
+}
+
 var newGitHubStorageBackend = func(cfg githubtracker.Config) (contracts.StorageBackend, error) {
 	return githubtracker.NewStorageBackend(cfg)
-}
-
-var newBeadsTaskManager = func(repoRoot string) (contracts.TaskManager, error) {
-	return beads.NewTaskManager(localRunner{dir: repoRoot}), nil
-}
-
-var newBeadsStorageBackend = func(repoRoot string) (contracts.StorageBackend, error) {
-	return beads.NewStorageBackend(localRunner{dir: repoRoot}), nil
 }
 
 func resolveProfileSelectionPolicy(input profileSelectionInput) string {
@@ -154,8 +150,8 @@ func resolveProfileSelectionPolicy(input profileSelectionInput) string {
 	return ""
 }
 
-func resolveTrackerProfile(repoRoot string, selectedProfile string, rootID string, getenv func(string) string) (resolvedTrackerProfile, error) {
-	return newTrackerConfigService().ResolveTrackerProfile(repoRoot, selectedProfile, rootID, getenv)
+func resolveTrackerProfile(repoRoot string, selectedProfile string, trackerTypeOverride string, rootID string, getenv func(string) string) (resolvedTrackerProfile, error) {
+	return newTrackerConfigService().ResolveTrackerProfile(repoRoot, selectedProfile, trackerTypeOverride, rootID, getenv)
 }
 
 func buildTaskManagerForTracker(repoRoot string, profile resolvedTrackerProfile) (contracts.TaskManager, error) {
@@ -216,13 +212,11 @@ func buildTaskManagerForTracker(repoRoot string, profile resolvedTrackerProfile)
 		}
 		return manager, nil
 	case trackerTypeBeads:
-		// Beads is local-only, no auth required
-		// Check that .beads directory exists for capability detection
-		beadsDir := filepath.Join(repoRoot, ".beads")
-		if _, err := os.Stat(beadsDir); err != nil {
-			return nil, fmt.Errorf("beads directory not found at %q; ensure beads is initialized in this repository", beadsDir)
+		manager, err := newBeadsTaskManager(localRunner{dir: repoRoot})
+		if err != nil {
+			return nil, fmt.Errorf("beads capability probe failed for profile %q: %w", profile.Name, err)
 		}
-		return newBeadsTaskManager(repoRoot)
+		return manager, nil
 	default:
 		return nil, fmt.Errorf("tracker type %q is not supported yet", profile.Tracker.Type)
 	}
@@ -290,13 +284,11 @@ func buildStorageBackendForTracker(repoRoot string, profile resolvedTrackerProfi
 		}
 		return backend, nil
 	case trackerTypeBeads:
-		// Beads is local-only, no auth required
-		// Check that .beads directory exists for capability detection
-		beadsDir := filepath.Join(repoRoot, ".beads")
-		if _, err := os.Stat(beadsDir); err != nil {
-			return nil, fmt.Errorf("beads directory not found at %q; ensure beads is initialized in this repository", beadsDir)
+		manager, err := newBeadsTaskManager(localRunner{dir: repoRoot})
+		if err != nil {
+			return nil, fmt.Errorf("beads capability probe failed for profile %q: %w", profile.Name, err)
 		}
-		return newBeadsStorageBackend(repoRoot)
+		return taskManagerStorageBackend{taskManager: manager}, nil
 	default:
 		return nil, fmt.Errorf("tracker type %q is not supported yet", profile.Tracker.Type)
 	}
@@ -455,16 +447,47 @@ func dependencyIDsFromTask(task contracts.Task) []string {
 }
 
 func defaultTrackerProfilesModel() trackerProfilesModel {
+	return defaultTrackerProfilesModelForRepo("")
+}
+
+func defaultTrackerProfilesModelForRepo(repoRoot string) trackerProfilesModel {
+	trackerType := detectTrackerType(repoRoot)
 	return trackerProfilesModel{
 		DefaultProfile: defaultProfileName,
 		Profiles: map[string]trackerProfileDef{
 			defaultProfileName: {
 				Tracker: trackerModel{
-					Type: trackerTypeTK,
+					Type: trackerType,
 				},
 			},
 		},
 	}
+}
+
+func detectTrackerType(repoRoot string) string {
+	if repoRoot == "" {
+		repoRoot = "."
+	}
+
+	beadsDir := filepath.Join(repoRoot, ".beads")
+	ticketsDir := filepath.Join(repoRoot, ".tickets")
+
+	_, beadsExists := os.Stat(beadsDir)
+	_, ticketsExists := os.Stat(ticketsDir)
+
+	if beadsExists == nil && ticketsExists == nil {
+		// Both exist, prefer beads (newer format)
+		return trackerTypeBeads
+	}
+	if beadsExists == nil {
+		return trackerTypeBeads
+	}
+	if ticketsExists == nil {
+		return trackerTypeTK
+	}
+
+	// Neither exists, default to tk for backward compatibility
+	return trackerTypeTK
 }
 
 func validateTrackerModel(profileName string, model trackerModel, rootID string, getenv func(string) string) (trackerModel, error) {
@@ -536,8 +559,6 @@ func validateTrackerModel(profileName string, model trackerModel, rootID string,
 		model.GitHub.Auth.TokenEnv = tokenEnv
 		return model, nil
 	case trackerTypeBeads:
-		// Beads is local-only, no auth required
-		// Optional scope.root for restricting to a specific root task
 		if model.Beads != nil {
 			scopeRoot := strings.TrimSpace(model.Beads.Scope.Root)
 			if scopeRoot != "" && strings.TrimSpace(rootID) != scopeRoot {

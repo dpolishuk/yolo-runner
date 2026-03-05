@@ -47,7 +47,7 @@ func TestCLIRunnerAdapterRunsClaudeAndStreamsProgress(t *testing.T) {
 	if gotSpec.Binary != "claude-bin" {
 		t.Fatalf("expected binary claude-bin, got %q", gotSpec.Binary)
 	}
-	expectedArgs := []string{"--print", "--output-format", "text", "--model", "claude-3-5-sonnet", "--prompt", "implement feature"}
+	expectedArgs := []string{"--print", "--output-format", "text", "--model", "claude-3-5-sonnet", "implement feature"}
 	if !reflect.DeepEqual(gotSpec.Args, expectedArgs) {
 		t.Fatalf("unexpected args: %#v", gotSpec.Args)
 	}

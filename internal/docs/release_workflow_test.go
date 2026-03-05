@@ -352,42 +352,24 @@ func releaseToolchainBinariesFromMakefile(t *testing.T) []string {
 	t.Helper()
 
 	makefile := readRepoFile(t, "Makefile")
-	seen := map[string]struct{}{}
-	ordered := []string{}
 
+	// Parse BINARIES variable (e.g. "BINARIES := yolo-runner yolo-agent ...")
 	for _, line := range strings.Split(makefile, "\n") {
-		line = strings.TrimSpace(line)
-		if !strings.HasPrefix(line, "go build -o bin/") {
-			continue
-		}
-
-		parts := strings.Fields(line)
-		binaryPath := ""
-		for i := 0; i < len(parts)-1; i++ {
-			if parts[i] == "-o" && strings.HasPrefix(parts[i+1], "bin/") {
-				binaryPath = parts[i+1]
-				break
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "BINARIES") {
+			parts := strings.SplitN(trimmed, ":=", 2)
+			if len(parts) != 2 {
+				continue
+			}
+			binaries := strings.Fields(strings.TrimSpace(parts[1]))
+			if len(binaries) > 0 {
+				return binaries
 			}
 		}
-		if binaryPath == "" {
-			continue
-		}
-
-		binary := strings.TrimPrefix(binaryPath, "bin/")
-		if binary == "" {
-			continue
-		}
-		if _, exists := seen[binary]; exists {
-			continue
-		}
-		seen[binary] = struct{}{}
-		ordered = append(ordered, binary)
 	}
 
-	if len(ordered) == 0 {
-		t.Fatalf("no release binaries found in Makefile build targets")
-	}
-	return ordered
+	t.Fatalf("no BINARIES variable found in Makefile")
+	return nil
 }
 
 func releaseWorkflowBinariesFromStepRun(stepRun string) []string {

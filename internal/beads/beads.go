@@ -31,11 +31,20 @@ type Runner interface {
 }
 
 type Adapter struct {
-	runner Runner
+	runner   Runner
+	strategy lifecycleStrategy
 }
 
 func New(runner Runner) *Adapter {
-	return &Adapter{runner: runner}
+	return &Adapter{runner: runner, strategy: defaultBDStrategy()}
+}
+
+func NewWithCapabilityProbe(runner Runner) (*Adapter, error) {
+	capabilities, err := ProbeTrackerCapabilities(runner)
+	if err != nil {
+		return nil, err
+	}
+	return &Adapter{runner: runner, strategy: strategyFromCapabilities(capabilities)}, nil
 }
 
 type readyResponse struct {
@@ -43,7 +52,7 @@ type readyResponse struct {
 }
 
 func (a *Adapter) Ready(rootID string) (runner.Issue, error) {
-	output, err := a.runner.Run("bd", "ready", "--parent", rootID, "--json")
+	output, err := a.runner.Run(a.strategy.ready(rootID)...)
 	if err != nil {
 		return runner.Issue{}, err
 	}
@@ -87,7 +96,7 @@ func (a *Adapter) Tree(rootID string) (runner.Issue, error) {
 		}, nil
 	}
 
-	output, err := a.runner.Run("bd", "show", rootID, "--json")
+	output, err := a.runner.Run(a.strategy.show(rootID)...)
 	if err != nil {
 		return runner.Issue{}, err
 	}
@@ -102,7 +111,7 @@ func (a *Adapter) Tree(rootID string) (runner.Issue, error) {
 }
 
 func (a *Adapter) listTree(rootID string) ([]runner.Issue, error) {
-	output, err := a.runner.Run("bd", "list", "--parent", rootID, "--json")
+	output, err := a.runner.Run(a.strategy.listTree(rootID)...)
 	if err != nil {
 		return nil, err
 	}
@@ -114,7 +123,7 @@ func (a *Adapter) listTree(rootID string) ([]runner.Issue, error) {
 }
 
 func (a *Adapter) readyFallback(rootID string) (runner.Issue, error) {
-	output, err := a.runner.Run("bd", "show", rootID, "--json")
+	output, err := a.runner.Run(a.strategy.show(rootID)...)
 	if err != nil {
 		return runner.Issue{}, err
 	}
@@ -144,7 +153,7 @@ type showIssue struct {
 }
 
 func (a *Adapter) Show(id string) (runner.Bead, error) {
-	output, err := a.runner.Run("bd", "show", id, "--json")
+	output, err := a.runner.Run(a.strategy.show(id)...)
 	if err != nil {
 		return runner.Bead{}, err
 	}
@@ -166,7 +175,7 @@ func (a *Adapter) Show(id string) (runner.Bead, error) {
 }
 
 func (a *Adapter) UpdateStatus(id string, status string) error {
-	_, err := a.runner.Run("bd", "update", id, "--status", status)
+	_, err := a.runner.Run(a.strategy.updateStatus(id, status)...)
 	return err
 }
 
@@ -178,7 +187,12 @@ func (a *Adapter) UpdateStatusWithReason(id string, status string, reason string
 	if sanitized == "" {
 		return nil
 	}
-	_, err := a.runner.Run("bd", "update", id, "--notes", sanitized)
+	_, err := a.runner.Run(a.strategy.updateNotes(id, sanitized)...)
+	return err
+}
+
+func (a *Adapter) UpdateNotes(id string, notes string) error {
+	_, err := a.runner.Run(a.strategy.updateNotes(id, notes)...)
 	return err
 }
 
@@ -212,17 +226,21 @@ func truncateRunes(input string, maxRunes int) string {
 }
 
 func (a *Adapter) Close(id string) error {
-	_, err := a.runner.Run("bd", "close", id)
+	_, err := a.runner.Run(a.strategy.close(id)...)
 	return err
 }
 
 func (a *Adapter) CloseEligible() error {
-	_, err := a.runner.Run("bd", "epic", "close-eligible")
+	_, err := a.runner.Run(a.strategy.closeEligible()...)
 	return err
 }
 
 func (a *Adapter) Sync() error {
-	_, err := a.runner.Run("bd", "sync")
+	command := a.strategy.sync()
+	if len(command) == 0 {
+		return nil
+	}
+	_, err := a.runner.Run(command...)
 	return err
 }
 
